@@ -318,7 +318,7 @@ describe("existing session chat", () => {
       expect(
         slot.getByRole("region", { name: "Live session: Running session" })
           .textContent,
-      ).toContain("New result"),
+      ).toContain("Ready to read"),
     );
     // The SDK stub does not implement host read tracking. Work Map must not
     // acknowledge a hidden excerpt on the host chat's behalf.
@@ -641,6 +641,70 @@ describe("area management", () => {
   });
 });
 describe("preview and native navigation", () => {
+  it.each(["todo", "in_review"])(
+    "signals unread results on a neutral project and uses the plural badge for its %s task",
+    async (status) => {
+      const slot = await mount({
+        tasks: [task({ status, threadIds: ["thr_test", "thr_other"] })],
+        threads: [
+          thread({ indicator: "unread-success" }),
+          thread({ id: "thr_other", indicator: "unread-success" }),
+        ],
+      });
+      const project = await slot.findByRole("button", {
+        name: /^Open project Test project/,
+      });
+      expect(
+        project.closest(".wm-island")?.getAttribute("data-has-results"),
+      ).toBe("true");
+      expect(project.textContent).toContain("2 ready to read");
+      expect(project.querySelector(".wm-result-icon")).toBeNull();
+      const card = slot.getByRole("button", {
+        name: /^Preview Review proposal/,
+      });
+      expect(within(card).getByText("2 results ready to read")).toBeTruthy();
+      expect(card.getAttribute("aria-label")).toContain(
+        "2 results ready to read",
+      );
+      expect(
+        slot.getByRole("button", { name: "Ready to read 1" }),
+      ).toBeTruthy();
+      expect(slot.inspection.sidebarActionCalls).toEqual([]);
+      slot.lifecycle.unmount();
+    },
+  );
+  it("moves a newly finished standalone session beside the focus and gives it a readable badge without marking it seen", async () => {
+    const finished = thread({ title: "Finished session" });
+    const slot = await mount({
+      tasks: [],
+      threads: [
+        thread({ id: "thr_pin", isPinned: true }),
+        thread({ id: "thr_working", indicator: "runtime" }),
+        finished,
+        ...Array.from({ length: 6 }, (_, i) => thread({ id: `thr_quiet${i}` })),
+      ],
+    });
+    const card = await slot.findByRole("button", {
+      name: /^Preview Finished session/,
+    });
+    expect(card.classList.contains("wm-unread")).toBe(false);
+    finished.indicator = "unread-success";
+    finished.isUnread = true;
+    finished.latestAttentionAt = Date.now();
+    await slot.behavior.emitRealtime("preferences-changed", {});
+    const ready = await slot.findByRole("button", {
+      name: /^Preview Finished session.*Ready to read/,
+    });
+    expect(ready.closest(".wm-orbit-near")).toBeTruthy();
+    const badge = within(ready).getByText("Ready to read");
+    expect(badge.classList.contains("wm-unread")).toBe(true);
+    expect(badge.querySelector(".wm-result-icon")).toBeTruthy();
+    expect(slot.inspection.sidebarActionCalls).toEqual([]);
+    expect(
+      slot.inspection.rpcCalls.some((call) => call.method === "setPreference"),
+    ).toBe(false);
+    slot.lifecycle.unmount();
+  });
   it("renders intact Markdown in expanded previews and keeps table syntax out of cards", async () => {
     const markdown =
       "Options ready.\n\n| Option | Status |\n| --- | --- |\n| First | Ready |";
@@ -1045,7 +1109,7 @@ describe("preview and native navigation", () => {
         threads: sessions,
       });
       fireEvent.click(
-        await slot.findByRole("button", { name: "New results 2" }),
+        await slot.findByRole("button", { name: "Ready to read 2" }),
       );
       fireEvent.click(slot.getByRole("button", { name: /^Preview Session/ }));
       const detail = slot.getByRole("region", { name: "Expanded: Session" });
@@ -1060,7 +1124,7 @@ describe("preview and native navigation", () => {
       // The SDK fake records setRead; drive the resulting host snapshot explicitly.
       sessions[0] = { ...sessions[0], indicator: "none", isUnread: false };
       await slot.behavior.emitRealtime("preferences-changed", {});
-      await slot.findByRole("button", { name: "New results 1" });
+      await slot.findByRole("button", { name: "Ready to read 1" });
       expect(slot.getByRole("region", { name: "Expanded: Session" })).toBe(
         detail,
       );
@@ -1558,10 +1622,12 @@ describe("preview and native navigation", () => {
       tasks: [task({ status: "in_review", threadIds: ["thr_test"] })],
       threads: sessions,
     });
-    fireEvent.click(await slot.findByRole("button", { name: "New results 1" }));
+    fireEvent.click(
+      await slot.findByRole("button", { name: "Ready to read 1" }),
+    );
     const tile = slot.getByRole("button", { name: /^Preview Review proposal/ });
     expect(within(tile).getByText("Needs review")).toBeTruthy();
-    expect(within(tile).getByText("New result · unread")).toBeTruthy();
+    expect(within(tile).getByText("Ready to read")).toBeTruthy();
     fireEvent.click(tile);
     await waitFor(() =>
       expect(slot.inspection.sidebarActionCalls).toContainEqual({
@@ -1572,7 +1638,7 @@ describe("preview and native navigation", () => {
     );
     sessions[0] = { ...sessions[0], indicator: "none", isUnread: false };
     await slot.behavior.emitRealtime("preferences-changed", {});
-    await slot.findByRole("button", { name: "New results 0" });
+    await slot.findByRole("button", { name: "Ready to read 0" });
     fireEvent.click(slot.getByRole("button", { name: "Waiting for you 1" }));
     expect(
       slot
@@ -1609,14 +1675,14 @@ describe("preview and native navigation", () => {
     for (const label of [
       "Run failed",
       "Needs review",
-      "New result · unread",
+      "Ready to read",
       "Agent working",
     ])
       expect(within(tile).getByText(label)).toBeTruthy();
     expect(tile.getAttribute("aria-label")).toContain(
-      "Run failed. Needs review. New result · unread",
+      "Run failed. Needs review. Ready to read",
     );
-    expect(slot.getByRole("button", { name: "New results 1" })).toBeTruthy();
+    expect(slot.getByRole("button", { name: "Ready to read 1" })).toBeTruthy();
     expect(slot.getByRole("button", { name: "Working 1" })).toBeTruthy();
     expect(
       slot.inspection.sidebarActionCalls.filter((c) => c.method === "setRead"),
@@ -1635,11 +1701,11 @@ describe("preview and native navigation", () => {
     );
     expect(slot.queryByRole("button", { name: /^Open project/ })).toBeNull();
     expect(tiles[0].getAttribute("data-attention")).toBe("review");
-    fireEvent.click(slot.getByRole("button", { name: "New results 1" }));
+    fireEvent.click(slot.getByRole("button", { name: "Ready to read 1" }));
     const result = slot.getByRole("button", { name: /^Preview Session/ });
     expect(result.classList.contains("wm-unread")).toBe(true);
     expect(result.classList.contains("wm-waiting")).toBe(false);
-    expect(within(result).getByText("New result · unread")).toBeTruthy();
+    expect(within(result).getByText("Ready to read")).toBeTruthy();
     expect(
       slot.inspection.sidebarActionCalls.filter((c) => c.method === "setRead"),
     ).toHaveLength(0);

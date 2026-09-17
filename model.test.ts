@@ -10,6 +10,114 @@ import {
 } from "./model";
 import { now, data, task, thread } from "./fixtures";
 describe("attention rules", () => {
+  it("balances an unread backlog with all three running agents and some quiet work", () => {
+    const items = buildMap(
+      data([]),
+      [
+        thread({ id: "pin", isPinned: true }),
+        ...Array.from({ length: 8 }, (_, i) =>
+          thread({
+            id: `ready${i}`,
+            indicator: "unread-success",
+            latestAttentionAt: now - i,
+          }),
+        ),
+        ...Array.from({ length: 3 }, (_, i) =>
+          thread({ id: `running${i}`, indicator: "runtime" }),
+        ),
+        ...Array.from({ length: 6 }, (_, i) => thread({ id: `quiet${i}` })),
+      ],
+      {},
+      now,
+    );
+    const visible = selectVisible(items, 10);
+    expect(visible).toHaveLength(10);
+    expect(visible.filter(isWorking)).toHaveLength(3);
+    expect(visible.filter((i) => i.unreadResults > 0)).toHaveLength(3);
+    expect(
+      visible.filter((i) => !i.focus && i.signal === "inactive"),
+    ).toHaveLength(3);
+    expect(arrangeMap(visible).near[0].id).toBe("thread:ready0");
+  });
+  it("keeps finished results visible among many running agents and close to a pin", () => {
+    const items = buildMap(
+      data([]),
+      [
+        thread({ id: "pin", isPinned: true }),
+        ...Array.from({ length: 16 }, (_, i) =>
+          thread({ id: `running${i}`, indicator: "runtime" }),
+        ),
+        thread({ id: "finished", indicator: "unread-success" }),
+      ],
+      {},
+      now,
+    );
+    const shown = selectVisible(items, 10);
+    const layout = arrangeMap(shown);
+    expect(shown).toHaveLength(10);
+    expect(layout.anchor?.id).toBe("thread:pin");
+    expect(layout.near[0]?.id).toBe("thread:finished");
+    expect(isWorking(layout.near[1])).toBe(true);
+  });
+  it("never sends unread results to the quiet outer ring, including linked task results", () => {
+    const items = buildMap(
+      data([task({ threadIds: ["attached"] })]),
+      [
+        thread({ id: "pin", isPinned: true }),
+        thread({ id: "attached", indicator: "unread-success" }),
+        ...Array.from({ length: 7 }, (_, i) =>
+          thread({ id: `finished${i}`, indicator: "unread-success" }),
+        ),
+        ...Array.from({ length: 5 }, (_, i) => thread({ id: `quiet${i}` })),
+      ],
+      {},
+      now,
+    );
+    const layout = arrangeMap(selectVisible(items, 13));
+    expect(
+      [...layout.north, ...layout.south].every(
+        (item) => item.unreadResults === 0,
+      ),
+    ).toBe(true);
+    const inner = [
+      layout.anchor!,
+      ...layout.near,
+      ...layout.west,
+      ...layout.east,
+    ];
+    expect(inner.filter((item) => item.unreadResults > 0)).toHaveLength(8);
+    expect(inner.some((item) => item.kind === "project")).toBe(true);
+  });
+  it("keeps the newest result stable through quiet rotation and removes its priority after reading", () => {
+    const sessions = [
+      thread({
+        id: "fresh",
+        indicator: "unread-success",
+        latestAttentionAt: now,
+      }),
+      thread({
+        id: "older",
+        indicator: "unread-success",
+        latestAttentionAt: now - 86400000,
+      }),
+      ...Array.from({ length: 12 }, (_, i) => thread({ id: `quiet${i}` })),
+    ];
+    const items = buildMap(data([]), sessions, {}, now);
+    for (const rotation of [0, 4, 9]) {
+      const layout = arrangeMap(selectVisible(items, 10, rotation));
+      expect(layout.anchor?.id).toBe("thread:fresh");
+      expect(layout.near[0]?.id).toBe("thread:older");
+    }
+    const read = buildMap(
+      data([]),
+      sessions.map((s) =>
+        s.id === "fresh" ? { ...s, indicator: "none" as const } : s,
+      ),
+      {},
+      now,
+    );
+    expect(arrangeMap(selectVisible(read, 10)).anchor?.id).toBe("thread:older");
+  });
   it("keeps input requests and failed runs out of the quiet outer ring", () => {
     const items = buildMap(
       data([]),
@@ -332,7 +440,7 @@ describe("attention rules", () => {
     expect(visible.some((i) => i.id === "thread:thr_running")).toBe(true);
     expect(visible.some((i) => i.id === "thread:thr_pinned")).toBe(true);
   });
-  it("ranks actionable review above an unread success", () => {
+  it("brings a finished unread session ahead of a routine review backlog", () => {
     const items = buildMap(
       data([
         task({
@@ -345,7 +453,7 @@ describe("attention rules", () => {
       {},
       now,
     );
-    expect(items[0].kind).toBe("project");
+    expect(items[0].kind).toBe("thread");
   });
   it("separates requests, failures, reviews and unread results in rank and reasons", () => {
     const items = buildMap(
@@ -362,18 +470,18 @@ describe("attention rules", () => {
     expect(items.map((i) => i.id)).toEqual([
       "thread:input",
       "thread:error",
-      "project:p1",
       "thread:result",
+      "project:p1",
       "thread:running",
     ]);
     expect(items.map((i) => i.reason)).toEqual([
       "Needs your input",
       "Run failed",
+      "Ready to read",
       "1 needs review",
-      "New result · unread",
       "Agent working",
     ]);
-    expect(items[3]).toMatchObject({
+    expect(items[2]).toMatchObject({
       signal: "unread",
       attention: "unread",
       unreadResults: 1,
@@ -388,7 +496,7 @@ describe("attention rules", () => {
       thread({ id: "running", indicator: "runtime" }),
     ];
     const [project] = buildMap(snapshot, threads, {}, now);
-    expect(project.reason).toBe("1 needs review · 1 new result · 1 working");
+    expect(project.reason).toBe("1 needs review · 1 ready to read · 1 working");
     expect(project.children[0]).toMatchObject({
       signal: "waiting",
       attention: "review",

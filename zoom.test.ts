@@ -3,6 +3,30 @@ import { buildMap, arrangeMap, selectVisible } from "./model";
 import { data, thread, now } from "./fixtures";
 import { snapZoom, zoomDensity, zoomVisible, extendOrbit } from "./zoom";
 
+it("keeps additional unread results in the inner sides when zooming out", () => {
+  const items = buildMap(
+    data([]),
+    [
+      thread({ id: "pin", isPinned: true }),
+      ...Array.from({ length: 20 }, (_, i) =>
+        thread({ id: `result${i}`, indicator: "unread-success" }),
+      ),
+    ],
+    {},
+    now,
+  );
+  const baseline = selectVisible(items, 10);
+  const base = arrangeMap(baseline);
+  const more = zoomVisible(items, baseline, 25, 0);
+  const orbit = extendOrbit(base, more);
+  expect(orbit.anchor).toBe(base.anchor);
+  expect(orbit.near).toEqual(base.near);
+  expect(
+    [...orbit.north, ...orbit.south].every((item) => !item.unreadResults),
+  ).toBe(true);
+  expect([...orbit.west, ...orbit.east].length).toBe(18);
+});
+
 it("retains an anchor without evicting work when the selection has unused capacity", () => {
   const items = buildMap(
     data([]),

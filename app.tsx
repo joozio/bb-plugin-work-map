@@ -21,6 +21,7 @@ import {
   selectVisible,
   sessionItem,
   threadSignal,
+  unreadLabel,
   type WorkItem,
 } from "./model";
 import { Button } from "./components/ui/button";
@@ -55,9 +56,6 @@ function age(timestamp: number, now: number) {
         ? `${Math.floor(minutes / 60)}h ago`
         : `${Math.floor(minutes / 1440)}d ago`;
 }
-function unreadLabel(count: number) {
-  return count === 1 ? "New result · unread" : `${count} new results · unread`;
-}
 function Status({ item }: { item: WorkItem }) {
   return (
     <span
@@ -67,7 +65,15 @@ function Status({ item }: { item: WorkItem }) {
         className={`wm-status wm-${item.signal}`}
         data-attention={item.attention ?? undefined}
       >
-        <i aria-hidden="true" />
+        {item.signal === "unread" && item.kind !== "project" ? (
+          <Icon
+            name="MessageSquare"
+            className="wm-result-icon"
+            aria-hidden="true"
+          />
+        ) : (
+          <i aria-hidden="true" />
+        )}
         {item.reason}
       </span>
       {needsReview(item) && item.attention !== "review" && (
@@ -80,7 +86,11 @@ function Status({ item }: { item: WorkItem }) {
         item.signal !== "unread" &&
         item.unreadResults > 0 && (
           <span className="wm-status wm-unread">
-            <i aria-hidden="true" />
+            <Icon
+              name="MessageSquare"
+              className="wm-result-icon"
+              aria-hidden="true"
+            />
             {unreadLabel(item.unreadResults)}
           </span>
         )}
@@ -947,6 +957,7 @@ function WorkMap() {
           className={`wm-tile wm-${item.signal} ${isWorking(item) ? "wm-has-working" : ""} ${item.focus ? "wm-focused" : ""} ${small ? "wm-small" : ""} ${selected?.id === item.id ? "wm-selected" : ""}`}
           data-attention={item.attention ?? undefined}
           data-kind={item.kind}
+          data-has-results={item.unreadResults > 0 || undefined}
           onClick={() => openPreview(item)}
           draggable
           onDragStart={(event) => {
@@ -1028,6 +1039,7 @@ function WorkMap() {
       <article
         key={item.id}
         className={`wm-island wm-${item.signal} ${item.focus ? "wm-focused" : ""} ${hasWorking ? "wm-has-working" : ""} ${inspecting ? "wm-area-expanded" : ""}`}
+        data-has-results={item.unreadResults > 0 || undefined}
       >
         <button
           className="wm-island-heading"
@@ -1665,7 +1677,7 @@ function WorkMap() {
               ["all", "Overview"],
               ["focus", "In focus"],
               ["waiting", "Waiting for you"],
-              ["unread", "New results"],
+              ["unread", "Ready to read"],
               ["working", "Working"],
               ["inactive", "Inactive"],
             ] as [Filter, string][]
@@ -1857,7 +1869,7 @@ function WorkMap() {
                                     ? "RUN FAILED"
                                     : "NEEDS YOUR INPUT"
                               : orbit.anchor.signal === "unread"
-                                ? "NEW RESULTS"
+                                ? "READY TO READ"
                                 : isWorking(orbit.anchor)
                                   ? "WORKING NOW"
                                   : "IN VIEW"}
@@ -1950,7 +1962,7 @@ function WorkMap() {
               {" · "}
               <span className="wm-legend-waiting">Amber · Action needed</span>
               {" · "}
-              <span className="wm-legend-unread">Blue · New result</span>
+              <span className="wm-legend-unread">Blue · Ready to read</span>
               {" · "}
               {spatial
                 ? "Quieter work sits farther out."

@@ -46,8 +46,11 @@ const ATTENTION_LABEL: Record<Attention, string> = {
   error: "Run failed",
   review: "Needs review",
   followup: "Follow-up due",
-  unread: "New result · unread",
+  unread: "Ready to read",
 };
+export function unreadLabel(count: number) {
+  return count === 1 ? "Ready to read" : `${count} results ready to read`;
+}
 export interface WorkItem {
   id: string;
   title: string;
@@ -135,11 +138,11 @@ function rank(
     item.signal === "waiting"
       ? 6000
       : item.signal === "unread"
-        ? 4500
+        ? 6500
         : item.signal === "working"
           ? 4000
           : 0;
-  if (item.signal === "waiting" && item.unreadResults > 0) score += 300;
+  if (item.signal === "waiting" && item.unreadResults > 0) score += 600;
   score +=
     item.attention === "input" ? 1200 : item.attention === "error" ? 1000 : 0;
   const task = item.task;
@@ -160,7 +163,12 @@ function rank(
   score += item.changed ? 60 : 0;
   return score + Math.max(0, 20 - (now - item.updatedAt) / 86400000);
 }
-function activityReason(attention: Attention | null, signal: Signal): string {
+function activityReason(
+  attention: Attention | null,
+  signal: Signal,
+  results = 1,
+): string {
+  if (attention === "unread") return unreadLabel(results);
   if (attention) return ATTENTION_LABEL[attention];
   if (signal === "working") return "Agent working";
   return "Inactive";
@@ -182,6 +190,7 @@ export function buildMap(
       .filter((t): t is PluginSidebarThread => Boolean(t));
     const id = `task:${task.id}`;
     const states = linked.map(threadSignal);
+    const resultCount = unreadResults(linked);
     const externalReview =
       task.lifecycle === "waiting" &&
       !["done", "canceled", "in_review"].includes(task.status);
@@ -227,11 +236,11 @@ export function buildMap(
       focus: linked.some((t) => t.isPinned) || preferences[id]?.focus === true,
       signal,
       attention,
-      unreadResults: unreadResults(linked),
+      unreadResults: resultCount,
       reason:
         externalReview && signal === "inactive"
           ? `Waiting on ${task.waitingOn.split(" | ")[0].replace(/:\s*review$/i, "") || "review"}`
-          : activityReason(attention, signal),
+          : activityReason(attention, signal, resultCount),
       changed:
         updatedAt > (preferences[id]?.seenAt ?? 0) &&
         now - updatedAt < 48 * 3600000,
@@ -300,7 +309,7 @@ export function buildMap(
           countLabel("error", "with an error", "with errors"),
           countLabel("review", "needs review", "need review"),
           countLabel("followup", "needs follow-up", "need follow-up"),
-          unread ? `${unread} new ${unread === 1 ? "result" : "results"}` : "",
+          unread ? `${unread} ready to read` : "",
           working ? `${working} working` : "",
         ]
           .filter(Boolean)
@@ -364,23 +373,40 @@ export function needsReview(item: WorkItem) {
 function needsImmediateAction(item: WorkItem) {
   return item.attention === "input" || item.attention === "error";
 }
-export function selectVisible(items: WorkItem[], limit: number, rotation = 0) {
+function centralItems(items: WorkItem[], readyLimit = Infinity) {
   const focused = items.filter((i) => i.focus);
   const urgent = items.filter((i) => !i.focus && needsImmediateAction(i));
-  const working = items.filter(
-    (i) => !i.focus && !needsImmediateAction(i) && isWorking(i),
-  );
+  const remaining = items.filter((i) => !i.focus && !needsImmediateAction(i));
+  const ready = remaining
+    .filter((i) => i.unreadResults > 0)
+    .slice(0, readyLimit);
+  const readyIds = new Set(ready.map((i) => i.id));
+  const working = remaining.filter((i) => !readyIds.has(i.id) && isWorking(i));
+  // Make room for both a new result and a running agent, then more results.
+  return [
+    ...focused,
+    ...urgent,
+    ...ready.slice(0, 1),
+    ...working.slice(0, 1),
+    ...ready.slice(1),
+    ...working.slice(1),
+  ];
+}
+export function selectVisible(items: WorkItem[], limit: number, rotation = 0) {
+  // Two recent result areas are essential; older unread work uses the queue
+  // budget so it cannot displace the other running agents or all quiet work.
+  const essential = centralItems(items, 2).slice(0, limit);
+  const essentialIds = new Set(essential.map((i) => i.id));
   const waiting = items.filter(
     (i) =>
       !i.focus &&
       !needsImmediateAction(i) &&
-      !isWorking(i) &&
+      !essentialIds.has(i.id) &&
       ["waiting", "unread"].includes(i.signal),
   );
   const quiet = items.filter((i) => !i.focus && i.signal === "inactive");
   // Reserve a glimpse of the periphery, while never evicting a pin or the
   // only running session in favor of a queue full of task reviews.
-  const essential = [...focused, ...urgent, ...working].slice(0, limit);
   const quietSlots = Math.min(
     limit >= 10 ? 4 : 2,
     quiet.length,
@@ -406,22 +432,21 @@ export function arrangeMap(items: WorkItem[]) {
   );
   const anchor = ranked.at(0);
   const remaining = ranked.filter((item) => item.id !== anchor?.id);
-  // Keep running agents close even when many routine reviews outrank them.
+  const central = centralItems(remaining);
+  const centralIds = new Set(central.map((item) => item.id));
   const priority = [
-    ...remaining.filter((item) => item.focus),
-    ...remaining.filter((item) => !item.focus && needsImmediateAction(item)),
-    ...remaining.filter(
-      (item) => !item.focus && !needsImmediateAction(item) && isWorking(item),
-    ),
-    ...remaining.filter(
-      (item) => !item.focus && !needsImmediateAction(item) && !isWorking(item),
-    ),
+    ...central,
+    ...remaining.filter((item) => !centralIds.has(item.id)),
   ];
   const near = priority.slice(0, 2);
   const rest = priority.slice(2);
   const far = rest
     .filter(
-      (item) => !item.focus && !isWorking(item) && !needsImmediateAction(item),
+      (item) =>
+        !item.focus &&
+        !isWorking(item) &&
+        !needsImmediateAction(item) &&
+        !item.unreadResults,
     )
     .slice(-4);
   const farIds = new Set(far.map((item) => item.id));

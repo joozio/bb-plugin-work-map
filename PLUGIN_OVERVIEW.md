@@ -1,6 +1,6 @@
 ## Your work, arranged by attention
 
-Pinned and focused work stays near the center. A coral ring marks focus and a green bar marks a running agent. Unread results have a quiet blue cue. Input requests, failures, review tasks and due follow-ups have separate labels and stronger priority. Projects stay neutral with counts pointing to their tasks. Waiting for you and New results have separate filters; reading a result leaves its task's review state intact.
+Pinned and focused work stays near the center. A coral ring marks focus and a green bar marks a running agent. Unread results have a filled blue Ready to read badge, with a blue edge and light tint on task and session cards. They rank below focus, input requests and failures, and ahead of routine review queues. Recent results stay near the center alongside running agents. Projects keep neutral fills, with an unread border and counts pointing to their tasks. Waiting for you and Ready to read have separate filters; reading a result leaves its task's review state intact.
 
 ## Open work where it sits
 

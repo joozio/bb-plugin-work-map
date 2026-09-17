@@ -72,9 +72,13 @@ export function extendOrbit(
       .map((item) => item!.id),
   );
   const extras = items.filter((item) => !ids.has(item.id));
+  const ready = extras.filter((item) => item.unreadResults > 0);
+  const outer = extras.filter((item) => !item.unreadResults);
   return {
     ...base,
-    north: [...base.north, ...extras.filter((_, index) => index % 2 === 0)],
-    south: [...base.south, ...extras.filter((_, index) => index % 2 === 1)],
+    west: [...base.west, ...ready.filter((_, index) => index % 2 === 0)],
+    east: [...base.east, ...ready.filter((_, index) => index % 2 === 1)],
+    north: [...base.north, ...outer.filter((_, index) => index % 2 === 0)],
+    south: [...base.south, ...outer.filter((_, index) => index % 2 === 1)],
   };
 }
