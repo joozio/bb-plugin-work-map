@@ -8,7 +8,7 @@ Click an area, task or session to expand it in place. Nearby cards make room whi
 
 ## Start and organize
 
-Start a session with BB's native composer and continue its chat inside the map. Sessions started from a task attach to that task. Create projects and backlog tasks, edit project details, connect existing sessions through tasks, and hide or restore areas. Project and task management commands are also available to agents through `bb work-map`.
+Start a session with BB's native composer, or use Chat here to continue an existing session inside the map. The chat uses that session's permissions and provider controls. Sessions started from a task attach to that task. Create projects and backlog tasks, edit project details, connect existing sessions through tasks, and hide or restore areas. Project and task management commands are also available to agents through `bb work-map`.
 
 ## Leave a next step
 

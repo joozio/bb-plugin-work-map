@@ -20,7 +20,7 @@ The view also uses browser session storage to recover a newly created session wh
 
 Explicit actions can create or edit Tasks projects, create backlog tasks, connect sessions to tasks, pin or unpin sessions, create sessions through BB, change task status and descriptions, and archive or unarchive sessions. Project maintenance is also exposed through `bb work-map` commands.
 
-Opening a successfully loaded session preview marks only the displayed successful result read. Removing task focus can unpin attached pinned sessions; the view describes that effect. Hiding an area changes visibility in Overview only. Search and attention filters still reach its work.
+Opening a successfully loaded session preview marks only the displayed successful result read. When an existing session's native chat is open, BB owns read tracking and Work Map stops acknowledging its hidden summary. The chat uses that session's existing permissions; opening it sends no message. Removing task focus can unpin attached pinned sessions; the view describes that effect. Hiding an area changes visibility in Overview only. Search and attention filters still reach its work.
 
 Task settlement writes a summary, next step, lifecycle and native status, reviewer, waiting dependency, follow-up date and status reason into the task description while preserving its body and history. Existing owner and progress fields are preserved. Undo checks for intervening changes before restoring fields. BB's task updates do not support atomic conditional writes, so simultaneous external edits remain a limitation.
 

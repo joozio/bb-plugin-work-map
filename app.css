@@ -724,7 +724,8 @@
   font-size: 11px;
   color: var(--wm-blue);
 }
-.wm-detail-section {
+.wm-detail-section,
+.wm-session-view {
   margin-top: 27px;
 }
 .wm-detail-section h3 {
@@ -786,9 +787,6 @@
   font-size: 10px;
   color: var(--wm-dim);
   margin: 12px 0 17px;
-}
-.wm-open-session {
-  width: 100%;
 }
 .wm-split {
   display: block;
@@ -1410,7 +1408,8 @@
 .wm-inline-detail .wm-preview-top {
   margin-bottom: 16px;
 }
-.wm-inline-detail .wm-detail-section {
+.wm-inline-detail .wm-detail-section,
+.wm-inline-detail .wm-session-view {
   margin-top: 18px;
 }
 .wm-inline-detail .wm-facts {
@@ -1418,9 +1417,6 @@
 }
 .wm-inline-detail .wm-preview-actions {
   gap: 8px;
-}
-.wm-inline-detail .wm-open-session {
-  width: auto;
 }
 .wm-inline-detail .wm-split {
   margin: 12px 0;
@@ -1645,4 +1641,43 @@
 .wm-created-chat {
   margin-top: 12px;
   min-height: 240px;
+}
+.wm-session-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.wm-session-view > .wm-session-summary {
+  margin-top: 0;
+}
+.wm-live-session {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: clamp(320px, 65vh, 580px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--background);
+}
+.wm-live-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.wm-live-heading strong {
+  overflow-wrap: anywhere;
+}
+.wm-live-heading span {
+  color: var(--muted-foreground);
+}
+.wm-live-chat {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }

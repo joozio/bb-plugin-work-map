@@ -8,6 +8,7 @@ import {
   useRpc,
   useBbContext,
   UrlLink,
+  ThreadChat,
 } from "@get-bb/plugin-sdk/app";
 import type { rpcContract, Preference, Snapshot, MapTask } from "./server";
 import {
@@ -106,6 +107,12 @@ function WorkMap() {
   const [expandedArea, setExpandedArea] = useState<WorkItem | null>(null);
   const [previewMode, setPreviewMode] = useState<"inline" | "pane">("inline");
   const [activeSession, setActiveSession] = useState<string | null>(null);
+  const [chatTarget, setChatTarget] = useState<{
+    itemId: string;
+    threadId: string;
+  } | null>(null);
+  const chatToggleRef = useRef<HTMLButtonElement>(null);
+  const [chatFocusRequest, setChatFocusRequest] = useState(0);
   const [now, setNow] = useState(Date.now());
   const [rotation, setRotation] = useState(0);
   const [rotate, setRotate] = useState(
@@ -198,6 +205,7 @@ function WorkMap() {
     void refresh(true);
   });
   const startSession = (item?: WorkItem) => {
+    setChatTarget(null);
     if (manager.active) manager.close(false);
     if (!item) {
       setSelection(null);
@@ -458,7 +466,7 @@ function WorkMap() {
     : "";
   const captureLayout = useMapMotion(
     canvasRef,
-    `${spatial}:${mapWidth}:${zoom}:${selected?.id ?? ""}:${previewMode}:${launcher.context?.id ?? ""}:${launcher.threadId ?? ""}:${shown.map((item) => `${item.id}:${item.signal}:${item.attention}:${item.unreadResults}:${item.focus}`).join("|")}`,
+    `${spatial}:${mapWidth}:${zoom}:${selected?.id ?? ""}:${previewMode}:${chatTarget?.threadId ?? ""}:${launcher.context?.id ?? ""}:${launcher.threadId ?? ""}:${shown.map((item) => `${item.id}:${item.signal}:${item.attention}:${item.unreadResults}:${item.focus}`).join("|")}`,
     zoom,
   );
   useEffect(() => {
@@ -537,9 +545,28 @@ function WorkMap() {
     selected?.kind === "project"
       ? null
       : (activeSession ?? selected?.threads[0]?.id);
+  const livePreviewThread = sidebar.threads.find((t) => t.id === previewId);
   const previewThread =
-    sidebar.threads.find((t) => t.id === previewId) ??
-    selected?.threads.find((t) => t.id === previewId);
+    livePreviewThread ?? selected?.threads.find((t) => t.id === previewId);
+  const canChat = !!livePreviewThread && !livePreviewThread.isArchived;
+  const chatOpen =
+    canChat &&
+    chatTarget?.itemId === selected?.id &&
+    chatTarget?.threadId === previewId;
+  useEffect(() => {
+    setChatTarget(null);
+  }, [selected?.id, previewId, canChat]);
+  useEffect(() => {
+    // Change the nonce after mounting or moving the native chat, so focus does
+    // not depend on whether the host treats an initial prop as a request.
+    if (chatOpen) setChatFocusRequest((request) => request + 1);
+  }, [chatOpen, previewMode]);
+  const closeChat = () => {
+    setChatTarget(null);
+    requestAnimationFrame(() =>
+      chatToggleRef.current?.focus({ preventScroll: true }),
+    );
+  };
   const relatedTasks = previewId ? (tasksBySession.get(previewId) ?? []) : [];
   const linkedSessions = selected?.task
     ? (selected.task.sessionLinks ??
@@ -572,7 +599,8 @@ function WorkMap() {
   } | null>(null);
   const [previewRetry, setPreviewRetry] = useState(0);
   useEffect(() => {
-    if (!selected || selected.kind === "project") return;
+    // The native chat owns its loading and read tracking while it is visible.
+    if (!selected || selected.kind === "project" || chatOpen) return;
     let canceled = false;
     let responseLoaded = !previewId;
     setPreviewFailure(null);
@@ -626,7 +654,7 @@ function WorkMap() {
     return () => {
       canceled = true;
     };
-  }, [rpc, selected?.id, previewId, previewAttention, previewRetry]);
+  }, [rpc, selected?.id, previewId, previewAttention, previewRetry, chatOpen]);
   const openPreview = (item: WorkItem) => {
     if (launcher.busy || manager.busy) return;
     if (manager.active) manager.close(false);
@@ -636,8 +664,7 @@ function WorkMap() {
       (selected?.id === item.id ||
         (item.kind === "project" && area?.id === item.id))
     ) {
-      if (item.kind === "task" && area?.kind === "project") setSelection(area);
-      else collapseDetails();
+      collapseDetails();
       return;
     }
     if (!selectionRef.current) {
@@ -724,6 +751,7 @@ function WorkMap() {
     setSelection(null);
     setExpandedArea(null);
     setActiveSession(null);
+    setChatTarget(null);
     setBrowseLayout(null);
     requestAnimationFrame(() => {
       const trigger = returnItemId.current
@@ -758,6 +786,10 @@ function WorkMap() {
   const collapseDetails = () => {
     if (launcher.context) {
       launcher.close();
+      return;
+    }
+    if (chatOpen) {
+      closeChat();
       return;
     }
     if (
@@ -1359,42 +1391,95 @@ function WorkMap() {
               </section>
             )}
             {previewId ? (
-              <section className="wm-detail-section">
-                <h3>
-                  {previewThread && threadSignal(previewThread) === "working"
-                    ? "Latest response · session is working"
-                    : "Latest session response"}
-                </h3>
-                <p className="wm-response">
-                  {previewFailure?.key === loadKey
-                    ? previewFailure.message
-                    : loadedKey !== loadKey
-                      ? "Loading session preview…"
-                      : preview?.text ||
-                        "No response yet. Open the session to follow its progress."}
-                </p>
-                {(previewFailure?.key === loadKey || preview?.error) && (
+              <section className="wm-session-view">
+                <div className="wm-session-controls">
+                  {canChat && (
+                    <Button
+                      ref={chatToggleRef}
+                      size="sm"
+                      variant={chatOpen ? "outline" : "default"}
+                      aria-expanded={chatOpen}
+                      aria-controls={chatOpen ? `chat-${previewId}` : undefined}
+                      disabled={launcher.busy}
+                      onClick={() => {
+                        if (chatOpen) closeChat();
+                        else {
+                          if (launcher.context) launcher.close();
+                          setChatTarget({
+                            itemId: selected.id,
+                            threadId: previewId,
+                          });
+                        }
+                      }}
+                    >
+                      {chatOpen ? "Back to summary" : "Chat here"}
+                    </Button>
+                  )}
                   <Button
-                    variant="outline"
                     size="sm"
-                    onClick={() => setPreviewRetry((n) => n + 1)}
+                    variant="outline"
+                    onClick={() => actions.open(previewId)}
                   >
-                    Retry preview
+                    <Icon name="ArrowUpRight" />
+                    Open full session
                   </Button>
+                </div>
+                {chatOpen ? (
+                  <section
+                    id={`chat-${previewId}`}
+                    className="wm-live-session"
+                    aria-label={`Live session: ${previewThread?.title ?? selected.title}`}
+                  >
+                    <div className="wm-live-heading">
+                      <strong>{previewThread?.title ?? selected.title}</strong>
+                      <span>{sessionState(previewId)}</span>
+                    </div>
+                    <ThreadChat
+                      key={previewId}
+                      threadId={previewId}
+                      variant="compact"
+                      layout="contained"
+                      permissionPolicy="inherit"
+                      focusRequest={chatFocusRequest}
+                      className="wm-live-chat"
+                    />
+                  </section>
+                ) : (
+                  <div className="wm-detail-section wm-session-summary">
+                    <h3>
+                      {previewThread &&
+                      threadSignal(previewThread) === "working"
+                        ? "Latest response · session is working"
+                        : "Latest session response"}
+                    </h3>
+                    <p className="wm-response">
+                      {previewFailure?.key === loadKey
+                        ? previewFailure.message
+                        : loadedKey !== loadKey
+                          ? "Loading session preview…"
+                          : preview?.text ||
+                            "No response yet. Open the chat to follow its progress."}
+                    </p>
+                    {(previewFailure?.key === loadKey || preview?.error) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPreviewRetry((n) => n + 1)}
+                      >
+                        Retry preview
+                      </Button>
+                    )}
+                    <p className="wm-excerpt-note">
+                      {canChat
+                        ? "Latest excerpt. Chat here to reply and follow the session live."
+                        : previewThread?.isArchived
+                          ? "Archived session. Open the full session to view or reopen it."
+                          : "This session is not in BB's active list. Open the full session to check it."}
+                    </p>
+                  </div>
                 )}
-                <p className="wm-excerpt-note">
-                  Excerpt from the session. Open it for the full context and
-                  links.
-                </p>
-                <Button
-                  className="wm-open-session"
-                  onClick={() => actions.open(previewId)}
-                >
-                  <Icon name="ArrowUpRight" />
-                  Open full session
-                </Button>
                 {relatedTasks.length > 0 && (
-                  <div className="wm-connections wm-related-tasks">
+                  <div className="wm-detail-section wm-connections wm-related-tasks">
                     <h3>Tasks connected to this session</h3>
                     {relatedTasks.map((task) => {
                       const related = leaves.find(

@@ -18,7 +18,7 @@ type Anchor = {
 const isEditor = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   !!target.closest(
-    "input,textarea,select,[contenteditable=true],.wm-session-launcher,.wm-settle",
+    "input,textarea,select,[contenteditable=true],.wm-session-launcher,.wm-live-session,.wm-settle",
   );
 
 export function useMapZoom(

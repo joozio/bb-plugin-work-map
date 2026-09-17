@@ -261,6 +261,205 @@ async function mount(
     },
   );
 }
+describe("existing session chat", () => {
+  it("opens a running session in its filtered row without creating or navigating, and preserves it through zoom and activity changes", async () => {
+    const session = thread({ title: "Running session", indicator: "runtime" });
+    const slot = await mount({ tasks: [], threads: [session] });
+    await slot.findByRole("button", { name: /^Preview Running session/ });
+    fireEvent.click(slot.getByRole("button", { name: /^Working/ }));
+    fireEvent.click(
+      slot.getByRole("button", { name: /^Preview Running session/ }),
+    );
+    const row = slot
+      .getByRole("region", { name: "Expanded: Running session" })
+      .closest(".wm-result");
+    expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    const chat = slot.getByTestId("bb-thread-chat");
+    expect(chat.getAttribute("data-thread-id")).toBe(session.id);
+    expect(chat.getAttribute("data-permission-policy")).toBe("inherit");
+    expect(chat.getAttribute("data-layout")).toBe("contained");
+    expect(chat.getAttribute("data-focus-request")).toBe("1");
+    expect(chat.closest(".wm-result")).toBe(row);
+    expect(chat.closest(".wm-detail-section")).toBeNull();
+    fireEvent.change(slot.getByRole("slider"), { target: { value: "160" } });
+    expect(slot.getByTestId("bb-thread-chat")).toBe(chat);
+    const key = new KeyboardEvent("keydown", {
+      key: "0",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    fireEvent(chat, key);
+    expect(key.defaultPrevented).toBe(false);
+    expect((slot.getByRole("slider") as HTMLInputElement).value).toBe("160");
+    session.indicator = "none";
+    fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
+    await waitFor(() =>
+      expect(
+        slot.getByRole("region", { name: "Live session: Running session" })
+          .textContent,
+      ).toContain("Inactive"),
+    );
+    expect(slot.getByTestId("bb-thread-chat")).toBe(chat);
+    expect(
+      slot.inspection.rpcCalls.some((call) => call.method === "createSession"),
+    ).toBe(false);
+    expect(slot.inspection.sidebarActionCalls).toEqual([]);
+    session.indicator = "unread-success";
+    session.latestAttentionAt += 1;
+    fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
+    await waitFor(() =>
+      expect(
+        slot.getByRole("region", { name: "Live session: Running session" })
+          .textContent,
+      ).toContain("New result"),
+    );
+    // The SDK stub does not implement host read tracking. Work Map must not
+    // acknowledge a hidden excerpt on the host chat's behalf.
+    expect(slot.inspection.sidebarActionCalls).toEqual([]);
+    fireEvent.click(slot.getByRole("button", { name: "Back to summary" }));
+    expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
+    expect(
+      slot
+        .getByRole("region", { name: "Expanded: Running session" })
+        .closest(".wm-result"),
+    ).toBe(row);
+    slot.lifecycle.unmount();
+  });
+  it("targets the chosen attached session, supports the optional pane, and steps back from chat before closing the task", async () => {
+    const slot = await mount({
+      tasks: [task({ threadIds: ["thr_test", "thr_second"] })],
+      threads: [
+        thread({ title: "First agent", indicator: "runtime" }),
+        thread({
+          id: "thr_second",
+          title: "Second agent",
+          hasPendingInteraction: true,
+        }),
+      ],
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    fireEvent.click(
+      slot.getByRole("button", { name: /^Second agent Attached to task/ }),
+    );
+    expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    expect(
+      slot.getByTestId("bb-thread-chat").getAttribute("data-thread-id"),
+    ).toBe("thr_second");
+    const taskDetail = slot.getByRole("region", {
+      name: "Expanded: Review proposal",
+    });
+    fireEvent.click(
+      within(taskDetail).getByRole("button", { name: "Open in side pane" }),
+    );
+    expect(
+      slot.getByTestId("bb-thread-chat").closest(".wm-preview"),
+    ).not.toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Expand in map" }));
+    const focusRequest = Number(
+      slot.getByTestId("bb-thread-chat").getAttribute("data-focus-request"),
+    );
+    fireEvent.click(
+      slot.getByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
+    expect(
+      slot.getByRole("region", { name: "Expanded: Review proposal" }),
+    ).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    expect(
+      Number(
+        slot.getByTestId("bb-thread-chat").getAttribute("data-focus-request"),
+      ),
+    ).toBeGreaterThan(focusRequest);
+    const consumedEscape = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    consumedEscape.preventDefault();
+    fireEvent(slot.getByTestId("bb-thread-chat"), consumedEscape);
+    expect(slot.getByTestId("bb-thread-chat")).toBeTruthy();
+    fireEvent.keyDown(slot.getByTestId("bb-thread-chat"), { key: "Escape" });
+    expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
+    expect(
+      slot.getByRole("region", { name: "Expanded: Review proposal" }),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        slot.getByRole("button", { name: "Chat here" }),
+      ),
+    );
+    fireEvent.keyDown(slot.getByRole("button", { name: "Chat here" }), {
+      key: "Escape",
+    });
+    expect(
+      slot.queryByRole("region", { name: "Expanded: Review proposal" }),
+    ).toBeNull();
+    expect(
+      slot.getByRole("region", { name: "Expanded: Test project" }),
+    ).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+  it("can open native chat when the excerpt request fails and returns to a summary after starting a new draft", async () => {
+    const slot = await mount({
+      rejectPreview: true,
+      threads: [thread({ indicator: "runtime" })],
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    await slot.findByText(/Session preview could not be loaded/);
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    expect(
+      slot.getByTestId("bb-thread-chat").getAttribute("data-thread-id"),
+    ).toBe("thr_test");
+    const detail = slot.getByRole("region", {
+      name: "Expanded: Review proposal",
+    });
+    fireEvent.click(
+      within(detail).getByRole("button", { name: "New session" }),
+    );
+    expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
+    expect(slot.getByTestId("bb-new-thread-composer")).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Close draft" }));
+    expect(slot.getByRole("button", { name: "Chat here" })).toBeTruthy();
+    expect(
+      slot.inspection.rpcCalls.some((call) => call.method === "createSession"),
+    ).toBe(false);
+    slot.lifecycle.unmount();
+  });
+  it("unmounts chat when its session is archived and keeps the full-session fallback", async () => {
+    const session = thread({ indicator: "runtime" });
+    const slot = await mount({ tasks: [], threads: [session] });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Session/ }),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    session.isArchived = true;
+    fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
+    await waitFor(() =>
+      expect(slot.queryByTestId("bb-thread-chat")).toBeNull(),
+    );
+    expect(slot.queryByRole("button", { name: "Chat here" })).toBeNull();
+    expect(
+      slot.getByText(
+        "Archived session. Open the full session to view or reopen it.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Open full session" }));
+    expect(slot.inspection.sidebarActionCalls).toEqual([
+      { method: "open", threadId: "thr_test", options: undefined },
+    ]);
+    slot.lifecycle.unmount();
+  });
+});
+
 describe("area management", () => {
   it("shows inherited project focus accurately in Manage areas", async () => {
     const slot = await mount({ threads: [thread({ isPinned: true })] });
