@@ -979,8 +979,8 @@ function WorkMap() {
             item.task ? `${item.task.priority} priority` : "",
             due,
             item.changed ? "Updated" : "",
-            !small ? excerpt : "",
-            zoom > 1 ? zoomDetail : "",
+            !small && !(inspecting && item.kind === "task") ? excerpt : "",
+            zoom > 1 && !(inspecting && item.kind === "task") ? zoomDetail : "",
           ]
             .filter(Boolean)
             .join(". ")}
@@ -1000,8 +1000,10 @@ function WorkMap() {
             {item.changed && <span className="wm-changed">Updated</span>}
           </span>
           <strong>{item.title}</strong>
-          {!small && <span className="wm-excerpt">{excerpt}</span>}
-          {zoom > 1 && zoomDetail && (
+          {!small && !(inspecting && item.kind === "task") && (
+            <span className="wm-excerpt">{excerpt}</span>
+          )}
+          {zoom > 1 && zoomDetail && !(inspecting && item.kind === "task") && (
             <span className="wm-zoom-details">{zoomDetail}</span>
           )}
           <span className="wm-tile-bottom">
@@ -1210,7 +1212,7 @@ function WorkMap() {
     const Element = pane ? "aside" : "section";
     return (
       <Element
-        className={pane ? "wm-preview" : "wm-inline-detail"}
+        className={`${pane ? "wm-preview" : "wm-inline-detail"} ${selected.task ? "wm-task-detail" : ""}`}
         id={`detail-${selected.id}`}
         ref={panelRef}
         tabIndex={-1}
@@ -1246,7 +1248,7 @@ function WorkMap() {
               onAction={(action) => manageArea(selected, action)}
             />
           )}
-          {selected.kind !== "thread" && (
+          {selected.kind === "project" && (
             <Button
               size="sm"
               disabled={launcher.busy}
@@ -1257,14 +1259,16 @@ function WorkMap() {
           )}
           <Button
             size="sm"
-            variant="outline"
+            variant={selected.task ? "ghost" : "outline"}
             onClick={() => setPreviewMode(pane ? "inline" : "pane")}
           >
             {pane ? "Expand in map" : "Open in side pane"}
           </Button>
           <Button
             size="sm"
-            variant={selected.focus ? "secondary" : "outline"}
+            variant={
+              selected.focus ? "secondary" : selected.task ? "ghost" : "outline"
+            }
             disabled={busy || !!focusedProject}
             onClick={() => void saveFocus(selected, !selected.focus)}
           >
@@ -1288,7 +1292,7 @@ function WorkMap() {
           launcher.context?.id === selected.id &&
           launcher.threadId &&
           settleControls(undefined, launcher.threadId)}
-        {selected.kind !== "project" &&
+        {selected.kind === "thread" &&
           settleControls(
             selected,
             launcher.context?.id === selected.id
@@ -1323,16 +1327,27 @@ function WorkMap() {
           <>
             {selected.task && (
               <>
-                <section className="wm-detail-section">
-                  <h3>Current status</h3>
-                  <p>{selected.summary || "No status summary recorded yet."}</p>
+                <section
+                  className="wm-detail-section wm-task-summary"
+                  aria-label="Task summary"
+                >
+                  {selected.summary &&
+                    selected.summary !== selected.nextAction && (
+                      <>
+                        <h3>Current status</h3>
+                        <p>{selected.summary}</p>
+                      </>
+                    )}
+                  {selected.nextAction && (
+                    <div className="wm-next">
+                      <h3>Next step</h3>
+                      <p>{selected.nextAction}</p>
+                    </div>
+                  )}
+                  {!selected.summary && !selected.nextAction && (
+                    <p>No status summary recorded yet.</p>
+                  )}
                 </section>
-                {selected.nextAction && (
-                  <section className="wm-detail-section wm-next">
-                    <h3>Next step</h3>
-                    <p>{selected.nextAction}</p>
-                  </section>
-                )}
                 <dl className="wm-facts">
                   <div>
                     <dt>Project</dt>
@@ -1362,46 +1377,76 @@ function WorkMap() {
                 </dl>
               </>
             )}
-            {(linkedSessions.length > 0 || commentingSessions.length > 0) && (
-              <section className="wm-detail-section wm-connections">
-                <h3>Connected sessions</h3>
-                {linkedSessions.map((session) => (
-                  <button
-                    key={session.threadId}
-                    aria-pressed={previewId === session.threadId}
-                    onClick={() => setActiveSession(session.threadId)}
-                  >
-                    <strong>
-                      {sidebar.threads.find((t) => t.id === session.threadId)
-                        ?.title ?? session.title}
-                    </strong>
+            {selected.task && (
+              <section
+                className="wm-detail-section wm-connections wm-task-sessions"
+                aria-label="Connected sessions"
+              >
+                <div className="wm-section-heading">
+                  <h3>
+                    Sessions{" "}
                     <span>
-                      Attached to task ·{" "}
-                      {sessionState(session.threadId, session.liveStatus)}
-                      {session.attachedAt
-                        ? ` · ${session.attachedAt.slice(0, 10)}`
-                        : ""}
+                      {linkedSessions.length + commentingSessions.length}
                     </span>
-                  </button>
-                ))}
-                {commentingSessions.map((session) => (
-                  <button
-                    key={session.threadId}
-                    aria-pressed={previewId === session.threadId}
-                    onClick={() => setActiveSession(session.threadId)}
+                  </h3>
+                  <Button
+                    size="sm"
+                    variant={canChat ? "ghost" : "default"}
+                    disabled={launcher.busy}
+                    onClick={() => startSession(selected)}
                   >
-                    <strong>
-                      {sidebar.threads.find((t) => t.id === session.threadId)
-                        ?.title ??
-                        session.title ??
-                        session.threadId}
-                    </strong>
-                    <span>
-                      Commented on task · {sessionState(session.threadId)} ·{" "}
-                      {session.at.slice(0, 10)}
-                    </span>
-                  </button>
-                ))}
+                    <Icon name="MessageCirclePlus" /> New session
+                  </Button>
+                </div>
+                <div className="wm-session-options">
+                  {linkedSessions.map((session) => (
+                    <button
+                      key={session.threadId}
+                      aria-pressed={previewId === session.threadId}
+                      title={`Attached to task · ${sessionState(session.threadId, session.liveStatus)}${session.attachedAt ? ` · ${session.attachedAt.slice(0, 10)}` : ""}`}
+                      onClick={() => setActiveSession(session.threadId)}
+                    >
+                      <strong>
+                        {sidebar.threads.find((t) => t.id === session.threadId)
+                          ?.title ?? session.title}
+                      </strong>
+                      <span>
+                        {sidebar.threads.some((t) => t.id === session.threadId)
+                          ? sessionState(session.threadId)
+                          : "Not in active sessions"}{" "}
+                        · Attached
+                      </span>
+                    </button>
+                  ))}
+                  {commentingSessions.map((session) => (
+                    <button
+                      key={session.threadId}
+                      aria-pressed={previewId === session.threadId}
+                      title={`Commented on task · ${sessionState(session.threadId)} · ${session.at.slice(0, 10)}`}
+                      onClick={() => setActiveSession(session.threadId)}
+                    >
+                      <strong>
+                        {sidebar.threads.find((t) => t.id === session.threadId)
+                          ?.title ??
+                          session.title ??
+                          session.threadId}
+                      </strong>
+                      <span>
+                        {sidebar.threads.some((t) => t.id === session.threadId)
+                          ? sessionState(session.threadId)
+                          : "Not in active sessions"}{" "}
+                        · Contributed
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {!previewId && (
+                  <p className="wm-session-hint">
+                    {linkedSessions.length || commentingSessions.length
+                      ? "Choose a session to read or continue it."
+                      : "Start a session to work on this task."}
+                  </p>
+                )}
               </section>
             )}
             {previewId ? (
@@ -1574,16 +1619,14 @@ function WorkMap() {
                   </button>
                 )}
               </section>
-            ) : (
-              <section className="wm-detail-section">
-                <h3>Session</h3>
-                <p>
-                  {linkedSessions.length || commentingSessions.length
-                    ? "Choose a connected session above to read it."
-                    : "No session connection is recorded. Start a new session here, or open the task to attach an existing one."}
-                </p>
-              </section>
-            )}
+            ) : null}
+            {selected.task &&
+              settleControls(
+                selected,
+                launcher.context?.id === selected.id
+                  ? (launcher.threadId ?? undefined)
+                  : undefined,
+              )}
           </>
         )}
       </Element>

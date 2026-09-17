@@ -349,7 +349,7 @@ describe("existing session chat", () => {
     );
     fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
     fireEvent.click(
-      slot.getByRole("button", { name: /^Second agent Attached to task/ }),
+      slot.getByRole("button", { name: /^Second agent.*Attached/ }),
     );
     expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
     fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
@@ -745,16 +745,184 @@ describe("preview and native navigation", () => {
     ).toBeTruthy();
     slot.lifecycle.unmount();
   });
-  it("settles from the expanded task in one click, contracts, and offers persistent Undo", async () => {
+  it("keeps task details readable before showing handoff fields", async () => {
     const settleRequests: SettleInput[] = [];
     const slot = await mount({ settleRequests });
     fireEvent.click(
       await slot.findByRole("button", { name: /^Preview Review proposal/ }),
     );
+    const detail = slot.getByRole("region", {
+      name: "Expanded: Review proposal",
+    });
+    const card = detail.closest(".wm-item-expanded")!;
+    expect(
+      within(card as HTMLElement).getAllByText("Choose a direction"),
+    ).toHaveLength(1);
+    expect(
+      card.querySelector(".wm-tile")?.getAttribute("aria-label"),
+    ).not.toContain("Choose a direction");
+    expect(slot.queryByLabelText("Next step")).toBeNull();
+    expect(slot.queryByLabelText("Review by")).toBeNull();
+    const summary = within(detail).getByRole("region", {
+      name: "Task summary",
+    });
+    const sessions = within(detail).getByRole("region", {
+      name: "Connected sessions",
+    });
+    const settle = within(detail).getByRole("region", {
+      name: "Settle this work",
+    });
+    expect(
+      summary.compareDocumentPosition(sessions) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      sessions.compareDocumentPosition(settle) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      within(sessions).getByRole("button", { name: "New session" }),
+    ).toBeTruthy();
+    expect(
+      slot.getByRole("checkbox", { name: /Archive viewed session/ }),
+    ).toHaveProperty("checked", true);
+    expect(settleRequests).toEqual([]);
+    slot.lifecycle.unmount();
+  });
+  it("cancels a handoff with Escape before collapsing the task and keeps canceled edits out of writes", async () => {
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({ settleRequests });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    const pause = slot.getByRole("button", { name: "Pause here" });
+    fireEvent.click(pause);
+    const nextStep = slot.getByLabelText("Next step");
+    expect(document.activeElement).toBe(nextStep);
+    expect(slot.queryByLabelText("Review by")).toBeNull();
+    fireEvent.change(nextStep, { target: { value: "Canceled next step" } });
+    fireEvent.keyDown(nextStep, { key: "Escape" });
+    expect(document.activeElement).toBe(pause);
+    expect(slot.queryByLabelText("Next step")).toBeNull();
+    expect(
+      slot.getByRole("region", { name: "Expanded: Review proposal" }),
+    ).toBeTruthy();
+    expect(settleRequests).toEqual([]);
+    fireEvent.click(pause);
+    expect(slot.getByLabelText("Next step")).toHaveProperty(
+      "value",
+      "Choose a direction",
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(slot.getByRole("button", { name: "Task done" }));
+    await slot.findByRole("region", { name: "Settled today" });
+    expect(settleRequests).toHaveLength(1);
+    expect(settleRequests[0]).toMatchObject({
+      action: "done",
+      taskId: "task1",
+      threadId: "thr_test",
+      nextAction: "Choose a direction",
+    });
+    slot.lifecycle.unmount();
+  });
+  it("keeps the compact task layout in the pane and handoff draft through zoom", async () => {
+    const slot = await mount({
+      threads: [],
+      tasks: [task({ summary: "Choose a direction" })],
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    fireEvent.click(
+      within(
+        slot.getByRole("region", { name: "Expanded: Review proposal" }),
+      ).getByRole("button", { name: "Open in side pane" }),
+    );
+    const pane = slot.getByRole("complementary", {
+      name: "Preview: Review proposal",
+    });
+    expect(within(pane).getAllByText("Choose a direction")).toHaveLength(1);
+    expect(
+      within(pane).queryByRole("heading", { name: "Current status" }),
+    ).toBeNull();
+    expect(
+      within(pane).getByText("Start a session to work on this task."),
+    ).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Ready for review" }));
+    const input = slot.getByLabelText("Next step");
+    fireEvent.change(input, { target: { value: "Review these numbers" } });
+    fireEvent.change(slot.getByRole("slider"), { target: { value: "160" } });
+    expect(slot.getByLabelText("Next step")).toBe(input);
+    expect(input).toHaveProperty("value", "Review these numbers");
+    slot.lifecycle.unmount();
+  });
+  it("keeps task actions outside the live chat frame and usable while chatting", async () => {
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({ settleRequests });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    const chat = slot.getByTestId("bb-thread-chat");
+    const done = slot.getByRole("button", { name: "Task done" });
+    expect(done.closest(".wm-inline-detail")).toBe(
+      chat.closest(".wm-inline-detail"),
+    );
+    expect(done.closest(".wm-live-session")).toBeNull();
+    fireEvent.change(slot.getByRole("slider"), { target: { value: "60" } });
+    expect(slot.getByTestId("bb-thread-chat")).toBe(chat);
+    fireEvent.click(done);
+    await slot.findByRole("region", { name: "Settled today" });
+    expect(settleRequests[0]).toMatchObject({
+      action: "done",
+      taskId: "task1",
+      threadId: "thr_test",
+    });
+    slot.lifecycle.unmount();
+  });
+  it("leaves the review draft open on select Escape and never submits it through Task done", async () => {
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({ settleRequests });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Ready for review" }));
+    fireEvent.change(slot.getByLabelText("Next step"), {
+      target: { value: "Unsaved review draft" },
+    });
+    const reviewer = slot.getByLabelText("Review by");
+    fireEvent.change(reviewer, { target: { value: "other" } });
+    fireEvent.keyDown(reviewer, { key: "Escape" });
+    expect(slot.getByLabelText("Review request")).toHaveProperty(
+      "value",
+      "Unsaved review draft",
+    );
+    expect(slot.getByRole("button", { name: "Save review" })).toBeTruthy();
+    expect(settleRequests).toEqual([]);
+    fireEvent.click(slot.getByRole("button", { name: "Task done" }));
+    await slot.findByRole("region", { name: "Settled today" });
+    expect(settleRequests[0]).toMatchObject({
+      action: "done",
+      nextAction: "Choose a direction",
+      reviewBy: "me",
+      reviewer: "",
+    });
+    expect(settleRequests[0].checkAfter).toBeUndefined();
+    slot.lifecycle.unmount();
+  });
+  it("opens review fields on demand, then contracts and offers persistent Undo", async () => {
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({ settleRequests });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    expect(slot.queryByLabelText("Next step")).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Ready for review" }));
+    expect(settleRequests).toHaveLength(0);
     fireEvent.change(slot.getByLabelText("Next step"), {
       target: { value: "Check the new numbers" },
     });
-    fireEvent.click(slot.getByRole("button", { name: "Ready for review" }));
+    fireEvent.click(slot.getByRole("button", { name: "Save review" }));
     const strip = await slot.findByRole("region", { name: "Settled today" });
     await waitFor(() =>
       expect(
@@ -780,10 +948,11 @@ describe("preview and native navigation", () => {
     fireEvent.click(
       await slot.findByRole("button", { name: /^Preview Review proposal/ }),
     );
+    fireEvent.click(slot.getByRole("button", { name: "Ready for review" }));
     fireEvent.change(slot.getByLabelText("Review by"), {
       target: { value: "other" },
     });
-    fireEvent.click(slot.getByRole("button", { name: "Ready for review" }));
+    fireEvent.click(slot.getByRole("button", { name: "Save review" }));
     expect(await slot.findByRole("alert")).toHaveProperty(
       "textContent",
       "Name the reviewer and choose a follow-up date.",
@@ -798,7 +967,7 @@ describe("preview and native navigation", () => {
     fireEvent.click(
       slot.getByRole("checkbox", { name: /Archive viewed session/ }),
     );
-    fireEvent.click(slot.getByRole("button", { name: "Ready for review" }));
+    fireEvent.click(slot.getByRole("button", { name: "Save review" }));
     await slot.findByRole("region", { name: "Settled today" });
     expect(settleRequests[0]).toMatchObject({
       reviewer: "Sam",
@@ -812,7 +981,8 @@ describe("preview and native navigation", () => {
     fireEvent.click(
       await slot.findByRole("button", { name: /^Preview Review proposal/ }),
     );
-    fireEvent.click(slot.getByRole("button", { name: "Task done" }));
+    fireEvent.click(slot.getByRole("button", { name: "Pause here" }));
+    fireEvent.click(slot.getByRole("button", { name: "Save and pause" }));
     await slot.findByText("Task changed since you opened it");
     expect(slot.getByLabelText("Next step")).toHaveProperty(
       "value",
@@ -846,6 +1016,7 @@ describe("preview and native navigation", () => {
       await slot.findByRole("button", { name: /^Preview Review proposal/ }),
     );
     fireEvent.click(slot.getByRole("button", { name: "Ready for review" }));
+    fireEvent.click(slot.getByRole("button", { name: "Save review" }));
     await slot.findByText("Task changed since you opened it");
     options.settleError = false;
     options.tasks[0] = task({
@@ -855,7 +1026,7 @@ describe("preview and native navigation", () => {
     });
     fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
     await slot.findByText("New information from the task");
-    fireEvent.click(slot.getByRole("button", { name: "Ready for review" }));
+    fireEvent.click(slot.getByRole("button", { name: "Save review" }));
     await slot.findByRole("region", { name: "Settled today" });
     expect(settleRequests[1].id).toBe(settleRequests[0].id);
     expect(settleRequests[1].expectedUpdatedAt).toBe("2026-09-17T14:00:00Z");
@@ -873,6 +1044,7 @@ describe("preview and native navigation", () => {
     fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
     await slot.findByTestId("bb-thread-chat");
     fireEvent.click(slot.getByRole("button", { name: "Pause here" }));
+    fireEvent.click(slot.getByRole("button", { name: "Save and pause" }));
     await slot.findByRole("region", { name: "Settled today" });
     expect(settleRequests[0].threadId).toBe("thr_created");
   });
@@ -1342,7 +1514,7 @@ describe("preview and native navigation", () => {
     ).toBeNull();
     fireEvent.click(
       slot.getByRole("button", {
-        name: /Archived session Attached to task.*Archived/,
+        name: /Archived session.*Archived.*Attached/,
       }),
     );
     await slot.findByText("The proposal is ready to review.");
@@ -1434,7 +1606,7 @@ describe("preview and native navigation", () => {
     });
     fireEvent.click(
       within(taskDetails).getByRole("button", {
-        name: /Session Commented on task/,
+        name: /Session.*Contributed/,
       }),
     );
     await within(taskDetails).findByText("The proposal is ready to review.");

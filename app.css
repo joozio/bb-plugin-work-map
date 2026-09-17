@@ -1,10 +1,3 @@
-.wm-settle {
-  margin: 16px 0;
-  padding: 14px;
-  background: color-mix(in srgb, var(--wm-blue) 7%, var(--card));
-  border: 1px solid color-mix(in srgb, var(--wm-blue) 28%, var(--border));
-  border-radius: 13px;
-}
 .wm-settle fieldset {
   border: 0;
   padding: 0;
@@ -41,10 +34,23 @@
   font-size: 11px;
   line-height: 1.5;
 }
-.wm-settle legend {
-  font-size: 12px;
-  font-weight: 650;
-  margin-bottom: 12px;
+.wm-task-detail > .wm-settle {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.wm-handoff-form {
+  max-width: 640px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--wm-blue) 4%, var(--card));
+}
+.wm-handoff-submit {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
 }
 .wm-settle label {
   display: flex;
@@ -105,16 +111,6 @@
 }
 .wm-settle-buttons > span {
   font-size: 11px;
-}
-.wm-settle .wm-review-button {
-  background: color-mix(in srgb, var(--wm-orange) 18%, var(--card));
-  color: var(--wm-ink);
-  border: 1px solid color-mix(in srgb, var(--wm-orange) 65%, var(--border));
-}
-.wm-settle .wm-done-button {
-  background: color-mix(in srgb, var(--wm-green) 18%, var(--card));
-  color: var(--wm-ink);
-  border: 1px solid color-mix(in srgb, var(--wm-green) 65%, var(--border));
 }
 .wm-settle-error,
 .wm-settle .wm-settle-error {
@@ -733,6 +729,17 @@
   gap: 13px;
   flex-wrap: wrap;
 }
+.wm-task-detail .wm-preview-top {
+  margin-bottom: 8px;
+}
+.wm-task-detail .wm-preview-actions {
+  gap: 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.wm-task-detail .wm-preview-actions > .wm-task-link {
+  margin-left: auto;
+}
 .wm-task-link {
   font-size: 11px;
   color: var(--wm-blue);
@@ -781,46 +788,97 @@
   background: color-mix(in srgb, var(--wm-blue) 7%, var(--card));
   font-weight: 600;
 }
+.wm-task-summary {
+  max-width: 74ch;
+}
 .wm-next {
-  padding: 15px;
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--wm-blue) 6%, var(--background));
-  border: 1px solid color-mix(in srgb, var(--wm-blue) 18%, var(--border));
+  margin-top: 14px;
+  padding-left: 12px;
+  border-left: 2px solid var(--wm-blue);
+}
+.wm-next:first-child {
+  margin-top: 0;
+}
+.wm-next h3 {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--wm-blue);
+  margin: 0 0 4px;
+}
+.wm-next p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 .wm-facts {
-  margin: 22px 0;
+  margin: 14px 0;
   font-size: 11px;
   display: flex;
-  flex-direction: column;
-  gap: 9px;
+  flex-wrap: wrap;
+  gap: 6px 18px;
 }
 .wm-facts > div {
-  display: grid;
-  grid-template-columns: 90px 1fr;
-  gap: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .wm-facts dt {
   color: var(--wm-dim);
 }
 .wm-facts dd {
+  margin: 0;
   overflow-wrap: anywhere;
   text-transform: none;
 }
-.wm-session-picker {
-  font-size: 10px;
-  color: var(--wm-dim);
-  display: block;
-  margin-top: 24px;
+.wm-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
 }
-.wm-session-picker select {
-  width: 100%;
-  display: block;
-  background: var(--card);
-  border: 1px solid var(--border);
-  padding: 8px;
-  margin-top: 6px;
-  color: var(--wm-ink);
-  border-radius: 7px;
+.wm-section-heading h3 {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0;
+}
+.wm-section-heading h3 span {
+  margin-left: 5px;
+  color: var(--wm-dim);
+  font-weight: 400;
+}
+.wm-session-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 6px;
+}
+.wm-task-sessions .wm-session-options > button {
+  margin: 0;
+  padding: 10px 12px;
+  border-color: transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--wm-ink) 3%, transparent);
+}
+.wm-task-sessions .wm-session-options > button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--wm-blue) 55%, var(--border));
+  background: color-mix(in srgb, var(--wm-blue) 7%, var(--card));
+}
+.wm-task-sessions .wm-session-options > button:hover {
+  background: var(--accent);
+}
+.wm-task-sessions .wm-session-options > button strong {
+  font-size: 12px;
+  font-weight: 550;
+}
+.wm-task-sessions .wm-session-options > button span {
+  margin-top: 3px;
+  font-size: 11px;
+}
+.wm-task-sessions > .wm-session-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--wm-dim);
 }
 .wm-detail-section .wm-excerpt-note {
   font-size: 10px;
@@ -1307,7 +1365,8 @@
   width: 100%;
 }
 .wm-connections > button,
-.wm-connections > a {
+.wm-connections > a,
+.wm-session-options > button {
   display: flex;
   flex-direction: column;
   align-items: flex-start;

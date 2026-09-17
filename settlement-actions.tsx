@@ -26,12 +26,30 @@ export function SettlementActions({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [archiveHelp, setArchiveHelp] = useState(false);
+  const [intent, setIntent] = useState<"pause" | "review" | null>(null);
+  const handoffId = useId();
+  const handoffRef = useRef<HTMLFormElement>(null);
+  const pauseRef = useRef<HTMLButtonElement>(null);
+  const reviewRef = useRef<HTMLButtonElement>(null);
   const archiveHelpId = useId();
   const lock = useRef(false);
   const attempt = useRef<{ key: string; input: SettleInput } | null>(null);
   const openTask = task && !["done", "canceled"].includes(task.status);
   const canArchive = thread && !thread.archived;
   useEffect(() => setArchive(true), [thread?.id]);
+  useEffect(() => {
+    if (intent)
+      handoffRef.current?.querySelector<HTMLElement>("input, select")?.focus();
+  }, [intent]);
+  function cancelHandoff() {
+    (intent === "review" ? reviewRef : pauseRef).current?.focus();
+    setIntent(null);
+    setNextAction(task?.nextAction ?? "");
+    setReviewBy("me");
+    setReviewer("");
+    setCheckAfter("");
+    setError("");
+  }
 
   async function settle(action: SettleInput["action"]) {
     if (lock.current || disabled) return;
@@ -49,10 +67,13 @@ export function SettlementActions({
       ...(canArchive && (archive || action === "archive")
         ? { threadId: thread.id }
         : {}),
-      nextAction,
-      reviewBy,
-      reviewer,
-      ...(checkAfter ? { checkAfter } : {}),
+      nextAction:
+        action === "pause" || action === "review"
+          ? nextAction
+          : (task?.nextAction ?? ""),
+      reviewBy: action === "review" ? reviewBy : ("me" as const),
+      reviewer: action === "review" ? reviewer : "",
+      ...(action === "review" && checkAfter ? { checkAfter } : {}),
     };
     const key = JSON.stringify(fields);
     if (attempt.current?.key !== key)
@@ -94,16 +115,78 @@ export function SettlementActions({
   if (!openTask && !canArchive) return null;
   return (
     <section
-      className={`wm-settle ${openTask ? "" : "wm-settle-compact"}`}
+      className="wm-settle wm-settle-compact"
       aria-label="Settle this work"
       aria-busy={busy}
+      onKeyDown={(event) => {
+        if (
+          event.key === "Escape" &&
+          intent &&
+          !busy &&
+          !event.defaultPrevented
+        ) {
+          // Let the browser close a native select popup without losing the draft.
+          if ((event.target as HTMLElement).tagName === "SELECT") {
+            event.stopPropagation();
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          cancelHandoff();
+        }
+      }}
     >
       <fieldset disabled={busy || disabled}>
-        {openTask && <legend>Leave this task in a clear place</legend>}
+        {openTask && <legend className="sr-only">Update task</legend>}
         {openTask && (
-          <>
+          <div className="wm-settle-buttons">
+            <Button
+              ref={pauseRef}
+              size="sm"
+              variant="ghost"
+              aria-expanded={intent === "pause"}
+              aria-controls={intent === "pause" ? handoffId : undefined}
+              onClick={() =>
+                intent === "pause" ? cancelHandoff() : setIntent("pause")
+              }
+            >
+              Pause here
+            </Button>
+            <Button
+              ref={reviewRef}
+              size="sm"
+              variant="ghost"
+              aria-expanded={intent === "review"}
+              aria-controls={intent === "review" ? handoffId : undefined}
+              onClick={() =>
+                intent === "review" ? cancelHandoff() : setIntent("review")
+              }
+            >
+              Ready for review
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void settle("done")}
+            >
+              Task done
+            </Button>
+          </div>
+        )}
+        {openTask && intent && (
+          <form
+            id={handoffId}
+            ref={handoffRef}
+            className="wm-handoff-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void settle(intent);
+            }}
+          >
             <label className="wm-handoff-step">
-              {reviewBy === "other" ? "Review request" : "Next step"}
+              {intent === "review" && reviewBy === "other"
+                ? "Review request"
+                : "Next step"}
               <input
                 value={nextAction}
                 onChange={(event) => setNextAction(event.target.value)}
@@ -111,49 +194,64 @@ export function SettlementActions({
                 placeholder="What should happen next?"
               />
             </label>
-            <div className="wm-review-options">
-              <label>
-                Review by
-                <select
-                  value={reviewBy}
-                  onChange={(event) =>
-                    setReviewBy(event.target.value as "me" | "other")
-                  }
-                >
-                  <option value="me">Me</option>
-                  <option value="other">Someone else</option>
-                </select>
-              </label>
-              {reviewBy === "other" && (
-                <>
-                  <label>
-                    Reviewer
-                    <input
-                      value={reviewer}
-                      onChange={(event) => setReviewer(event.target.value)}
-                      maxLength={150}
-                      placeholder="Name"
-                    />
-                  </label>
-                  <label>
-                    Follow up on
-                    <input
-                      type="date"
-                      value={checkAfter}
-                      onChange={(event) => setCheckAfter(event.target.value)}
-                    />
-                  </label>
-                </>
-              )}
-            </div>
-            {reviewBy === "other" && (
+            {intent === "review" && (
+              <div className="wm-review-options">
+                <label>
+                  Review by
+                  <select
+                    value={reviewBy}
+                    onChange={(event) =>
+                      setReviewBy(event.target.value as "me" | "other")
+                    }
+                  >
+                    <option value="me">Me</option>
+                    <option value="other">Someone else</option>
+                  </select>
+                </label>
+                {reviewBy === "other" && (
+                  <>
+                    <label>
+                      Reviewer
+                      <input
+                        value={reviewer}
+                        onChange={(event) => setReviewer(event.target.value)}
+                        maxLength={150}
+                        placeholder="Name"
+                      />
+                    </label>
+                    <label>
+                      Follow up on
+                      <input
+                        type="date"
+                        value={checkAfter}
+                        onChange={(event) => setCheckAfter(event.target.value)}
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
+            )}
+            {intent === "review" && reviewBy === "other" && (
               <p>
                 The task stays open. It returns to Waiting for you on the
                 follow-up date. This records the handoff; it does not send a
                 message.
               </p>
             )}
-          </>
+            <div className="wm-handoff-submit">
+              <Button size="sm" type="submit">
+                {intent === "review" ? "Save review" : "Save and pause"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                type="button"
+                onClick={cancelHandoff}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
         )}
         {canArchive && openTask && (
           <label className="wm-archive-choice">
@@ -166,44 +264,14 @@ export function SettlementActions({
           </label>
         )}
         {canArchive && openTask && archive && (
-          <p>
-            Archiving stops any running work in this session. Other attached
-            sessions stay open. Undo reopens this session; it does not restart
-            an agent.
+          <p className="wm-archive-note">
+            {thread.running ? "Stops this session's running work. " : ""}
+            Other sessions stay open. Undo reopens this session without
+            restarting it.
           </p>
         )}
-        {openTask && !canArchive && (
-          <p>
-            The task stays connected to its session history. No active attached
-            session is selected for archiving.
-          </p>
-        )}
-        <div className="wm-settle-buttons">
-          {openTask ? (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => void settle("pause")}
-              >
-                Pause here
-              </Button>
-              <Button
-                size="sm"
-                className="wm-review-button"
-                onClick={() => void settle("review")}
-              >
-                Ready for review
-              </Button>
-              <Button
-                size="sm"
-                className="wm-done-button"
-                onClick={() => void settle("done")}
-              >
-                Task done
-              </Button>
-            </>
-          ) : (
+        {!openTask && (
+          <div className="wm-settle-buttons">
             <span
               className="wm-archive-control"
               onMouseEnter={() => setArchiveHelp(true)}
@@ -237,9 +305,9 @@ export function SettlementActions({
                 agent.
               </span>
             </span>
-          )}
-          {busy && <span role="status">Saving…</span>}
-        </div>
+          </div>
+        )}
+        {busy && <span role="status">Saving…</span>}
       </fieldset>
       {error && (
         <p role="alert" className="wm-settle-error">
