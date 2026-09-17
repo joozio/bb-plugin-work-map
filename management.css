@@ -1,0 +1,239 @@
+.wm-island {
+  position: relative;
+}
+.wm-area-tools {
+  zoom: calc(1 / var(--wm-map-zoom, 1));
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  display: flex;
+  gap: 2px;
+}
+.wm-preview-actions > .wm-area-tools {
+  position: relative;
+  top: auto;
+  right: auto;
+  zoom: 1;
+}
+.wm-map-area:focus-within {
+  position: relative;
+  z-index: 6;
+}
+.wm-island-heading .wm-tile-meta {
+  padding-right: calc(48px / var(--wm-map-zoom, 1));
+}
+.wm-area-tool {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--card) 80%, transparent);
+  opacity: 0.6;
+}
+.wm-island:hover .wm-area-tool,
+.wm-island:focus-within .wm-area-tool {
+  opacity: 1;
+}
+.wm-area-tool:hover,
+.wm-area-tool[aria-expanded="true"] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.wm-area-menu {
+  position: absolute;
+  top: 29px;
+  right: 0;
+  min-width: 225px;
+  padding: 5px;
+  background: var(--popover, var(--card));
+  color: var(--popover-foreground, var(--foreground));
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 10px 30px #0003;
+}
+.wm-area-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  border-radius: 5px;
+  font-size: 12px;
+}
+.wm-area-menu.wm-menu-start {
+  left: 0;
+  right: auto;
+}
+.wm-area-menu.wm-menu-above {
+  top: auto;
+  bottom: 29px;
+}
+.wm-area-menu button:hover,
+.wm-area-menu button:focus-visible {
+  background: var(--accent);
+}
+.wm-area-menu small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  margin-top: 3px;
+}
+.wm-menu-separated {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.wm-project-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+.wm-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.wm-manager .wm-preview-top {
+  margin: 0;
+}
+.wm-manager-hint,
+.wm-manager small,
+.wm-management-form small {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.wm-manager-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.wm-managed-area {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 12px;
+  background: var(--card);
+}
+.wm-managed-title {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 5px;
+}
+.wm-managed-title button {
+  text-align: left;
+  font-size: 13px;
+  font-weight: 650;
+}
+.wm-managed-title > span {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.wm-managed-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 9px;
+  font-size: 11px;
+}
+.wm-managed-actions button:hover,
+.wm-managed-title button:hover {
+  text-decoration: underline;
+}
+.wm-managed-actions button[aria-pressed="true"] {
+  color: var(--wm-focus);
+}
+.wm-management-form,
+.wm-management-form fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  min-width: 0;
+}
+.wm-management-form fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.wm-management-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+.wm-management-form input,
+.wm-management-form textarea,
+.wm-management-form select,
+.wm-management-input {
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--foreground);
+  background: var(--background);
+}
+.wm-management-form textarea {
+  resize: vertical;
+}
+.wm-management-form input[readonly] {
+  color: var(--muted-foreground);
+}
+.wm-management-form button[type="submit"] {
+  align-self: flex-start;
+}
+.wm-color-choices {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px;
+}
+.wm-color-choices button {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid var(--card);
+}
+.wm-color-choices button[aria-pressed="true"] {
+  outline: 2px solid var(--foreground);
+  outline-offset: 1px;
+}
+.wm-management-inline {
+  zoom: calc(1 / var(--wm-map-zoom, 1));
+  padding: 16px;
+  margin: 8px 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--foreground);
+}
+.wm-management-inline .wm-preview-top {
+  margin-bottom: 16px;
+}
+.wm-inline-detail .wm-management-inline {
+  zoom: 1;
+}
+.wm-connect-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.wm-connect-row small {
+  display: block;
+}
+@media (hover: none) {
+  .wm-area-tool {
+    opacity: 1;
+  }
+}
