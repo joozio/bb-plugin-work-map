@@ -1640,7 +1640,6 @@
 }
 .wm-created-chat {
   margin-top: 12px;
-  min-height: 240px;
 }
 .wm-session-controls {
   display: flex;
@@ -1651,12 +1650,16 @@
 .wm-session-view > .wm-session-summary {
   margin-top: 0;
 }
-.wm-live-session {
+.wm-live-session,
+.wm-created-chat {
+  /* Both entry paths give the native timeline/composer a bounded flex parent. */
   display: flex;
   flex-direction: column;
   min-width: 0;
   height: clamp(320px, 65vh, 580px);
   overflow: hidden;
+}
+.wm-live-session {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--background);

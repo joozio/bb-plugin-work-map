@@ -781,6 +781,10 @@ describe("preview and native navigation", () => {
     ).toBe("proj_unrelated");
     fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
     const chat = await slot.findByTestId("bb-thread-chat");
+    expect(chat.getAttribute("data-layout")).toBe("contained");
+    expect(chat.parentElement?.classList.contains("wm-created-chat")).toBe(
+      true,
+    );
     expect(
       chat
         .closest(".wm-session-launcher")
@@ -788,8 +792,12 @@ describe("preview and native navigation", () => {
     ).toBe(true);
     expect(createRequests[0].taskId).toBeUndefined();
     expect(createRequests[0].request.projectId).toBe("proj_unrelated");
+    fireEvent.change(slot.getByRole("slider"), { target: { value: "160" } });
+    expect(slot.getByTestId("bb-thread-chat")).toBe(chat);
+    fireEvent.click(slot.getByRole("button", { name: "Collapse session" }));
+    expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
   });
-  it("opens a native composer without spawning and closes only the draft with Escape", async () => {
+  it("preserves the project draft and placement through zoom, then contains its created chat", async () => {
     const createRequests: {
       taskId?: string;
       request: { projectId: string };
@@ -830,6 +838,17 @@ describe("preview and native navigation", () => {
     expect(
       slot.getByRole("region", { name: "Expanded: Test project" }),
     ).toBeTruthy();
+    fireEvent.click(within(area).getByRole("button", { name: "New session" }));
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    const chat = await slot.findByTestId("bb-thread-chat");
+    expect(chat.getAttribute("data-layout")).toBe("contained");
+    expect(chat.parentElement?.classList.contains("wm-created-chat")).toBe(
+      true,
+    );
+    expect(chat.closest(".wm-island")).toBe(area.closest(".wm-island"));
+    fireEvent.change(slot.getByRole("slider"), { target: { value: "60" } });
+    expect(slot.getByTestId("bb-thread-chat")).toBe(chat);
+    expect(roots()).toEqual(before);
   });
   it("starts a task session inside its filtered row with the linked BB project", async () => {
     const createRequests: {
@@ -867,10 +886,17 @@ describe("preview and native navigation", () => {
     fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
     const chat = await slot.findByTestId("bb-thread-chat");
     expect(chat.getAttribute("data-thread-id")).toBe("thr_created");
+    expect(chat.getAttribute("data-layout")).toBe("contained");
+    expect(chat.parentElement?.classList.contains("wm-created-chat")).toBe(
+      true,
+    );
     expect(chat.closest(".wm-result")).toBe(row);
     expect(createRequests[0].taskId).toBe("task1");
     expect(createRequests[0].request.projectId).toBe("proj_linked");
     expect(slot.queryByTestId("bb-new-thread-composer")).toBeNull();
+    fireEvent.change(slot.getByRole("slider"), { target: { value: "60" } });
+    expect(slot.getByTestId("bb-thread-chat")).toBe(chat);
+    expect(chat.closest(".wm-result")).toBe(row);
   });
   it("keeps a started session usable when attachment fails, with a separate retry", async () => {
     const slot = await mount({ attachmentError: true, threads: [] });

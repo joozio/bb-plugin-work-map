@@ -186,13 +186,15 @@ export function useSessionLauncher(onCreated: () => void) {
           >
             Open full session
           </Button>
-          <ThreadChat
-            threadId={result.threadId}
-            variant="compact"
-            layout="document"
-            permissionPolicy="inherit"
-            className="wm-created-chat"
-          />
+          <div className="wm-created-chat">
+            <ThreadChat
+              threadId={result.threadId}
+              variant="compact"
+              layout="contained"
+              permissionPolicy="inherit"
+              className="wm-live-chat"
+            />
+          </div>
         </>
       ) : (
         <>
