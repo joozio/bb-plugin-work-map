@@ -26,7 +26,7 @@ it("animates background reordering without stretching text or treating scrolling
     value: animate,
   });
   let offset = 0;
-  let scale = 1;
+  let zoom = 1;
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
     function (this: HTMLElement) {
       const top = offset - (this.parentElement?.scrollTop ?? 0);
@@ -45,7 +45,7 @@ it("animates background reordering without stretching text or treating scrolling
   );
   function Example({ version }: { version: number }) {
     const ref = useRef<HTMLDivElement>(null);
-    useMapMotion(ref, String(version), scale);
+    useMapMotion(ref, String(version), zoom);
     return (
       <div ref={ref} data-testid="canvas">
         <div data-layout-id="one">Task</div>
@@ -57,14 +57,14 @@ it("animates background reordering without stretching text or treating scrolling
   view.rerender(<Example version={1} />);
   expect(animate).toHaveBeenCalledOnce();
   // Zoom uses camera compensation; it must not also animate stale geometry.
-  scale = 0.6;
+  zoom = 0.6;
   offset = 140;
   view.rerender(<Example version={3} />);
   expect(animate).toHaveBeenCalledOnce();
   offset = 200;
   view.rerender(<Example version={4} />);
   expect(animate.mock.calls[1]?.[0]?.[0]).toMatchObject({
-    transform: "translate(0px, -100px)",
+    transform: "translate(0px, -60px)",
   });
   expect(animate.mock.calls[0]).toEqual([
     [

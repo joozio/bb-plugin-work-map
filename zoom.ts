@@ -12,9 +12,9 @@ export function zoomDensity(zoom: number, width: number, focused = false) {
   const detail = Math.max(0, Math.min(1, (zoom - 1) / 0.6));
   return {
     roots: Math.min(32, Math.round((width >= 1100 ? 13 : 10) / zoom ** 2)),
-    tasks: Math.max(2, Math.min(18, Math.round((focused ? 6 : 4) / zoom ** 2))),
+    tasks: Math.max(2, Math.round((focused ? 6 : 4) / zoom ** 1.35)),
     detail,
-    excerpt: Math.max(0, Math.min(1, (zoom - 0.7) / 0.3)),
+    compact: Math.max(0, Math.min(1, (1 - zoom) / 0.4)),
     lines: 2 + Math.floor(detail * 4),
   };
 }
@@ -38,7 +38,7 @@ export function zoomVisible(
     ),
   ].slice(0, limit);
   const anchor = items.find((item) => item.id === anchorId);
-  if (anchor && limit > 0 && !visible.some((item) => item.id === anchor.id)) {
+  if (limit > 0 && anchor && !visible.some((item) => item.id === anchor.id)) {
     if (visible.length < limit) visible.push(anchor);
     else visible[visible.length - 1] = anchor;
   }
@@ -72,13 +72,16 @@ export function extendOrbit(
       .map((item) => item!.id),
   );
   const extras = items.filter((item) => !ids.has(item.id));
-  const ready = extras.filter((item) => item.unreadResults > 0);
-  const outer = extras.filter((item) => !item.unreadResults);
+  // Fill the sides, rather than adding rows above and below the current view.
+  // Both sessions and projects enter the same spatial neighborhood.
+  const west = [...base.west],
+    east = [...base.east];
+  for (const item of extras) {
+    (west.length <= east.length ? west : east).push(item);
+  }
   return {
     ...base,
-    west: [...base.west, ...ready.filter((_, index) => index % 2 === 0)],
-    east: [...base.east, ...ready.filter((_, index) => index % 2 === 1)],
-    north: [...base.north, ...outer.filter((_, index) => index % 2 === 0)],
-    south: [...base.south, ...outer.filter((_, index) => index % 2 === 1)],
+    west,
+    east,
   };
 }

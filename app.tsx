@@ -35,7 +35,7 @@ import { SettlementActions, SettledToday } from "./settlement-actions";
 import type { Settlement } from "./settlement-contract";
 import { AreaTools, ProjectDot, useAreaManager } from "./management-ui";
 import type { ManagementResult } from "./management-contract";
-import type { SessionPreview } from "./preview";
+import { previewExcerpt, type SessionPreview } from "./preview";
 import "./app.css";
 
 type Filter = "all" | "focus" | "waiting" | "unread" | "working" | "inactive";
@@ -504,6 +504,18 @@ function WorkMap() {
     .slice(0, 12)
     .sort()
     .join(",");
+  const detailExcerpts = useMemo(() => {
+    if (zoom <= 1) return {} as Record<string, string>;
+    const limit = Math.round(240 + density.detail * 560);
+    return Object.fromEntries(
+      visibleThreads.split(",").flatMap((id) => {
+        const preview = previews[id];
+        return preview?.text && !preview.error
+          ? [[id, previewExcerpt(preview.text, limit)]]
+          : [];
+      }),
+    );
+  }, [zoom, density.detail, visibleThreads, previews]);
   useEffect(() => {
     if (!visibleThreads) return;
     let canceled = false;
@@ -925,16 +937,16 @@ function WorkMap() {
   };
   function tile(item: WorkItem, small = false) {
     const inspecting = selected?.id === item.id && previewMode === "inline";
+    const showExcerpt = !small || zoom > 1;
     const excerpt =
       item.kind === "thread"
-        ? previews[item.threads[0]?.id]?.excerpt || item.summary
+        ? detailExcerpts[item.threads[0]?.id] ||
+          previews[item.threads[0]?.id]?.excerpt ||
+          item.summary
         : item.nextAction || item.summary;
     const due = item.task ? dueLabel(item.task, now) : "";
-    const zoomDetail = small
-      ? excerpt
-      : item.summary !== excerpt
-        ? item.summary
-        : "";
+    const zoomDetail =
+      item.kind !== "thread" && item.summary !== excerpt ? item.summary : "";
     const relatedCount =
       item.kind === "thread"
         ? (tasksBySession.get(item.threads[0].id)?.length ?? 0)
@@ -979,7 +991,7 @@ function WorkMap() {
             item.task ? `${item.task.priority} priority` : "",
             due,
             item.changed ? "Updated" : "",
-            !small && !(inspecting && item.kind === "task") ? excerpt : "",
+            showExcerpt && !(inspecting && item.kind === "task") ? excerpt : "",
             zoom > 1 && !(inspecting && item.kind === "task") ? zoomDetail : "",
           ]
             .filter(Boolean)
@@ -988,9 +1000,10 @@ function WorkMap() {
           <span className="wm-tile-meta">
             <span>
               {item.task?.key ?? item.scope}
-              {!small && relatedCount > 0
+              {(!small || zoom > 1) && relatedCount > 0
                 ? ` · ${relatedCount} ${item.kind === "thread" ? (relatedCount === 1 ? "related task" : "related tasks") : relatedCount === 1 ? "session" : "sessions"}`
                 : ""}
+              {zoom > 1 && item.task ? ` · ${item.task.priority} priority` : ""}
             </span>
             {item.focus && (
               <span className="wm-pin">
@@ -1000,11 +1013,18 @@ function WorkMap() {
             {item.changed && <span className="wm-changed">Updated</span>}
           </span>
           <strong>{item.title}</strong>
-          {!small && !(inspecting && item.kind === "task") && (
-            <span className="wm-excerpt">{excerpt}</span>
+          {showExcerpt && !(inspecting && item.kind === "task") && (
+            <span className="wm-excerpt">
+              {zoom > 1 && item.nextAction && (
+                <span className="wm-detail-label">Next: </span>
+              )}
+              {excerpt}
+            </span>
           )}
           {zoom > 1 && zoomDetail && !(inspecting && item.kind === "task") && (
-            <span className="wm-zoom-details">{zoomDetail}</span>
+            <span className="wm-zoom-details">
+              <span className="wm-detail-label">Status</span> {zoomDetail}
+            </span>
           )}
           <span className="wm-tile-bottom">
             <Status item={item} />
@@ -1042,6 +1062,7 @@ function WorkMap() {
         key={item.id}
         className={`wm-island wm-${item.signal} ${item.focus ? "wm-focused" : ""} ${hasWorking ? "wm-has-working" : ""} ${inspecting ? "wm-area-expanded" : ""}`}
         data-has-results={item.unreadResults > 0 || undefined}
+        data-kind="project"
       >
         <button
           className="wm-island-heading"
@@ -1860,14 +1881,15 @@ function WorkMap() {
               ref={worldRef}
               className={`wm-map-world ${zoom < 1 ? "wm-zoomed-out" : zoom > 1 ? "wm-zoomed-in" : ""}`}
               data-zoom={Math.round(zoom * 100)}
+              data-detail={
+                zoom <= 0.8 ? "compact" : zoom > 1 ? "detail" : "overview"
+              }
               style={
                 {
-                  zoom,
-                  width: zoom === 1 ? "100%" : `${mapWidth / zoom}px`,
+                  width: "100%",
                   containerType: "inline-size",
-                  "--wm-map-zoom": zoom,
                   "--wm-zoom-detail": density.detail,
-                  "--wm-zoom-excerpt": density.excerpt,
+                  "--wm-zoom-compact": density.compact,
                   "--wm-zoom-lines": density.lines,
                 } as CSSProperties
               }
@@ -1884,7 +1906,13 @@ function WorkMap() {
                           ? "ALL WORK"
                           : "MATCHING WORK"}
                 </span>
-                <span>Click to expand · Pinch to zoom · Drag to focus</span>
+                <span>
+                  {zoom !== 1 && spatial
+                    ? inspectionLayout
+                      ? `${shown.length} areas and sessions · Layout held while expanded`
+                      : `${shown.length === candidates.length ? `All ${shown.length}` : `${shown.length} of ${candidates.length}`} areas and sessions · ${zoom < 1 ? "Compact" : "Detail"}`
+                    : "Click to expand · Pinch to zoom · Drag to focus"}
+                </span>
               </div>
               {spatial ? (
                 <section

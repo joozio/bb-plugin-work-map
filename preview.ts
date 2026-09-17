@@ -12,7 +12,7 @@ function tableCells(line: string) {
 }
 
 /** A card gets prose or table headings, never flattened table rows. */
-export function previewExcerpt(markdown: string): string {
+export function previewExcerpt(markdown: string, limit = MAX_EXCERPT): string {
   const lines = markdown.replace(/```[\s\S]*?```/g, " [code] ").split(/\r?\n/);
   const prose: string[] = [];
   let tableHeading = "";
@@ -30,9 +30,7 @@ export function previewExcerpt(markdown: string): string {
     } else prose.push(lines[i]);
   }
   const text = plainText(prose.join("\n")) || plainText(tableHeading);
-  return text.length > MAX_EXCERPT
-    ? `${text.slice(0, MAX_EXCERPT - 1).trimEnd()}…`
-    : text;
+  return text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text;
 }
 
 /** Keep Markdown intact; prefer a whole line when bounding a long response. */

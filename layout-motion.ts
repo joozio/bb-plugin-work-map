@@ -6,13 +6,13 @@ const duration = 320;
 export function useMapMotion(
   canvas: RefObject<HTMLElement | null>,
   layoutKey: string,
-  scale = 1,
+  zoom = 1,
 ) {
   type Bounds = { left: number; top: number; width: number; height: number };
   const before = useRef<Map<string, Bounds> | null>(null);
   const last = useRef<Map<string, Bounds>>(new Map());
   const lastKey = useRef(layoutKey);
-  const lastScale = useRef(scale);
+  const lastZoom = useRef(zoom);
   const animations = useRef<Animation[]>([]);
   const reducedMotion = () =>
     typeof window.matchMedia === "function" &&
@@ -46,8 +46,8 @@ export function useMapMotion(
   useLayoutEffect(() => {
     const previous = before.current ?? last.current;
     const changed = lastKey.current !== layoutKey;
-    const zooming = lastScale.current !== scale;
-    lastScale.current = scale;
+    const zooming = lastZoom.current !== zoom;
+    lastZoom.current = zoom;
     lastKey.current = layoutKey;
     before.current = null;
     if (!changed) {
@@ -78,8 +78,8 @@ export function useMapMotion(
         !element.animate
       )
         continue;
-      const dx = (from.left - to.left) / scale,
-        dy = (from.top - to.top) / scale;
+      const dx = from.left - to.left,
+        dy = from.top - to.top;
       if (
         Math.abs(dx) +
           Math.abs(dy) +
@@ -93,7 +93,7 @@ export function useMapMotion(
           [
             {
               transform: `translate(${dx}px, ${dy}px)`,
-              clipPath: `inset(-5px ${Math.max(-5, (to.width - from.width) / scale - 5)}px ${Math.max(-5, (to.height - from.height) / scale - 5)}px -5px round 18px)`,
+              clipPath: `inset(-5px ${Math.max(-5, to.width - from.width - 5)}px ${Math.max(-5, to.height - from.height - 5)}px -5px round 18px)`,
               opacity: 0.85,
             },
             {

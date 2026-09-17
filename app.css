@@ -1623,90 +1623,196 @@
 .wm-map-world {
   overflow-anchor: none;
 }
-/* Native chat and task actions retain their normal type and hit targets. */
-.wm-map-world .wm-inline-detail,
-.wm-map-world .wm-area-actions,
-.wm-map-world .wm-expanded-project > .wm-session-launcher,
-.wm-map-world .wm-expanded-project > .wm-settle,
-.wm-map-world .wm-completed {
-  zoom: calc(1 / var(--wm-map-zoom));
-}
+/* Semantic zoom changes card density; the world and native controls never scale. */
 .wm-zoom-details {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: var(--wm-zoom-lines);
-  max-height: calc(var(--wm-zoom-detail) * 110px);
-  opacity: var(--wm-zoom-detail);
   overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--wm-dim);
-  font-size: 11px;
+}
+.wm-detail-label {
+  font-weight: 650;
+  color: var(--wm-ink);
+}
+.wm-zoomed-in .wm-spatial {
+  gap: calc(22px + var(--wm-zoom-detail) * 8px);
+}
+.wm-zoomed-in :is(.wm-spatial, .wm-results) .wm-tile:not(.wm-selected) {
+  min-height: 0;
+  padding: calc(14px + var(--wm-zoom-detail) * 8px);
+  gap: calc(7px + var(--wm-zoom-detail) * 4px);
+}
+.wm-map-world.wm-zoomed-in :is(.wm-spatial, .wm-results) .wm-tile strong,
+.wm-map-world.wm-zoomed-in .wm-spatial .wm-island-heading > strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: calc(15px + var(--wm-zoom-detail) * 5px);
+  -webkit-line-clamp: 4;
+}
+.wm-map-world.wm-zoomed-in .wm-spatial .wm-island-heading > strong {
+  font-size: calc(17px + var(--wm-zoom-detail) * 5px);
+}
+.wm-map-world.wm-zoomed-in :is(.wm-spatial, .wm-results) .wm-small strong {
+  font-size: calc(11px + var(--wm-zoom-detail) * 5px);
+}
+.wm-map-world.wm-zoomed-in
+  .wm-spatial
+  .wm-tile.wm-focused:not(.wm-small)
+  strong {
+  font-size: calc(21px + var(--wm-zoom-detail) * 2px);
+}
+.wm-map-world.wm-zoomed-in .wm-orbit-anchor .wm-island-heading > strong {
+  font-size: calc(23px + var(--wm-zoom-detail) * 3px);
+}
+.wm-zoomed-in :is(.wm-spatial, .wm-results) .wm-tile > .wm-excerpt,
+.wm-zoomed-in .wm-spatial .wm-island-heading > .wm-excerpt {
+  font-size: calc(11px + var(--wm-zoom-detail) * 2px);
+  -webkit-line-clamp: var(--wm-zoom-lines);
   line-height: 1.5;
 }
-.wm-zoomed-in .wm-spatial .wm-tile > .wm-excerpt,
-.wm-zoomed-in .wm-spatial .wm-island-heading > .wm-excerpt {
-  -webkit-line-clamp: var(--wm-zoom-lines);
+.wm-zoomed-in .wm-island:not(.wm-area-expanded) .wm-island-tasks {
+  grid-template-columns: 1fr;
+}
+.wm-zoomed-in .wm-spatial .wm-small .wm-tile-meta {
+  display: flex;
+  font-size: 11px;
+}
+.wm-zoomed-in .wm-spatial .wm-small :is(.wm-status, .wm-due) {
+  font-size: 11px;
 }
 .wm-zoomed-out .wm-spatial {
   max-width: none;
+  gap: calc(22px - var(--wm-zoom-compact) * 10px);
+  min-height: 0;
 }
-.wm-zoomed-out .wm-orbit-core {
-  max-width: calc(520px / var(--wm-map-zoom));
-  width: 100%;
-  justify-self: center;
+.wm-zoomed-out .wm-orbit-core,
+.wm-zoomed-out .wm-orbit-side {
+  gap: calc(16px - var(--wm-zoom-compact) * 8px);
 }
-.wm-zoomed-out .wm-orbit-far {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  align-items: start;
+.wm-zoomed-out
+  .wm-spatial
+  .wm-tile:not(:where(.wm-selected, .wm-expanded-tasks .wm-tile)),
+.wm-map-world.wm-zoomed-out
+  .wm-results
+  > .wm-result
+  > .wm-item
+  > .wm-tile:not(.wm-selected) {
+  min-height: 0;
+  padding: calc(14px - var(--wm-zoom-compact) * 6px);
+  gap: calc(7px - var(--wm-zoom-compact) * 3px);
+  border-radius: calc(18px - var(--wm-zoom-compact) * 8px);
 }
-.wm-zoomed-out .wm-orbit-far > .wm-map-area {
-  width: auto;
+.wm-zoomed-out .wm-spatial .wm-island:not(.wm-area-expanded) {
+  padding: calc(14px - var(--wm-zoom-compact) * 6px);
+  border-radius: calc(22px - var(--wm-zoom-compact) * 8px);
 }
-.wm-zoomed-out .wm-orbit-far > .wm-map-area-expanded {
-  grid-column: 1 / -1;
+.wm-map-world.wm-zoomed-out :is(.wm-spatial, .wm-results) .wm-tile strong,
+.wm-map-world.wm-zoomed-out .wm-spatial .wm-island-heading > strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: calc(15px - var(--wm-zoom-compact) * 2px);
+  -webkit-line-clamp: 2;
 }
-.wm-zoomed-out .wm-island:not(.wm-area-expanded) .wm-island-tasks {
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+.wm-map-world.wm-zoomed-out :is(.wm-spatial, .wm-results) .wm-small strong {
+  font-size: 11px;
+}
+.wm-map-world.wm-zoomed-out .wm-spatial .wm-small {
+  padding: calc(9px - var(--wm-zoom-compact) * 3px);
+  gap: calc(5px - var(--wm-zoom-compact) * 2px);
+}
+.wm-map-world.wm-zoomed-out
+  .wm-orbit-far
+  .wm-tile:not(.wm-focused):not(.wm-small)
+  strong {
+  font-size: calc(12px - var(--wm-zoom-compact) * 1px);
+}
+.wm-zoomed-out .wm-island-heading {
+  gap: 4px;
 }
 .wm-zoomed-out .wm-tile > .wm-excerpt,
 .wm-zoomed-out .wm-island-heading > .wm-excerpt {
-  opacity: var(--wm-zoom-excerpt);
-  max-height: calc(var(--wm-zoom-excerpt) * 34px);
+  -webkit-line-clamp: 1;
+  overflow: hidden;
 }
-/* Remove detail before allowing important labels to become too small. */
-.wm-zoomed-out :is(.wm-spatial, .wm-results) .wm-tile strong,
-.wm-zoomed-out .wm-island-heading > strong {
-  font-size: max(13px, calc(12px / var(--wm-map-zoom)));
-  -webkit-line-clamp: 2;
+.wm-zoomed-out .wm-spatial .wm-island:not(.wm-area-expanded) .wm-island-tasks {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
 }
-.wm-zoomed-out .wm-tile .wm-status,
-.wm-zoomed-out .wm-project-status .wm-status,
-.wm-zoomed-out .wm-tile .wm-due,
-.wm-zoomed-out .wm-project-more,
-.wm-zoomed-out .wm-center-label {
-  font-size: calc(11px / var(--wm-map-zoom));
+.wm-zoomed-out
+  :is(.wm-spatial, .wm-results)
+  :is(.wm-status, .wm-due, .wm-tile-meta, .wm-project-more) {
+  font-size: 11px;
 }
-.wm-zoomed-out .wm-tile .wm-tile-meta,
-.wm-zoomed-out .wm-island-heading .wm-tile-meta {
-  font-size: calc(11px / var(--wm-map-zoom));
-}
-.wm-zoomed-out .wm-tile .wm-status {
+.wm-zoomed-out .wm-status {
   white-space: normal;
 }
-.wm-zoomed-out .wm-tile.wm-unread:not([data-kind="project"]) {
-  border-left-width: calc(4px / var(--wm-map-zoom));
+.wm-map-world.wm-zoomed-out:not([data-detail="compact"])
+  .wm-small
+  :is(.wm-status, .wm-due) {
+  font-size: 10px;
 }
-.wm-zoomed-out .wm-tile.wm-working,
-.wm-zoomed-out .wm-tile.wm-has-working,
-.wm-zoomed-out .wm-island.wm-has-working {
-  --wm-bar: inset 0 calc(5px / var(--wm-map-zoom)) 0 var(--wm-green);
+.wm-map-world.wm-zoomed-out:not([data-detail="compact"])
+  .wm-small
+  .wm-tile-meta {
+  font-size: 9px;
 }
-.wm-zoomed-out .wm-item:not(.wm-item-expanded) > .wm-tile.wm-focused,
-.wm-zoomed-out .wm-island.wm-focused {
-  --wm-ring: 0 0 0 calc(3px / var(--wm-map-zoom)) var(--wm-focus);
+/* At the widest view each task becomes a compact title and state row. */
+.wm-map-world[data-detail="compact"] .wm-tile > .wm-excerpt,
+.wm-map-world[data-detail="compact"] .wm-island-heading > .wm-excerpt,
+.wm-map-world[data-detail="compact"]
+  .wm-small
+  .wm-tile-meta:not(:has(.wm-pin, .wm-changed)),
+.wm-map-world[data-detail="compact"] .wm-small .wm-due {
+  display: none;
 }
-.wm-zoomed-out .wm-item-expanded.wm-focused {
-  box-shadow: 0 0 0 calc(3px / var(--wm-map-zoom)) var(--wm-focus);
+.wm-map-world[data-detail="compact"]
+  .wm-small
+  .wm-tile-meta:has(.wm-pin, .wm-changed) {
+  display: flex;
+}
+.wm-map-world[data-detail="compact"] .wm-small .wm-status {
+  padding: 1px 3px;
+}
+.wm-map-world[data-detail="compact"]
+  .wm-island:not(.wm-area-expanded)
+  .wm-island-tasks
+  .wm-tile {
+  padding: 6px;
+  gap: 3px;
+}
+.wm-map-world[data-detail="compact"] .wm-orbit-far {
+  gap: 10px;
+}
+.wm-map-world[data-detail="compact"]
+  .wm-spatial:not(.wm-inspecting)
+  .wm-orbit-core {
+  align-self: start;
+  position: sticky;
+  top: 20px;
+  margin-top: 8vh;
+}
+@container (min-width: 760px) {
+  .wm-map-world[data-detail="compact"] .wm-spatial:not(.wm-inspecting) {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1.5fr) minmax(0, 2fr);
+  }
+  .wm-map-world[data-detail="compact"]
+    .wm-spatial:not(.wm-inspecting)
+    .wm-orbit-side {
+    display: grid;
+    grid-auto-flow: dense;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+  .wm-map-world[data-detail="compact"]
+    .wm-orbit-side
+    > .wm-map-area:has(> .wm-island) {
+    grid-column: 1 / -1;
+  }
 }
 .wm-results {
   display: flex;

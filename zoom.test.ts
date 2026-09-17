@@ -3,7 +3,7 @@ import { buildMap, arrangeMap, selectVisible } from "./model";
 import { data, thread, now } from "./fixtures";
 import { snapZoom, zoomDensity, zoomVisible, extendOrbit } from "./zoom";
 
-it("keeps additional unread results in the inner sides when zooming out", () => {
+it("keeps additional unread results in the side columns when zooming out", () => {
   const items = buildMap(
     data([]),
     [
@@ -59,8 +59,8 @@ it("preserves actual density, adds work as zoom decreases, and reveals detail as
   expect(zoomDensity(1, 800, true)).toMatchObject({ roots: 10, tasks: 6 });
   expect(zoomDensity(0.6, 1200, true)).toMatchObject({
     roots: 32,
-    tasks: 17,
-    excerpt: 0,
+    tasks: 12,
+    compact: 1,
   });
   expect(zoomDensity(1.6, 1200)).toMatchObject({
     roots: 5,
@@ -87,8 +87,11 @@ it("adds unique roots around the unchanged core and retains the pointer's area w
   expect(more.slice(0, 13)).toEqual(baseline);
   const base = arrangeMap(baseline);
   const orbit = extendOrbit(base, more);
-  for (const zone of ["anchor", "near", "west", "east"] as const)
+  for (const zone of ["anchor", "near", "north", "south"] as const)
     expect(orbit[zone]).toEqual(base[zone]);
+  expect(orbit.west.slice(0, base.west.length)).toEqual(base.west);
+  expect(orbit.east.slice(0, base.east.length)).toEqual(base.east);
+  expect(orbit.west.length + orbit.east.length).toBe(25);
   const retained = zoomVisible(items, baseline, 13, 0, more[25].id);
   expect(retained).toHaveLength(13);
   expect(retained).toContain(more[25]);
@@ -103,6 +106,23 @@ it("adds unique roots around the unchanged core and retains the pointer's area w
   ];
   expect(all).toHaveLength(13);
   expect(all).toContain(more[25]);
+});
+
+it("adds the pointer anchor without evicting work when slots remain, including an empty baseline", () => {
+  const items = buildMap(
+    data([]),
+    [thread({ id: "one" }), thread({ id: "two" })],
+    {},
+    now,
+  );
+  // A retained working card can briefly outlive its live sidebar thread.
+  const anchor = { ...items[1], signal: "working" as const, threads: [] };
+  expect(zoomVisible([items[0], anchor], [items[0]], 3, 0, anchor.id)).toEqual([
+    items[0],
+    anchor,
+  ]);
+  expect(zoomVisible([anchor], [], 3, 0, anchor.id)).toEqual([anchor]);
+  expect(zoomVisible([anchor], [], 0, 0, anchor.id)).toEqual([]);
 });
 
 it("keeps attention at the center when running agents precede it in the baseline", () => {

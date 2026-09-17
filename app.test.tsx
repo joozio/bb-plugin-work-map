@@ -48,7 +48,18 @@ it("zooms out to more areas and project tasks without acknowledging work, and re
     target: { value: "60" },
   });
   expect(roots()).toBe(32);
-  expect(taskTiles()).toBe(11);
+  expect(taskTiles()).toBe(8);
+  expect(
+    slot.container.querySelector(".wm-map-world")?.getAttribute("data-detail"),
+  ).toBe("compact");
+  expect(
+    slot.container
+      .querySelector<HTMLElement>(".wm-map-world")
+      ?.style.getPropertyValue("zoom"),
+  ).toBe("");
+  expect(
+    slot.container.querySelectorAll(".wm-orbit-side [data-layout-id]").length,
+  ).toBeGreaterThan(20);
   expect(slot.queryByRole("button", { name: "Collapse details" })).toBeNull();
   expect(
     slot.inspection.rpcCalls.filter((call) => call.method === "setPreference"),
@@ -64,6 +75,56 @@ it("zooms out to more areas and project tasks without acknowledging work, and re
   fireEvent.change(slot.getByRole("slider"), { target: { value: "160" } });
   expect(roots()).toBe(5);
   expect(taskTiles()).toBe(2);
+  slot.lifecycle.unmount();
+});
+
+it("reveals a longer readable session excerpt on zoom without opening or acknowledging it", async () => {
+  const previewText =
+    "A useful result. ".repeat(24) + "The next decision is which draft to use.";
+  const slot = await mount({ tasks: [], previewText });
+  const card = await slot.findByRole("button", { name: /^Preview Session/ });
+  await waitFor(() => expect(card.textContent).toContain("A useful result."));
+  expect(card.textContent).not.toContain("The next decision");
+  fireEvent.change(slot.getByRole("slider"), { target: { value: "160" } });
+  expect(card.textContent).toContain(
+    "The next decision is which draft to use.",
+  );
+  expect(card.getAttribute("aria-expanded")).toBe("false");
+  expect(slot.inspection.sidebarActionCalls).toHaveLength(0);
+  expect(
+    slot.inspection.rpcCalls.filter((c) => c.method === "setPreference"),
+  ).toHaveLength(0);
+  slot.lifecycle.unmount();
+});
+
+it("adds standalone work at narrow widths and shows task context on zoom-in without expanding the project", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private cb: (entries: unknown[]) => void) {}
+      observe() {
+        this.cb([{ contentRect: { width: 800 } }]);
+      }
+      disconnect() {}
+    },
+  );
+  const slot = await mount({
+    tasks: [task()],
+    threads: Array.from({ length: 32 }, (_, i) => thread({ id: `t${i}` })),
+  });
+  const project = await slot.findByRole("button", {
+    name: /^Open project Test project/,
+  });
+  expect(slot.container.querySelectorAll("[data-layout-id]")).toHaveLength(10);
+  fireEvent.change(slot.getByRole("slider"), { target: { value: "60" } });
+  expect(slot.container.querySelectorAll("[data-layout-id]")).toHaveLength(28);
+  fireEvent.click(slot.getByRole("button", { name: "Reset to actual size" }));
+  fireEvent.change(slot.getByRole("slider"), { target: { value: "160" } });
+  expect(slot.container.querySelectorAll("[data-layout-id]")).toHaveLength(4);
+  const card = slot.getByRole("button", { name: /^Preview Review proposal/ });
+  expect(card.textContent).toContain("Next: Choose a direction");
+  expect(card.textContent).toContain("medium priority");
+  expect(project.getAttribute("aria-expanded")).toBe("false");
   slot.lifecycle.unmount();
 });
 
@@ -101,13 +162,48 @@ it("reveals more detail while keeping expanded task controls and filtered order 
       .closest(".wm-inline-detail"),
   ).toBe(panel);
   expect(slot.container.querySelector(".wm-zoom-details")?.textContent).toBe(
-    "Proposal drafted",
+    "Status Proposal drafted",
   );
   fireEvent.click(slot.getByRole("button", { name: "Reset to actual size" }));
   expect(slot.getByRole("button", { name: "Pause here" })).toBeTruthy();
   expect(ids()).toEqual(before);
   slot.lifecycle.unmount();
 });
+
+it("keeps an expanded project and unsaved handoff in place through intermediate and compact zoom", async () => {
+  const slot = await mount({ threads: [] });
+  const project = await slot.findByRole("button", {
+    name: /^Open project Test project/,
+  });
+  fireEvent.click(project);
+  fireEvent.click(
+    slot.getByRole("button", { name: /^Preview Review proposal/ }),
+  );
+  fireEvent.click(slot.getByRole("button", { name: "Pause here" }));
+  const input = slot.getByRole("textbox", { name: "Next step" });
+  fireEvent.change(input, { target: { value: "Keep this draft" } });
+  const expanded = slot.container.querySelector(".wm-expanded-tasks");
+  const ids = Array.from(
+    slot.container.querySelectorAll("[data-layout-id]"),
+    (e) => e.getAttribute("data-layout-id"),
+  );
+  for (const level of [90, 60]) {
+    fireEvent.change(slot.getByRole("slider"), {
+      target: { value: String(level) },
+    });
+    expect(slot.container.querySelector(".wm-expanded-tasks")).toBe(expanded);
+    expect(slot.getByRole("textbox", { name: "Next step" })).toBe(input);
+    expect((input as HTMLInputElement).value).toBe("Keep this draft");
+    expect(
+      Array.from(slot.container.querySelectorAll("[data-layout-id]"), (e) =>
+        e.getAttribute("data-layout-id"),
+      ),
+    ).toEqual(ids);
+    expect(slot.getByText(/Layout held while expanded/)).toBeTruthy();
+  }
+  slot.lifecycle.unmount();
+});
+
 async function mount(
   options: {
     unavailable?: boolean;
