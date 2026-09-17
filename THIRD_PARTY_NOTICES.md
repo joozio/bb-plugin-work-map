@@ -2,7 +2,7 @@
 
 The vendored controls in `components/ui/` and the utility in `lib/utils.ts` were generated from BB's plugin component registry. They include adaptations of shadcn/ui components. The notices below apply to those portions.
 
-Bundled code also uses Hugeicons, Radix Slot and Compose Refs, class-variance-authority, clsx, tailwind-merge and Zod. Their license texts are included in `licenses/`. class-variance-authority uses Apache-2.0; the other listed packages use MIT. Development dependencies retain their own licenses in their npm packages. BB supplies React and its Plugin SDK runtime.
+Bundled code also uses Hugeicons, Radix Slot and Compose Refs, and Zod. BB supplies React, class-variance-authority, clsx, tailwind-merge and its Plugin SDK runtime. License texts for the bundled packages and the three utility libraries are included in `licenses/`. class-variance-authority uses Apache-2.0; the other listed packages use MIT. Development dependencies retain their own licenses in their npm packages.
 
 ## BB
 
