@@ -4,6 +4,14 @@ An interactive attention map inside BB. Open **Work Map** in the sidebar, or `/p
 
 This package is distributed from Git. The npm `private` flag prevents accidental npm publication; BB can build the source during a Git installation.
 
+Install from the public release:
+
+```sh
+bb plugin install 'git:https://github.com/joozio/bb-plugin-work-map.git@^0.1.0'
+```
+
+After installation, `bb plugin update work-map` checks for compatible releases.
+
 Focus and activity are independent. Pinned sessions stay prominent even when idle. A green top bar means an agent is working; a coral ring and larger type mean focus. Successful unread responses use a quiet blue **New result · unread** cue. They are notifications, not an inferred request for review. **Waiting for you** includes explicit input requests, failed runs, tasks in Review and due follow-ups. **New results** is a separate filter and includes a review task when it also has an unread attached response.
 
 Input requests have the strongest amber badge, failed runs have an error accent, and **Needs review** uses a restrained amber outline. Project containers stay neutral, with specific counts such as **2 need review · 1 new result**; the child task carries the emphasis. Reading a successful result clears only that unread cue. It does not complete a task or remove its Review state. Focus and a running-agent bar can coexist with either kind of attention.
@@ -18,7 +26,7 @@ Drag an item into the focus drop target, or use the preview's focus button. Sess
 
 Ranking favors focus, explicit input requests and failures, review or follow-up work, unread successful results, then active agents. New results raise an actionable task above an otherwise equivalent review. Urgency, dates, priority and recent changes refine that order. Planning dates are labeled as plans. Backlog dates do not create urgency. Task updates in the last 48 hours show an Updated marker until previewed. Inactive items rotate every 45 seconds when the pointer and keyboard focus are outside the map; rotation pauses during preview, search, filtering and dragging. A button disables rotation, and reduced motion starts with rotation paused. Important items do not rotate out.
 
-Work Map reads and stores data in your BB instance. Tasks, attachments and comment provenance come from the Tasks plugin RPC. Session state comes from BB's live sidebar hook. Session previews are bounded excerpts of BB's latest response, not generated summaries. Task data and attachments refresh every minute while the page is visible; response excerpts refresh every 30 seconds. Comment history for unchanged closed tasks is cached for up to five minutes. Refresh map bypasses both caches. A failed task refresh retains the previous data with an error banner. Missing connection data is reported.
+Work Map reads and stores data in your BB instance. Tasks, attachments and comment provenance come from the Tasks plugin RPC. Session state comes from BB's live sidebar hook. Session previews are bounded excerpts of BB's latest response, not generated summaries. Expanded previews use BB's native Markdown renderer, preserving tables, lists, links and code. Wide content scrolls within the preview; map cards show short plain-text excerpts or table headings. Responses longer than 6,000 characters show a shortened-response note and retain the full-session link. Task data and attachments refresh every minute while the page is visible; response excerpts refresh every 30 seconds. Comment history for unchanged closed tasks is cached for up to five minutes. Refresh map bypasses both caches. A failed task refresh retains the previous data with an error banner. Missing connection data is reported. If a session preview fails, its card retains the session context; expanded details show the error and a Retry preview button.
 
 Filters, search and Show all use a ranked single-column list. A clicked row expands beneath its heading without changing columns. The order stays fixed while details are open, including in the optional pane. If reading changes an item's status, it stays visible with a note until collapse. Closing reconciles the list and returns keyboard focus to the item or its nearest remaining neighbor.
 

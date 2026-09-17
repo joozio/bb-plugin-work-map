@@ -4,7 +4,7 @@ Pinned and focused work stays near the center. A coral ring marks focus and a gr
 
 ## Open work where it sits
 
-Click an area, task or session to expand it in place. Nearby cards make room while the arrangement stays stable. Read the latest response, follow attached sessions, or open the full task or chat in BB. Search and filters help you reach work beyond the overview. Zoom out for more work and fewer details, or zoom in around an item. Reset returns to 100%.
+Click an area, task or session to expand it in place. Nearby cards make room while the arrangement stays stable. Read formatted response previews with tables and code, follow attached sessions, or open the full task or chat in BB. Long previews disclose when they are shortened; wide content scrolls within the preview. Search and filters help you reach work beyond the overview. Zoom out for more work and fewer details, or zoom in around an item. Reset returns to 100%.
 
 ## Start and organize
 

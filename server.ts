@@ -1,6 +1,7 @@
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { describeTask, plainText } from "./model";
+import { describeTask } from "./model";
+import { sessionPreview, type SessionPreview } from "./preview";
 import { settlementContract } from "./settlement-contract";
 import { settlementService } from "./settlement";
 import { managementContract } from "./management-contract";
@@ -123,7 +124,12 @@ export const rpcContract = defineRpcContract({
     }),
     output: z.record(
       z.string(),
-      z.object({ text: z.string(), error: z.boolean() }),
+      z.object({
+        text: z.string(),
+        excerpt: z.string(),
+        truncated: z.boolean(),
+        error: z.boolean(),
+      }),
     ),
   },
 });
@@ -156,10 +162,7 @@ export default async function plugin(bb: BbPluginApi) {
       sessions: NonNullable<MapTask["commentSessions"]>;
     }
   >();
-  const previews = new Map<
-    string,
-    { at: number; text: string; error: boolean }
-  >();
+  const previews = new Map<string, SessionPreview & { at: number }>();
   async function collect(fresh = false): Promise<Snapshot> {
     const { projects } = await call(
       "listProjects",
@@ -452,22 +455,22 @@ export default async function plugin(bb: BbPluginApi) {
               const result = await bb.sdk.threads.output({ threadId });
               cached = {
                 at: Date.now(),
-                text: plainText(result.output ?? "").slice(0, 1600),
+                ...sessionPreview(result.output ?? ""),
                 error: false,
               };
             } catch {
               cached = {
                 at: Date.now(),
                 text: "Session preview is unavailable. Open the session to read it.",
+                excerpt: "",
+                truncated: false,
                 error: true,
               };
             }
             previews.set(threadId, cached);
           }
-          return [
-            threadId,
-            { text: cached.text, error: cached.error },
-          ] as const;
+          const { at: _at, ...preview } = cached;
+          return [threadId, preview] as const;
         }),
       );
       if (previews.size > 250)

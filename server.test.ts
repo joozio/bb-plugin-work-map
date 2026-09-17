@@ -193,7 +193,33 @@ describe("backend coverage and preferences", () => {
         threadIds: ["thr_test"],
         fresh: true,
       }),
-    ).toEqual({ thr_test: { text: "New completed response", error: false } });
+    ).toEqual({
+      thr_test: {
+        text: "New completed response",
+        excerpt: "New completed response",
+        truncated: false,
+        error: false,
+      },
+    });
+    await fixture.harness.lifecycle.dispose();
+  });
+  it("preserves Markdown tables on the wire and provides a separate card excerpt", async () => {
+    const fixture = await host();
+    const markdown =
+      "Two options to compare.\n\n| Option | Status |\n| --- | --- |\n| First | Ready |\n| Second | Pending |";
+    fixture.setOutput(markdown);
+    expect(
+      await fixture.harness.behavior.callRpc("previews", {
+        threadIds: ["thr_test"],
+      }),
+    ).toEqual({
+      thr_test: {
+        text: markdown,
+        excerpt: "Two options to compare.",
+        truncated: false,
+        error: false,
+      },
+    });
     await fixture.harness.lifecycle.dispose();
   });
 });

@@ -728,7 +728,7 @@
 .wm-session-view {
   margin-top: 27px;
 }
-.wm-detail-section h3 {
+.wm-detail-section > h3 {
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -736,11 +736,37 @@
   font-weight: 550;
   margin: 0 0 10px;
 }
-.wm-detail-section p {
+.wm-detail-section > p {
   font-size: 12px;
   line-height: 1.75;
   margin: 0;
   overflow-wrap: anywhere;
+}
+.wm-response {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  outline-offset: 4px;
+}
+.wm-response table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.wm-response :is(th, td) {
+  min-width: 8rem;
+  max-width: 26rem;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.wm-response th {
+  background: color-mix(in srgb, var(--wm-blue) 7%, var(--card));
+  font-weight: 600;
 }
 .wm-next {
   padding: 15px;

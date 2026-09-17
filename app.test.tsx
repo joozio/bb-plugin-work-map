@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, cleanup, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { data, task, thread } from "./fixtures";
+import { sessionPreview } from "./preview";
 import type { rpcContract, MapTask, Preference } from "./server";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import {
@@ -112,6 +113,7 @@ async function mount(
     unavailable?: boolean;
     done?: boolean;
     rejectPreview?: boolean;
+    previewText?: string;
     tasks?: MapTask[];
     threads?: PluginSidebarThread[];
     preferences?: Record<string, Preference>;
@@ -243,9 +245,12 @@ async function mount(
           if (options.rejectPreview) throw new Error("RPC disconnected");
           return {
             thr_test: {
-              text: options.unavailable
-                ? "Preview unavailable"
-                : "The proposal is ready to review.",
+              ...sessionPreview(
+                options.unavailable
+                  ? "Preview unavailable"
+                  : (options.previewText ?? "The proposal is ready to review."),
+              ),
+              ...(options.unavailable ? { excerpt: "" } : {}),
               error: !!options.unavailable,
             },
           };
@@ -636,6 +641,46 @@ describe("area management", () => {
   });
 });
 describe("preview and native navigation", () => {
+  it("renders intact Markdown in expanded previews and keeps table syntax out of cards", async () => {
+    const markdown =
+      "Options ready.\n\n| Option | Status |\n| --- | --- |\n| First | Ready |";
+    const slot = await mount({ tasks: [], previewText: markdown });
+    const card = await slot.findByRole("button", { name: /^Preview Session/ });
+    await waitFor(() => expect(card.textContent).toContain("Options ready."));
+    expect(card.textContent).not.toContain("|");
+    expect(card.getAttribute("aria-label")).not.toContain("|");
+    fireEvent.click(card);
+    const content = await slot.findByTestId("bb-markdown");
+    expect(content.textContent).toBe(markdown);
+    expect(content.closest("p, button")).toBeNull();
+    expect(content.closest('[role="region"]')?.getAttribute("tabindex")).toBe(
+      "0",
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Open in side pane" }));
+    expect(slot.getByTestId("bb-markdown").textContent).toBe(markdown);
+    expect(slot.getByTestId("bb-markdown").closest(".wm-preview")).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+  it("labels shortened responses and keeps the full session accessible", async () => {
+    const slot = await mount({
+      tasks: [],
+      previewText: "Long response.\n\n" + "| First | Ready |\n".repeat(500),
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Session/ }),
+    );
+    const content = await slot.findByTestId("bb-markdown");
+    expect(content.textContent!.length).toBeLessThanOrEqual(6000);
+    expect(
+      slot.getByText(
+        /Shortened response\. Open the full session for the rest\./,
+      ),
+    ).toBeTruthy();
+    expect(
+      slot.getByRole("button", { name: /Open full session/ }),
+    ).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
   it("settles from the expanded task in one click, contracts, and offers persistent Undo", async () => {
     const settleRequests: SettleInput[] = [];
     const slot = await mount({ settleRequests });
@@ -1429,6 +1474,20 @@ describe("preview and native navigation", () => {
       await slot.findByRole("button", { name: /Preview Review proposal/ }),
     );
     await slot.findByText("Preview unavailable");
+    expect(
+      slot.inspection.sidebarActionCalls.filter((c) => c.method === "setRead"),
+    ).toEqual([]);
+    slot.lifecycle.unmount();
+  });
+  it("retains the session card context on preview failure, with the error and retry in its details", async () => {
+    const slot = await mount({ unavailable: true, tasks: [] });
+    const card = await slot.findByRole("button", { name: /^Preview Session/ });
+    fireEvent.click(card);
+    await slot.findByText("Preview unavailable");
+    expect(card.textContent).toContain("Open for the latest session update.");
+    expect(card.textContent).not.toContain("Preview unavailable");
+    expect(slot.getByRole("button", { name: "Retry preview" })).toBeTruthy();
+    expect(slot.queryByTestId("bb-markdown")).toBeNull();
     expect(
       slot.inspection.sidebarActionCalls.filter((c) => c.method === "setRead"),
     ).toEqual([]);

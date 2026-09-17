@@ -9,6 +9,7 @@ import {
   useBbContext,
   UrlLink,
   ThreadChat,
+  Markdown,
 } from "@get-bb/plugin-sdk/app";
 import type { rpcContract, Preference, Snapshot, MapTask } from "./server";
 import {
@@ -33,10 +34,11 @@ import { SettlementActions, SettledToday } from "./settlement-actions";
 import type { Settlement } from "./settlement-contract";
 import { AreaTools, ProjectDot, useAreaManager } from "./management-ui";
 import type { ManagementResult } from "./management-contract";
+import type { SessionPreview } from "./preview";
 import "./app.css";
 
 type Filter = "all" | "focus" | "waiting" | "unread" | "working" | "inactive";
-type Previews = Record<string, { text: string; error: boolean }>;
+type Previews = Record<string, SessionPreview>;
 const EMPTY: Snapshot = {
   projects: [],
   tasks: [],
@@ -915,7 +917,7 @@ function WorkMap() {
     const inspecting = selected?.id === item.id && previewMode === "inline";
     const excerpt =
       item.kind === "thread"
-        ? previews[item.threads[0]?.id]?.text || item.summary
+        ? previews[item.threads[0]?.id]?.excerpt || item.summary
         : item.nextAction || item.summary;
     const due = item.task ? dueLabel(item.task, now) : "";
     const zoomDetail = small
@@ -1452,14 +1454,28 @@ function WorkMap() {
                         ? "Latest response · session is working"
                         : "Latest session response"}
                     </h3>
-                    <p className="wm-response">
-                      {previewFailure?.key === loadKey
-                        ? previewFailure.message
-                        : loadedKey !== loadKey
-                          ? "Loading session preview…"
-                          : preview?.text ||
-                            "No response yet. Open the chat to follow its progress."}
-                    </p>
+                    {previewFailure?.key !== loadKey &&
+                    loadedKey === loadKey &&
+                    preview?.text &&
+                    !preview.error ? (
+                      <div
+                        className="wm-response"
+                        role="region"
+                        aria-label="Session response"
+                        tabIndex={0}
+                      >
+                        <Markdown content={preview.text} />
+                      </div>
+                    ) : (
+                      <p>
+                        {previewFailure?.key === loadKey
+                          ? previewFailure.message
+                          : loadedKey !== loadKey
+                            ? "Loading session preview…"
+                            : preview?.text ||
+                              "No response yet. Open the chat to follow its progress."}
+                      </p>
+                    )}
                     {(previewFailure?.key === loadKey || preview?.error) && (
                       <Button
                         variant="outline"
@@ -1470,6 +1486,10 @@ function WorkMap() {
                       </Button>
                     )}
                     <p className="wm-excerpt-note">
+                      {loadedKey === loadKey &&
+                        !preview?.error &&
+                        preview?.truncated &&
+                        "Shortened response. Open the full session for the rest. "}
                       {canChat
                         ? "Latest excerpt. Chat here to reply and follow the session live."
                         : previewThread?.isArchived
