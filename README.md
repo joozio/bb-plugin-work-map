@@ -56,6 +56,10 @@ Project areas have compact **+** and **⋯** controls. Add a backlog task, start
 
 The UI and agent CLI use the same validated project operations. Project edits check the current metadata before writing, though Tasks has no atomic conditional update. Creation request ids prevent repeated submissions from duplicating confirmed work. A failed request whose outcome cannot be determined requires checking the project before starting a new creation. Local receipts retain request fingerprints and resulting identifiers/metadata, without a second copy of task descriptions. New tasks start in backlog with the supplied text; Work Map does not invent ownership, dates or progress evidence.
 
+Focused cards keep larger titles and more space, including at compact zoom. The center card fills its column instead of shrinking to its text width.
+
+Recent activity also affects proximity. Work active within 24 hours stays out of the outer bands; up to two recently active quiet areas are reserved after pins, explicit input/failure requests, unread results, running agents and one review/follow-up area. Other recent work shares the available slots. Review and due follow-up work also stay out of the outer bands. Project task lists combine priority, dates and recency without reserved recent slots: fresh lower-priority work can precede an old high-priority task, but an overdue urgent task keeps precedence. Activity weight halves every 24 hours, so older quiet work moves outward as newer work arrives. Attention and focus keep their priority even when old. A muted activity age explains the position without claiming an agent is running. Sessions use BB's latest attention timestamp (creation time if unavailable), tasks use their latest update or attached session activity, and projects use the latest activity of any task, including completed ones. Reads, Work Map preview acknowledgments and comment-only contribution links do not supply a new activity timestamp. Empty projects still follow the existing visibility rules. Activity ages on the visible page's minute refresh, even when task loading fails; expanded work keeps its position until collapse.
+
 Commands:
 
 ```sh

@@ -1169,6 +1169,7 @@
 .wm-orbit-core {
   align-self: center;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto auto;
   gap: 18px;
 }
@@ -1798,7 +1799,7 @@
 }
 @container (min-width: 760px) {
   .wm-map-world[data-detail="compact"] .wm-spatial:not(.wm-inspecting) {
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1.5fr) minmax(0, 2fr);
+    grid-template-columns: minmax(0, 1.8fr) minmax(0, 2fr) minmax(0, 1.8fr);
   }
   .wm-map-world[data-detail="compact"]
     .wm-spatial:not(.wm-inspecting)
@@ -1813,6 +1814,33 @@
     > .wm-map-area:has(> .wm-island) {
     grid-column: 1 / -1;
   }
+}
+/* Focus keeps its visual weight even when its neighbors compact. */
+.wm-map-world.wm-zoomed-out
+  .wm-spatial
+  .wm-tile.wm-focused:not(.wm-small):not(.wm-selected) {
+  min-height: calc(155px - var(--wm-zoom-compact) * 25px);
+  padding: calc(19px - var(--wm-zoom-compact) * 5px);
+  gap: 7px;
+}
+.wm-map-world.wm-zoomed-out
+  .wm-spatial
+  .wm-tile.wm-focused:not(.wm-small)
+  strong,
+.wm-map-world.wm-zoomed-out
+  .wm-spatial
+  .wm-island.wm-focused
+  > .wm-island-heading
+  > strong {
+  font-size: calc(21px - var(--wm-zoom-compact) * 3px);
+}
+.wm-map-world.wm-zoomed-out
+  .wm-spatial
+  .wm-island.wm-focused:not(.wm-area-expanded) {
+  padding: calc(19px - var(--wm-zoom-compact) * 5px);
+}
+.wm-activity-age {
+  font-weight: 400;
 }
 .wm-results {
   display: flex;

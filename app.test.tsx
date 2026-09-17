@@ -22,6 +22,43 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+it("shows recent activity without claiming an agent is running, and holds an open chat while it ages through a failed refresh", async () => {
+  let clock = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => clock);
+  const options = {
+    tasks: [],
+    rejectSnapshot: false,
+    threads: [
+      thread({ title: "Recent work", latestAttentionAt: clock - 2 * 3600000 }),
+    ],
+  };
+  const slot = await mount(options);
+  const tile = await slot.findByRole("button", {
+    name: /^Preview Recent work/,
+  });
+  expect(tile.textContent).toContain("Active 2h ago");
+  expect(tile.textContent).toContain("Inactive");
+  expect(slot.getByText("ACTIVE IN THE LAST 24H")).toBeTruthy();
+  fireEvent.click(tile);
+  fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+  const chat = slot.getByTestId("bb-thread-chat");
+  const area = tile.closest("[data-layout-id]");
+  const parent = area?.parentElement;
+  clock += 2 * 86400000;
+  options.rejectSnapshot = true;
+  fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
+  await waitFor(() => expect(tile.textContent).toContain("Active 2d ago"));
+  await slot.findByText(/Task source disconnected/);
+  expect(area?.parentElement).toBe(parent);
+  expect(slot.getByTestId("bb-thread-chat")).toBe(chat);
+  expect(slot.inspection.sidebarActionCalls).toEqual([]);
+  expect(
+    slot.inspection.rpcCalls.some((c) =>
+      ["setPreference", "createSession", "settle"].includes(c.method),
+    ),
+  ).toBe(false);
+  slot.lifecycle.unmount();
+});
 it("zooms out to more areas and project tasks without acknowledging work, and resets to actual", async () => {
   const slot = await mount({
     tasks: Array.from({ length: 16 }, (_, i) =>
@@ -209,6 +246,7 @@ async function mount(
     unavailable?: boolean;
     done?: boolean;
     rejectPreview?: boolean;
+    rejectSnapshot?: boolean;
     previewText?: string;
     tasks?: MapTask[];
     threads?: PluginSidebarThread[];
@@ -323,10 +361,11 @@ async function mount(
           taskId: "task1",
           attachmentError: null,
         }),
-        snapshot: () => ({
-          ...data(tasks),
-          projects,
-        }),
+        snapshot: () => {
+          if (options.rejectSnapshot)
+            throw new Error("Task source disconnected");
+          return { ...data(tasks), projects };
+        },
         preferences: () => storedPreferences,
         setPreference: (input) => {
           storedPreferences[input.id] = {
@@ -1474,6 +1513,7 @@ describe("preview and native navigation", () => {
         id: `position-${i}`,
         title: `Position ${i}`,
         isPinned: i === 0,
+        latestAttentionAt: Date.now() - 7 * 86400000,
       }),
     );
     const slot = await mount({ tasks: [], threads });
@@ -1729,7 +1769,9 @@ describe("preview and native navigation", () => {
     slot.lifecycle.unmount();
     const inactive = await mount({
       tasks: [],
-      threads: [thread({ title: "Idle" })],
+      threads: [
+        thread({ title: "Idle", latestAttentionAt: Date.now() - 7 * 86400000 }),
+      ],
     });
     await inactive.findByRole("button", { name: /^Preview Idle/ });
     expect(inactive.getByText("IN VIEW")).toBeTruthy();

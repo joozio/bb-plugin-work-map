@@ -15,6 +15,7 @@ import type { rpcContract, Preference, Snapshot, MapTask } from "./server";
 import {
   buildMap,
   arrangeMap,
+  activityLabel,
   dueLabel,
   isWorking,
   needsReview,
@@ -169,6 +170,8 @@ function WorkMap() {
   }, []);
   const refresh = useCallback(
     async (fresh = false) => {
+      // Activity still ages when a source refresh fails.
+      if (live.current) setNow(Date.now());
       try {
         const [data, prefs] = await Promise.all([
           rpc.call("snapshot", fresh ? { fresh: true } : null),
@@ -178,7 +181,6 @@ function WorkMap() {
           setSnapshot(data);
           setPreferences(prefs);
           setRefreshError("");
-          setNow(Date.now());
           if (!selectionRef.current) setInspectionLayout(null);
         }
       } catch (cause) {
@@ -988,6 +990,7 @@ function WorkMap() {
               ? unreadLabel(item.unreadResults)
               : "",
             item.focus ? "In focus" : "",
+            activityLabel(item, now),
             item.task ? `${item.task.priority} priority` : "",
             due,
             item.changed ? "Updated" : "",
@@ -1004,6 +1007,15 @@ function WorkMap() {
                 ? ` · ${relatedCount} ${item.kind === "thread" ? (relatedCount === 1 ? "related task" : "related tasks") : relatedCount === 1 ? "session" : "sessions"}`
                 : ""}
               {zoom > 1 && item.task ? ` · ${item.task.priority} priority` : ""}
+              {!small && activityLabel(item, now) && (
+                <span
+                  className="wm-activity-age"
+                  title={new Date(item.activityAt).toLocaleString()}
+                >
+                  {" · "}
+                  {activityLabel(item, now)}
+                </span>
+              )}
             </span>
             {item.focus && (
               <span className="wm-pin">
@@ -1070,7 +1082,15 @@ function WorkMap() {
           aria-expanded={inspecting}
           aria-controls={inspecting ? `area-${item.id}` : undefined}
           onClick={() => openPreview(item)}
-          aria-label={`Open project ${item.title}. ${item.reason}${item.focus ? ". In focus" : ""}. ${item.summary}`}
+          aria-label={[
+            `Open project ${item.title}`,
+            item.reason,
+            item.focus ? "In focus" : "",
+            activityLabel(item, now),
+            item.summary,
+          ]
+            .filter(Boolean)
+            .join(". ")}
           draggable
           onDragStart={(event) => {
             event.dataTransfer.setData("application/x-bb-work-map", item.id);
@@ -1088,6 +1108,15 @@ function WorkMap() {
                 }
               />
               {item.scope} · {item.children.length} tasks
+              {activityLabel(item, now) && (
+                <span
+                  className="wm-activity-age"
+                  title={`Latest task or attached session activity: ${new Date(item.activityAt).toLocaleString()}`}
+                >
+                  {" · "}
+                  {activityLabel(item, now)}
+                </span>
+              )}
             </span>
             {item.focus && (
               <span className="wm-pin">
@@ -1897,7 +1926,7 @@ function WorkMap() {
               <div className="wm-map-caption">
                 <span>
                   {spatial
-                    ? "YOUR WORK, AROUND YOUR FOCUS"
+                    ? "FOCUS & RECENT ACTIVITY"
                     : filter === "focus"
                       ? "IN FOCUS"
                       : needle
@@ -1943,7 +1972,9 @@ function WorkMap() {
                                 ? "READY TO READ"
                                 : isWorking(orbit.anchor)
                                   ? "WORKING NOW"
-                                  : "IN VIEW"}
+                                  : orbit.anchor.recent
+                                    ? "ACTIVE IN THE LAST 24H"
+                                    : "IN VIEW"}
                         </span>
                         {mapArea(orbit.anchor)}
                       </div>
@@ -2036,7 +2067,7 @@ function WorkMap() {
               <span className="wm-legend-unread">Blue · Ready to read</span>
               {" · "}
               {spatial
-                ? "Quieter work sits farther out."
+                ? "Focus stays prominent. Older activity moves outward."
                 : "Ordered by importance and attention."}
             </span>
             <button aria-pressed={rotate} onClick={() => setRotate((r) => !r)}>

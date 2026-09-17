@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildMap,
   arrangeMap,
+  activityLabel,
   describeTask,
   dueLabel,
   isWorking,
@@ -68,7 +69,9 @@ describe("attention rules", () => {
         ...Array.from({ length: 7 }, (_, i) =>
           thread({ id: `finished${i}`, indicator: "unread-success" }),
         ),
-        ...Array.from({ length: 5 }, (_, i) => thread({ id: `quiet${i}` })),
+        ...Array.from({ length: 5 }, (_, i) =>
+          thread({ id: `quiet${i}`, latestAttentionAt: now - 7 * 86400000 }),
+        ),
       ],
       {},
       now,
@@ -131,7 +134,9 @@ describe("attention rules", () => {
             indicator: i % 2 ? "unread-error" : "waiting-for-input",
           }),
         ),
-        ...Array.from({ length: 4 }, (_, i) => thread({ id: `quiet${i}` })),
+        ...Array.from({ length: 4 }, (_, i) =>
+          thread({ id: `quiet${i}`, latestAttentionAt: now - 7 * 86400000 }),
+        ),
       ],
       {},
       now,
@@ -230,7 +235,7 @@ describe("attention rules", () => {
           isPinned: index === 0,
           indicator:
             index === 1 ? "runtime" : index < 6 ? "unread-success" : "none",
-          latestAttentionAt: now - index,
+          latestAttentionAt: now - (index >= 6 ? 7 * 86400000 + index : index),
         }),
       ),
       {},
@@ -545,5 +550,341 @@ describe("attention rules", () => {
       dateKind: "plan",
       waitingOn: "none",
     });
+  });
+});
+
+describe("activity proximity", () => {
+  const day = 86400000;
+  it("never lets an urgent input/error task with unread siblings displace an old pin", () => {
+    for (const indicator of ["waiting-for-input", "unread-error"] as const) {
+      const items = buildMap(
+        data([
+          task({
+            priority: "urgent",
+            dateKind: "deadline",
+            dueDate: "2026-09-17",
+            threadIds: ["action", "result"],
+          }),
+        ]),
+        [
+          thread({
+            id: "pin",
+            isPinned: true,
+            latestAttentionAt: now - 30 * day,
+          }),
+          thread({ id: "action", indicator }),
+          thread({ id: "result", indicator: "unread-success" }),
+          thread({
+            id: "old-input",
+            indicator: "waiting-for-input",
+            latestAttentionAt: now - 30 * day,
+          }),
+        ],
+        {},
+        now,
+      );
+      expect(arrangeMap(items).anchor?.id).toBe("thread:pin");
+      if (indicator === "unread-error")
+        expect(items[1].id).toBe("thread:old-input");
+    }
+  });
+  it("reserves room for a review before recent quiet roots, and keeps old review/follow-up work in the inner area", () => {
+    const items = buildMap(
+      data([
+        task({
+          status: "in_review",
+          updatedAt: new Date(now - 5 * day).toISOString(),
+        }),
+      ]),
+      [
+        thread({ id: "pin", isPinned: true }),
+        thread({ id: "ready1", indicator: "unread-success" }),
+        thread({ id: "ready2", indicator: "unread-success" }),
+        thread({ id: "working", indicator: "runtime" }),
+        thread({ id: "recent1" }),
+        thread({ id: "recent2" }),
+      ],
+      {},
+      now,
+    );
+    expect(selectVisible(items, 6).map((i) => i.id)).toContain("project:p1");
+    for (const input of [
+      task({ status: "in_review" }),
+      task({ lifecycle: "waiting", checkAfter: "2026-09-17" }),
+    ]) {
+      const roots = buildMap(
+        data([{ ...input, updatedAt: new Date(now - 5 * day).toISOString() }]),
+        [
+          thread({ id: "pin", isPinned: true }),
+          thread({ id: "recent1" }),
+          thread({ id: "recent2" }),
+          ...Array.from({ length: 5 }, (_, i) =>
+            thread({ id: `old${i}`, latestAttentionAt: now - (i + 2) * day }),
+          ),
+        ],
+        {},
+        now,
+      );
+      const orbit = arrangeMap(roots);
+      expect(orbit.near.map((i) => i.id)).toContain("project:p1");
+      expect(
+        [...orbit.north, ...orbit.south].every((i) => i.signal !== "waiting"),
+      ).toBe(true);
+    }
+  });
+  it("keeps an overdue urgent task ahead of fresh low-priority work in the project headline and a small task grid", () => {
+    const [project] = buildMap(
+      data([
+        task({
+          id: "urgent",
+          priority: "urgent",
+          dateKind: "deadline",
+          dueDate: "2026-09-10",
+          updatedAt: new Date(now - 3 * day).toISOString(),
+        }),
+        task({
+          id: "fresh",
+          priority: "low",
+          updatedAt: new Date(now - 3600000).toISOString(),
+        }),
+        task({ id: "fresh2", priority: "low" }),
+      ]),
+      [],
+      {},
+      now,
+    );
+    expect(project.children[0].id).toBe("task:urgent");
+    expect(selectVisible(project.children, 2)[0].id).toBe("task:urgent");
+  });
+  it("keeps old pins, input and errors ahead of even a fresh urgent review with unread output", () => {
+    const old = now - 30 * day;
+    const items = buildMap(
+      data([
+        task({
+          status: "in_review",
+          priority: "urgent",
+          dateKind: "deadline",
+          dueDate: "2026-09-17",
+          threadIds: ["result"],
+        }),
+      ]),
+      [
+        thread({ id: "pin", isPinned: true, latestAttentionAt: old }),
+        thread({
+          id: "input",
+          indicator: "waiting-for-input",
+          latestAttentionAt: old,
+        }),
+        thread({
+          id: "error",
+          indicator: "unread-error",
+          latestAttentionAt: old,
+        }),
+        thread({ id: "result", indicator: "unread-success" }),
+        thread({
+          id: "unread",
+          indicator: "unread-success",
+          latestAttentionAt: old,
+        }),
+      ],
+      {},
+      now,
+    );
+    expect(items.map((i) => i.id)).toEqual([
+      "thread:pin",
+      "thread:input",
+      "thread:error",
+      "thread:unread",
+      "project:p1",
+    ]);
+  });
+  it("keeps project activity from recently completed tasks without bringing those tasks back", () => {
+    const [project] = buildMap(
+      data([
+        task({ updatedAt: new Date(now - 14 * day).toISOString() }),
+        task({
+          id: "closed",
+          status: "done",
+          updatedAt: new Date(now).toISOString(),
+        }),
+      ]),
+      [],
+      {},
+      now,
+    );
+    expect(project).toMatchObject({ activityAt: now, recent: true });
+    expect(project.children.map((i) => i.task?.id)).toEqual(["task1"]);
+  });
+  it("brings yesterday's attached session activity into its task and project without changing task update state", () => {
+    const old = new Date(now - 14 * day).toISOString();
+    const [project] = buildMap(
+      data([task({ updatedAt: old, threadIds: ["attached"] })]),
+      [thread({ id: "attached", latestAttentionAt: now - 2 * 3600000 })],
+      {},
+      now,
+    );
+    expect(project).toMatchObject({
+      activityAt: now - 2 * 3600000,
+      recent: true,
+      signal: "inactive",
+      changed: false,
+    });
+    expect(project.children[0]).toMatchObject({
+      activityAt: project.activityAt,
+      updatedAt: Date.parse(old),
+      recent: true,
+      changed: false,
+    });
+    expect(activityLabel(project, now)).toBe("Active 2h ago");
+  });
+  it("does not borrow activity from comments or from reading an old session", () => {
+    const old = now - 14 * day;
+    const sessions = [
+      thread({
+        id: "old",
+        latestAttentionAt: old,
+        createdAt: old,
+        updatedAt: now,
+        lastReadAt: now,
+      }),
+      thread({ id: "contributor" }),
+    ];
+    const items = buildMap(
+      data([
+        task({
+          updatedAt: new Date(old).toISOString(),
+          threadIds: ["old"],
+          commentSessions: [
+            {
+              threadId: "contributor",
+              title: "Contributed",
+              at: new Date(now).toISOString(),
+            },
+          ],
+        }),
+      ]),
+      sessions,
+      { "task:task1": { seenAt: now } },
+      now,
+    );
+    expect(items.find((i) => i.kind === "project")).toMatchObject({
+      activityAt: old,
+      recent: false,
+    });
+  });
+  it("keeps the two most recently active quiet roots through rotation and nearer than old work", () => {
+    const items = buildMap(
+      data([]),
+      [
+        thread({
+          id: "pin",
+          isPinned: true,
+          latestAttentionAt: now - 20 * day,
+        }),
+        thread({ id: "recent1", latestAttentionAt: now - 3600000 }),
+        thread({ id: "recent2", latestAttentionAt: now - 23 * 3600000 }),
+        ...Array.from({ length: 12 }, (_, i) =>
+          thread({ id: `old${i}`, latestAttentionAt: now - (i + 3) * day }),
+        ),
+      ],
+      {},
+      now,
+    );
+    for (const rotation of [0, 5, 10]) {
+      const shown = selectVisible(items, 10, rotation);
+      expect(new Set(shown.map((i) => i.id)).size).toBe(10);
+      const orbit = arrangeMap(shown);
+      expect(orbit.anchor?.id).toBe("thread:pin");
+      expect(orbit.near.map((i) => i.id)).toEqual([
+        "thread:recent1",
+        "thread:recent2",
+      ]);
+      expect([...orbit.north, ...orbit.south].every((i) => !i.recent)).toBe(
+        true,
+      );
+    }
+  });
+  it("ages an unchanged session out of the recent neighborhood without losing its attention or pin", () => {
+    const sessions = [
+      thread({ id: "pin", isPinned: true }),
+      thread({ id: "aging" }),
+      ...Array.from({ length: 4 }, (_, i) =>
+        thread({ id: `ready${i}`, indicator: "unread-success" }),
+      ),
+    ];
+    const fresh = buildMap(data([]), sessions, {}, now);
+    expect(fresh.find((i) => i.id === "thread:aging")?.recent).toBe(true);
+    expect(
+      [...arrangeMap(fresh).west, ...arrangeMap(fresh).east].some(
+        (i) => i.id === "thread:aging",
+      ),
+    ).toBe(true);
+    const aged = buildMap(data([]), sessions, {}, now + 2 * day);
+    const orbit = arrangeMap(aged);
+    expect(orbit.anchor?.id).toBe("thread:pin");
+    expect([...orbit.north, ...orbit.south].map((i) => i.id)).toContain(
+      "thread:aging",
+    );
+    expect(aged.find((i) => i.id === "thread:ready0")).toMatchObject({
+      recent: false,
+      signal: "unread",
+      unreadResults: 1,
+    });
+    const originalScore = fresh.find((i) => i.id === "thread:aging")!.score;
+    expect(aged.find((i) => i.id === "thread:aging")!.score).toBeCloseTo(
+      originalScore / 4,
+    );
+  });
+  it("never lets recency alone turn quiet work into an agent or outrank explicit attention", () => {
+    const items = buildMap(
+      data([]),
+      [
+        thread({ id: "fresh" }),
+        thread({
+          id: "input",
+          indicator: "waiting-for-input",
+          latestAttentionAt: now - 30 * day,
+        }),
+        thread({
+          id: "working",
+          indicator: "runtime",
+          latestAttentionAt: now - 30 * day,
+        }),
+      ],
+      {},
+      now,
+    );
+    expect(items[0].id).toBe("thread:input");
+    expect(items.find((i) => i.id === "thread:fresh")).toMatchObject({
+      signal: "inactive",
+      reason: "Inactive",
+    });
+    expect(selectVisible(items, 2).map((i) => i.id)).toEqual([
+      "thread:input",
+      "thread:working",
+    ]);
+  });
+  it("ignores invalid and future activity clocks and handles the 24 hour boundary", () => {
+    const invalid = buildMap(
+      data([]),
+      [
+        thread({ id: "bad", latestAttentionAt: NaN, createdAt: Infinity }),
+        thread({
+          id: "future",
+          latestAttentionAt: now + day,
+          createdAt: now + day,
+        }),
+        thread({ id: "boundary", latestAttentionAt: now - day }),
+      ],
+      {},
+      now,
+    );
+    expect(invalid.every((i) => Number.isFinite(i.score) && !i.recent)).toBe(
+      true,
+    );
+    expect(invalid.find((i) => i.id === "thread:bad")?.activityAt).toBe(0);
+    expect(
+      activityLabel(invalid.find((i) => i.id === "thread:boundary")!, now),
+    ).toBe("Active 1d ago");
   });
 });

@@ -65,6 +65,8 @@ export interface WorkItem {
   score: number;
   changed: boolean;
   updatedAt: number;
+  activityAt: number;
+  recent: boolean;
   threads: PluginSidebarThread[];
   task?: MapTask;
   children: WorkItem[];
@@ -79,6 +81,32 @@ const RUNNING = new Set([
   "goal",
   "working-draft",
 ]);
+const DAY = 86400000;
+function validActivity(value: number, now: number) {
+  return Number.isFinite(value) && value > 0 && value <= now ? value : 0;
+}
+function sessionActivity(thread: PluginSidebarThread, now: number) {
+  // Reads and metadata edits are not a new session activity signal.
+  return (
+    validActivity(thread.latestAttentionAt, now) ||
+    validActivity(thread.createdAt, now)
+  );
+}
+function recentlyActive(activityAt: number, now: number) {
+  return activityAt > 0 && now - activityAt < DAY;
+}
+function activityLift(activityAt: number, now: number) {
+  return activityAt ? 120 * 2 ** (-Math.max(0, now - activityAt) / DAY) : 0;
+}
+export function activityLabel(item: Pick<WorkItem, "activityAt">, now: number) {
+  if (!item.activityAt) return "";
+  const hours = Math.max(0, (now - item.activityAt) / 3600000);
+  return hours < 1
+    ? "Active <1h ago"
+    : hours < 24
+      ? `Active ${Math.floor(hours)}h ago`
+      : `Active ${Math.floor(hours / 24)}d ago`;
+}
 export function threadSignal(thread: PluginSidebarThread): Signal {
   if (
     thread.hasPendingInteraction ||
@@ -129,7 +157,7 @@ function rank(
     | "unreadResults"
     | "changed"
     | "task"
-    | "updatedAt"
+    | "activityAt"
   >,
   now: number,
 ) {
@@ -138,13 +166,19 @@ function rank(
     item.signal === "waiting"
       ? 6000
       : item.signal === "unread"
-        ? 6500
+        ? 7500
         : item.signal === "working"
           ? 4000
           : 0;
-  if (item.signal === "waiting" && item.unreadResults > 0) score += 600;
+  if (
+    item.signal === "waiting" &&
+    item.unreadResults > 0 &&
+    item.attention !== "input" &&
+    item.attention !== "error"
+  )
+    score += 600;
   score +=
-    item.attention === "input" ? 1200 : item.attention === "error" ? 1000 : 0;
+    item.attention === "input" ? 3000 : item.attention === "error" ? 2500 : 0;
   const task = item.task;
   if (task && !["done", "canceled", "backlog"].includes(task.status)) {
     score +=
@@ -161,7 +195,8 @@ function rank(
           : 0;
   }
   score += item.changed ? 60 : 0;
-  return score + Math.max(0, 20 - (now - item.updatedAt) / 86400000);
+  // Half the activity lift remains after 24h. Attention tiers stay stronger.
+  return score + activityLift(item.activityAt, now);
 }
 function activityReason(
   attention: Attention | null,
@@ -182,7 +217,11 @@ export function buildMap(
 ): WorkItem[] {
   const active = threads.filter((t) => !t.isArchived);
   const byId = new Map(active.map((t) => [t.id, t]));
+  const activityById = new Map(
+    threads.map((t) => [t.id, sessionActivity(t, now)]),
+  );
   const attached = new Set<string>();
+  const projectActivity = new Map<string, number>();
   const tasks: WorkItem[] = [];
   for (const task of snapshot.tasks) {
     const linked = task.threadIds
@@ -215,6 +254,16 @@ export function buildMap(
           : states.includes("working")
             ? "working"
             : "inactive";
+    const parsedUpdate = Date.parse(task.updatedAt);
+    const updatedAt = Number.isFinite(parsedUpdate) ? parsedUpdate : 0;
+    const activityAt = Math.max(
+      validActivity(updatedAt, now),
+      ...task.threadIds.map((id) => activityById.get(id) ?? 0),
+    );
+    projectActivity.set(
+      task.projectId,
+      Math.max(projectActivity.get(task.projectId) ?? 0, activityAt),
+    );
     if (
       ["done", "canceled"].includes(task.status) &&
       signal === "inactive" &&
@@ -222,8 +271,6 @@ export function buildMap(
     )
       continue;
     linked.forEach((t) => attached.add(t.id));
-    const parsedUpdate = Date.parse(task.updatedAt);
-    const updatedAt = Number.isFinite(parsedUpdate) ? parsedUpdate : 0;
     const item: WorkItem = {
       id,
       kind: "task",
@@ -243,8 +290,11 @@ export function buildMap(
           : activityReason(attention, signal, resultCount),
       changed:
         updatedAt > (preferences[id]?.seenAt ?? 0) &&
+        updatedAt <= now &&
         now - updatedAt < 48 * 3600000,
       updatedAt,
+      activityAt,
+      recent: recentlyActive(activityAt, now),
       score: 0,
       scope:
         snapshot.projects.find((p) => p.id === task.projectId)?.name ?? "Tasks",
@@ -291,6 +341,7 @@ export function buildMap(
           ? "working"
           : "inactive";
     const lead = children[0];
+    const activityAt = projectActivity.get(project.id) ?? 0;
     return {
       id,
       title: project.name,
@@ -315,12 +366,18 @@ export function buildMap(
           .filter(Boolean)
           .join(" · ") || `${children.length} inactive tasks`,
       score:
-        Math.max(0, ...children.map((c) => c.score)) +
+        Math.max(
+          0,
+          ...children.map((c) => c.score - activityLift(c.activityAt, now)),
+        ) +
+        activityLift(activityAt, now) +
         (focus && !children.some((c) => c.focus) ? 10000 : 0),
       children,
       threads: linked,
       changed: children.some((c) => c.changed),
       updatedAt: Math.max(0, ...children.map((c) => c.updatedAt)),
+      activityAt,
+      recent: recentlyActive(activityAt, now),
       scope: project.prefix,
       issue: children.some((c) => c.issue),
     };
@@ -342,6 +399,7 @@ export function sessionItem(
 ): WorkItem {
   const signal = thread.isArchived ? "inactive" : threadSignal(thread);
   const attention = thread.isArchived ? null : attentionFor([thread]);
+  const activityAt = sessionActivity(thread, now);
   const item: WorkItem = {
     id: `thread:${thread.id}`,
     kind: "thread",
@@ -354,7 +412,9 @@ export function sessionItem(
     unreadResults: thread.isArchived ? 0 : unreadResults([thread]),
     reason: thread.isArchived ? "Archived" : activityReason(attention, signal),
     changed: false,
-    updatedAt: thread.latestAttentionAt,
+    updatedAt: activityAt,
+    activityAt,
+    recent: recentlyActive(activityAt, now),
     score: 0,
     threads: [thread],
     children: [],
@@ -373,7 +433,12 @@ export function needsReview(item: WorkItem) {
 function needsImmediateAction(item: WorkItem) {
   return item.attention === "input" || item.attention === "error";
 }
-function centralItems(items: WorkItem[], readyLimit = Infinity) {
+function centralItems(
+  items: WorkItem[],
+  readyLimit = Infinity,
+  recentLimit = Infinity,
+  reviewLimit = Infinity,
+) {
   const focused = items.filter((i) => i.focus);
   const urgent = items.filter((i) => !i.focus && needsImmediateAction(i));
   const remaining = items.filter((i) => !i.focus && !needsImmediateAction(i));
@@ -382,6 +447,27 @@ function centralItems(items: WorkItem[], readyLimit = Infinity) {
     .slice(0, readyLimit);
   const readyIds = new Set(ready.map((i) => i.id));
   const working = remaining.filter((i) => !readyIds.has(i.id) && isWorking(i));
+  const reviews = remaining
+    .filter(
+      (i) => i.signal === "waiting" && !readyIds.has(i.id) && !isWorking(i),
+    )
+    .slice(0, reviewLimit);
+  const recent = remaining
+    // Task lists keep priority/date order; root areas get the recent slots.
+    .filter(
+      (i) =>
+        i.kind !== "task" &&
+        i.recent &&
+        i.signal === "inactive" &&
+        !isWorking(i),
+    )
+    .sort(
+      (a, b) =>
+        b.activityAt - a.activityAt ||
+        b.score - a.score ||
+        a.id.localeCompare(b.id),
+    )
+    .slice(0, recentLimit);
   // Make room for both a new result and a running agent, then more results.
   return [
     ...focused,
@@ -390,12 +476,14 @@ function centralItems(items: WorkItem[], readyLimit = Infinity) {
     ...working.slice(0, 1),
     ...ready.slice(1),
     ...working.slice(1),
+    ...reviews,
+    ...recent,
   ];
 }
 export function selectVisible(items: WorkItem[], limit: number, rotation = 0) {
   // Two recent result areas are essential; older unread work uses the queue
   // budget so it cannot displace the other running agents or all quiet work.
-  const essential = centralItems(items, 2).slice(0, limit);
+  const essential = centralItems(items, 2, 2, 1).slice(0, limit);
   const essentialIds = new Set(essential.map((i) => i.id));
   const waiting = items.filter(
     (i) =>
@@ -404,7 +492,9 @@ export function selectVisible(items: WorkItem[], limit: number, rotation = 0) {
       !essentialIds.has(i.id) &&
       ["waiting", "unread"].includes(i.signal),
   );
-  const quiet = items.filter((i) => !i.focus && i.signal === "inactive");
+  const quiet = items.filter(
+    (i) => !i.focus && !essentialIds.has(i.id) && i.signal === "inactive",
+  );
   // Reserve a glimpse of the periphery, while never evicting a pin or the
   // only running session in favor of a queue full of task reviews.
   const quietSlots = Math.min(
@@ -445,8 +535,15 @@ export function arrangeMap(items: WorkItem[]) {
       (item) =>
         !item.focus &&
         !isWorking(item) &&
-        !needsImmediateAction(item) &&
-        !item.unreadResults,
+        item.signal !== "waiting" &&
+        !item.unreadResults &&
+        !item.recent,
+    )
+    .sort(
+      (a, b) =>
+        b.activityAt - a.activityAt ||
+        b.score - a.score ||
+        a.id.localeCompare(b.id),
     )
     .slice(-4);
   const farIds = new Set(far.map((item) => item.id));

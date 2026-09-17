@@ -75,7 +75,11 @@ it("adds unique roots around the unchanged core and retains the pointer's area w
   const items = buildMap(
     data([]),
     Array.from({ length: 40 }, (_, i) =>
-      thread({ id: `t${i}`, isPinned: i === 0 }),
+      thread({
+        id: `t${i}`,
+        isPinned: i === 0,
+        latestAttentionAt: now - 7 * 86400000,
+      }),
     ),
     {},
     now,
