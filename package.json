@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-work-map",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "Spot the work that needs you and manage it without leaving the map.",
   "license": "MIT",

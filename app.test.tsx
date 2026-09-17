@@ -37,7 +37,8 @@ it("shows recent activity without claiming an agent is running, and holds an ope
     name: /^Preview Recent work/,
   });
   expect(tile.textContent).toContain("Active 2h ago");
-  expect(tile.textContent).toContain("Inactive");
+  expect(tile.textContent).not.toContain("Inactive");
+  expect(tile.getAttribute("aria-label")).toContain("Inactive");
   expect(slot.getByText("ACTIVE IN THE LAST 24H")).toBeTruthy();
   fireEvent.click(tile);
   fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
@@ -86,6 +87,23 @@ it("zooms out to more areas and project tasks without acknowledging work, and re
   });
   expect(roots()).toBe(32);
   expect(taskTiles()).toBe(8);
+  await waitFor(() => {
+    const calls = slot.inspection.rpcCalls.filter(
+      (call) => call.method === "previews",
+    );
+    const ids = new Set(
+      calls.flatMap(
+        (call) => (call.input as { threadIds: string[] }).threadIds,
+      ),
+    );
+    expect(ids.size).toBeGreaterThan(24);
+    expect(
+      calls.every(
+        (call) =>
+          (call.input as { threadIds: string[] }).threadIds.length <= 16,
+      ),
+    ).toBe(true);
+  });
   expect(
     slot.container.querySelector(".wm-map-world")?.getAttribute("data-detail"),
   ).toBe("compact");
@@ -483,6 +501,16 @@ describe("existing session chat", () => {
       await slot.findByRole("button", { name: /^Preview Review proposal/ }),
     );
     fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    expect(
+      slot.getByTestId("bb-thread-chat").getAttribute("data-thread-id"),
+    ).toBe("thr_second");
+    fireEvent.click(
+      slot.getByRole("button", { name: /^First agent.*Attached/ }),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    expect(
+      slot.getByTestId("bb-thread-chat").getAttribute("data-thread-id"),
+    ).toBe("thr_test");
     fireEvent.click(
       slot.getByRole("button", { name: /^Second agent.*Attached/ }),
     );
@@ -1858,7 +1886,7 @@ describe("preview and native navigation", () => {
     const card = await slot.findByRole("button", { name: /^Preview Session/ });
     fireEvent.click(card);
     await slot.findByText("Preview unavailable");
-    expect(card.textContent).toContain("Open for the latest session update.");
+    expect(card.querySelector(".wm-excerpt")).toBeNull();
     expect(card.textContent).not.toContain("Preview unavailable");
     expect(slot.getByRole("button", { name: "Retry preview" })).toBeTruthy();
     expect(slot.queryByTestId("bb-markdown")).toBeNull();
@@ -1903,6 +1931,97 @@ describe("preview and native navigation", () => {
     options.rejectPreview = false;
     fireEvent.click(slot.getByRole("button", { name: "Retry preview" }));
     await slot.findByText("The proposal is ready to review.");
+    slot.lifecycle.unmount();
+  });
+  it("keeps the initially chosen result selected after acknowledgment and a sibling becoming more urgent", async () => {
+    const sessions = [
+      thread({ id: "thr_old", title: "Older agent", indicator: "runtime" }),
+      thread({
+        id: "thr_test",
+        title: "Finished agent",
+        indicator: "unread-success",
+      }),
+    ];
+    const slot = await mount({
+      tasks: [
+        task({
+          threadIds: ["thr_old", "thr_test"],
+          waitingOn: "A reviewer",
+        }),
+      ],
+      threads: sessions,
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    await waitFor(() =>
+      expect(slot.inspection.sidebarActionCalls).toContainEqual({
+        method: "setRead",
+        threadId: "thr_test",
+        read: true,
+      }),
+    );
+    sessions[1] = { ...sessions[1], indicator: "none" };
+    sessions[0] = { ...sessions[0], hasPendingInteraction: true };
+    await slot.behavior.emitRealtime("preferences-changed", {});
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    expect(
+      slot.getByTestId("bb-thread-chat").getAttribute("data-thread-id"),
+    ).toBe("thr_test");
+    expect(
+      slot.inspection.sidebarActionCalls.filter(
+        (call) => call.method === "setRead",
+      ),
+    ).toHaveLength(1);
+    slot.lifecycle.unmount();
+  });
+  it("keeps external waiting reasons visible on otherwise inactive tasks", async () => {
+    const slot = await mount({
+      tasks: [task({ waitingOn: "A reviewer", lifecycle: "waiting" })],
+      threads: [],
+    });
+    const tile = await slot.findByRole("button", {
+      name: /^Preview Review proposal/,
+    });
+    expect(tile.textContent).toContain("Waiting on A reviewer");
+    slot.lifecycle.unmount();
+  });
+  it("stops targeting a detached session and selects a remaining attachment", async () => {
+    const tasks = [task({ threadIds: ["thr_test", "thr_second"] })];
+    const slot = await mount({
+      tasks,
+      threads: [
+        thread({ hasPendingInteraction: true }),
+        thread({
+          id: "thr_second",
+          indicator: "runtime",
+          title: "Remaining agent",
+        }),
+      ],
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    expect(
+      slot.getByTestId("bb-thread-chat").getAttribute("data-thread-id"),
+    ).toBe("thr_test");
+    tasks[0] = { ...tasks[0], threadIds: ["thr_second"] };
+    fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
+    await waitFor(() =>
+      expect(slot.queryByTestId("bb-thread-chat")).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(
+        slot
+          .getByRole("button", { name: /^Remaining agent.*Attached/ })
+          .getAttribute("aria-pressed"),
+      ).toBe("true"),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    expect(
+      slot.getByTestId("bb-thread-chat").getAttribute("data-thread-id"),
+    ).toBe("thr_second");
     slot.lifecycle.unmount();
   });
   it("searches project scopes without rendering each task twice", async () => {

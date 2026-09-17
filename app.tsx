@@ -19,6 +19,7 @@ import {
   dueLabel,
   isWorking,
   needsReview,
+  preferredSession,
   selectVisible,
   sessionItem,
   threadSignal,
@@ -58,6 +59,7 @@ function age(timestamp: number, now: number) {
         : `${Math.floor(minutes / 1440)}d ago`;
 }
 function Status({ item }: { item: WorkItem }) {
+  if (item.signal === "inactive" && item.reason === "Inactive") return null;
   return (
     <span
       className={`wm-statuses ${item.kind === "project" ? "wm-project-summary" : ""}`}
@@ -503,7 +505,6 @@ function WorkMap() {
   const visibleThreads = shown
     .flatMap((i) => (i.kind === "thread" ? i.threads : []))
     .map((t) => t.id)
-    .slice(0, 12)
     .sort()
     .join(",");
   const detailExcerpts = useMemo(() => {
@@ -521,12 +522,24 @@ function WorkMap() {
   useEffect(() => {
     if (!visibleThreads) return;
     let canceled = false;
-    const fetch = () =>
-      rpc
-        .call("previews", { threadIds: visibleThreads.split(",") })
-        .then((result) => {
+    let inFlight = false;
+    const fetch = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      const ids = visibleThreads.split(",");
+      // Keep each request within the RPC limit, including zoomed-out and All views.
+      for (let offset = 0; offset < ids.length && !canceled; offset += 16) {
+        try {
+          const result = await rpc.call("previews", {
+            threadIds: ids.slice(offset, offset + 16),
+          });
           if (!canceled) setPreviews((current) => ({ ...current, ...result }));
-        }, report);
+        } catch (cause) {
+          if (!canceled) report(cause);
+        }
+      }
+      inFlight = false;
+    };
     void fetch();
     const timer = setInterval(() => {
       if (!document.hidden) void fetch();
@@ -567,10 +580,25 @@ function WorkMap() {
     launcher.context,
   ]);
 
+  const activeSessionConnected =
+    !selected?.task ||
+    !activeSession ||
+    selected.task.threadIds.includes(activeSession) ||
+    selected.task.commentSessions?.some(
+      (session) => session.threadId === activeSession,
+    );
+  useEffect(() => {
+    if (!activeSessionConnected && selected) {
+      setChatTarget(null);
+      setActiveSession(preferredSession(selected.threads, now)?.id ?? null);
+    }
+  }, [activeSessionConnected, selected, now]);
   const previewId =
     selected?.kind === "project"
       ? null
-      : (activeSession ?? selected?.threads[0]?.id);
+      : !activeSessionConnected
+        ? undefined
+        : (activeSession ?? selected?.threads[0]?.id);
   const livePreviewThread = sidebar.threads.find((t) => t.id === previewId);
   const previewThread =
     livePreviewThread ?? selected?.threads.find((t) => t.id === previewId);
@@ -725,7 +753,11 @@ function WorkMap() {
     setExpandedArea(parent ?? item);
     setPreviewMode("inline");
     setSelection(item);
-    setActiveSession(null);
+    setActiveSession(
+      item.kind === "project"
+        ? null
+        : (preferredSession(item.threads, now)?.id ?? null),
+    );
   };
   useEffect(() => {
     if (!createdItemId || manager.busy) return;
@@ -944,7 +976,7 @@ function WorkMap() {
       item.kind === "thread"
         ? detailExcerpts[item.threads[0]?.id] ||
           previews[item.threads[0]?.id]?.excerpt ||
-          item.summary
+          ""
         : item.nextAction || item.summary;
     const due = item.task ? dueLabel(item.task, now) : "";
     const zoomDetail =
@@ -1025,7 +1057,7 @@ function WorkMap() {
             {item.changed && <span className="wm-changed">Updated</span>}
           </span>
           <strong>{item.title}</strong>
-          {showExcerpt && !(inspecting && item.kind === "task") && (
+          {showExcerpt && excerpt && !(inspecting && item.kind === "task") && (
             <span className="wm-excerpt">
               {zoom > 1 && item.nextAction && (
                 <span className="wm-detail-label">Next: </span>
@@ -1979,10 +2011,10 @@ function WorkMap() {
                         {mapArea(orbit.anchor)}
                       </div>
                     )}
-                    <div className="wm-orbit-near wm-near-above">
+                    <div className="wm-orbit-near wm-near-first">
                       {orbit.near[0] && mapArea(orbit.near[0])}
                     </div>
-                    <div className="wm-orbit-near wm-near-below">
+                    <div className="wm-orbit-near wm-near-second">
                       {orbit.near[1] && mapArea(orbit.near[1])}
                     </div>
                   </section>

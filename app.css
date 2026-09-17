@@ -1031,6 +1031,9 @@
   }
 }
 @container (max-width:850px) {
+  .wm-eyebrow {
+    display: none;
+  }
   .wm-toolbar {
     flex-wrap: wrap;
     align-items: flex-start;
@@ -1167,7 +1170,7 @@
   min-width: 0;
 }
 .wm-orbit-core {
-  align-self: center;
+  align-self: start;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto auto;
@@ -1179,15 +1182,15 @@
   align-self: start;
   min-width: 0;
 }
-.wm-near-above {
-  grid-row: 1;
+.wm-near-first {
+  grid-row: 2;
   align-self: end;
 }
-.wm-near-below {
+.wm-near-second {
   grid-row: 3;
 }
 .wm-orbit-anchor {
-  grid-row: 2;
+  grid-row: 1;
   position: relative;
   padding: 16px 0;
   min-width: 0;
@@ -1366,7 +1369,7 @@
 @container (max-width: 680px) {
   .wm-spatial {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas: "north north" "core core" "west east" "south south";
+    grid-template-areas: "core core" "west east" "north north" "south south";
     min-height: 0;
   }
   .wm-orbit-core {
@@ -1795,7 +1798,7 @@
   align-self: start;
   position: sticky;
   top: 20px;
-  margin-top: 8vh;
+  margin-top: 0;
 }
 @container (min-width: 760px) {
   .wm-map-world[data-detail="compact"] .wm-spatial:not(.wm-inspecting) {

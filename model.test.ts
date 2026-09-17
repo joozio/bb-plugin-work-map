@@ -6,10 +6,31 @@ import {
   describeTask,
   dueLabel,
   isWorking,
+  preferredSession,
   selectVisible,
   threadSignal,
 } from "./model";
 import { now, data, task, thread } from "./fixtures";
+describe("default connected session", () => {
+  it("chooses input, error, unread, running, then recent idle work without reordering attachments", () => {
+    const sessions = [
+      thread({ id: "old", latestAttentionAt: now - 10000 }),
+      thread({ id: "recent", latestAttentionAt: now - 1000 }),
+      thread({ id: "run", indicator: "runtime" }),
+      thread({ id: "result", indicator: "unread-success" }),
+      thread({ id: "error", indicator: "unread-error" }),
+      thread({ id: "input", hasPendingInteraction: true }),
+      thread({ id: "archived", hasPendingInteraction: true, isArchived: true }),
+    ];
+    expect(preferredSession(sessions, now)?.id).toBe("input");
+    expect(sessions[0].id).toBe("old");
+    expect(preferredSession(sessions.slice(0, 5), now)?.id).toBe("error");
+    expect(preferredSession(sessions.slice(0, 4), now)?.id).toBe("result");
+    expect(preferredSession(sessions.slice(0, 3), now)?.id).toBe("run");
+    expect(preferredSession(sessions.slice(0, 2), now)?.id).toBe("recent");
+    expect(preferredSession([sessions[6]], now)).toBeUndefined();
+  });
+});
 describe("attention rules", () => {
   it("balances an unread backlog with all three running agents and some quiet work", () => {
     const items = buildMap(

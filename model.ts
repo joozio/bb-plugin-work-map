@@ -117,6 +117,30 @@ export function threadSignal(thread: PluginSidebarThread): Signal {
   if (RUNNING.has(thread.indicator)) return "working";
   return "inactive";
 }
+/** Choose once on opening a task; acknowledging a result must not switch it. */
+export function preferredSession(
+  threads: readonly PluginSidebarThread[],
+  now: number,
+): PluginSidebarThread | undefined {
+  const priority = (thread: PluginSidebarThread) =>
+    thread.hasPendingInteraction || thread.indicator === "waiting-for-input"
+      ? 4
+      : thread.indicator === "unread-error"
+        ? 3
+        : thread.indicator === "unread-success"
+          ? 2
+          : RUNNING.has(thread.indicator)
+            ? 1
+            : 0;
+  return [...threads]
+    .filter((thread) => !thread.isArchived)
+    .sort(
+      (a, b) =>
+        priority(b) - priority(a) ||
+        sessionActivity(b, now) - sessionActivity(a, now) ||
+        a.id.localeCompare(b.id),
+    )[0];
+}
 function attentionFor(
   threads: readonly PluginSidebarThread[],
 ): Attention | null {
