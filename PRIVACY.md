@@ -14,7 +14,7 @@ Task data refreshes while the view is visible. Failed refreshes retain the last 
 
 BB's plugin storage holds map preferences, seen-update timestamps, creation receipts and settlement recovery records. Settlement records include before/after task fields, which can contain task descriptions, and identifiers of archived sessions. Completed settlement records are bounded to 200 plus interrupted actions; creation receipts currently remain until plugin storage is removed.
 
-The view also uses browser session storage to recover a newly created session whose task attachment is unfinished. BB's native composer owns draft prompts and attachments. Work Map does not export this data into its source repository or release package.
+The view also uses browser session storage to recover a newly created session whose task attachment is unfinished. A separate dismissal record stores only settlement receipt identifiers so closed feedback stays closed across view reloads in the same tab. It contains no task titles, descriptions or error messages; dismissal still works in memory when browser storage is unavailable. BB's native composer owns draft prompts and attachments. Work Map does not export this data into its source repository or release package.
 
 ## Changes
 

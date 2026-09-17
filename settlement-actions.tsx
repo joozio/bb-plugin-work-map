@@ -4,6 +4,20 @@ import type { MapTask, rpcContract } from "./server";
 import type { SettleInput, Settlement } from "./settlement-contract";
 import { Button } from "./components/ui/button";
 
+const DISMISSED_SETTLEMENTS = "work-map:dismissed-settlements";
+function readDismissedSettlements(): string[] {
+  try {
+    const value: unknown = JSON.parse(
+      sessionStorage.getItem(DISMISSED_SETTLEMENTS) || "[]",
+    );
+    return Array.isArray(value)
+      ? value.filter((id): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export function SettlementActions({
   task,
   thread,
@@ -330,16 +344,72 @@ export function SettledToday({
   error: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [dismissed, setDismissed] = useState(() => ({
+    ids: readDismissedSettlements(),
+    error: "",
+  }));
+  const listId = useId();
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const reopenRef = useRef<HTMLButtonElement>(null);
+  const moveFocus = useRef(false);
+  const closed =
+    rows.every((row) => dismissed.ids.includes(row.id)) &&
+    (!error || error === dismissed.error);
+  useEffect(() => {
+    if (!moveFocus.current) return;
+    (closed ? reopenRef : closeRef).current?.focus({ preventScroll: true });
+    moveFocus.current = false;
+  }, [closed]);
+  function dismiss() {
+    const ids = rows.map((row) => row.id);
+    moveFocus.current = true;
+    setDismissed({ ids, error });
+    setExpanded(false);
+    try {
+      sessionStorage.setItem(DISMISSED_SETTLEMENTS, JSON.stringify(ids));
+    } catch {
+      /* Keep dismissal usable when storage is unavailable. */
+    }
+  }
+  function reopen() {
+    moveFocus.current = true;
+    setDismissed({ ids: [], error: "" });
+    setExpanded(true);
+    try {
+      sessionStorage.removeItem(DISMISSED_SETTLEMENTS);
+    } catch {
+      /* In-memory state still works. */
+    }
+  }
   if (!rows.length && !error) return null;
+  if (closed)
+    return (
+      <div className="wm-settled-closed">
+        <Button ref={reopenRef} size="sm" variant="ghost" onClick={reopen}>
+          {pending ? "Undoing…" : "Settled today"}
+          {rows.length ? ` · ${rows.length}` : ""}
+          <span className="sr-only"> · Show history</span>
+        </Button>
+      </div>
+    );
   return (
-    <section className="wm-settled" aria-label="Settled today">
+    <section
+      className={`wm-settled ${expanded ? "wm-settled-expanded" : ""}`}
+      aria-label="Settled today"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !event.defaultPrevented) {
+          event.preventDefault();
+          event.stopPropagation();
+          dismiss();
+        }
+      }}
+    >
       <div className="wm-settled-heading">
         <h2>
           Settled today <span>{rows.length}</span>
         </h2>
-        <span>Tasks and sessions kept in history</span>
       </div>
-      <div className="wm-settled-list">
+      <div className="wm-settled-list" id={listId}>
         {(expanded ? rows : rows.slice(0, 1)).map((row) => (
           <div key={row.id} className="wm-settled-row">
             <span
@@ -349,7 +419,7 @@ export function SettledToday({
               ✓
             </span>
             <div className="wm-settled-copy">
-              <strong>{row.title}</strong>
+              <strong title={row.title}>{row.title}</strong>
               <span>
                 {row.action === "done"
                   ? "Task done"
@@ -364,7 +434,7 @@ export function SettledToday({
                   ? " · session archived"
                   : ""}
               </span>
-              {row.nextAction && <span>{row.nextAction}</span>}
+              {expanded && row.nextAction && <span>{row.nextAction}</span>}
               {row.warning && (
                 <span className="wm-settle-error" role="status">
                   {row.warning}
@@ -379,7 +449,7 @@ export function SettledToday({
             >
               {pending === row.id ? "Undoing…" : "Undo"}
             </Button>
-            {row.taskKey && (
+            {expanded && row.taskKey && (
               <UrlLink
                 className="wm-settled-link"
                 href={`/plugins/tasks/tasks/task/${row.taskKey}`}
@@ -390,14 +460,29 @@ export function SettledToday({
           </div>
         ))}
       </div>
-      {rows.length > 1 && (
+      {rows.length > 0 && (
         <button
           className="wm-settled-more"
+          aria-expanded={expanded}
+          aria-controls={listId}
           onClick={() => setExpanded(!expanded)}
         >
-          {expanded ? "Show less" : `Show all ${rows.length} settled items`}
+          {expanded
+            ? "Show less"
+            : rows.length > 1
+              ? `History (${rows.length})`
+              : "Details"}
         </button>
       )}
+      <button
+        ref={closeRef}
+        className="wm-settled-close"
+        aria-label="Close settled today"
+        title="Close settled today"
+        onClick={dismiss}
+      >
+        <span aria-hidden="true">×</span>
+      </button>
       {error && (
         <p role="alert" className="wm-settle-error">
           {error}
