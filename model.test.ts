@@ -10,6 +10,58 @@ import {
 } from "./model";
 import { now, data, task, thread } from "./fixtures";
 describe("attention rules", () => {
+  it("keeps input requests and failed runs out of the quiet outer ring", () => {
+    const items = buildMap(
+      data([]),
+      [
+        ...Array.from({ length: 3 }, (_, i) =>
+          thread({ id: `pin${i}`, isPinned: true }),
+        ),
+        ...Array.from({ length: 5 }, (_, i) =>
+          thread({
+            id: `action${i}`,
+            indicator: i % 2 ? "unread-error" : "waiting-for-input",
+          }),
+        ),
+        ...Array.from({ length: 4 }, (_, i) => thread({ id: `quiet${i}` })),
+      ],
+      {},
+      now,
+    );
+    const layout = arrangeMap(items);
+    const far = [...layout.north, ...layout.south];
+    expect(far).toHaveLength(4);
+    expect(far.every((item) => item.signal === "inactive")).toBe(true);
+    const inner = [
+      layout.anchor!,
+      ...layout.near,
+      ...layout.west,
+      ...layout.east,
+    ];
+    expect(inner.filter((item) => item.signal === "waiting")).toHaveLength(5);
+    expect(new Set([...inner, ...far].map((item) => item.id)).size).toBe(
+      items.length,
+    );
+  });
+  it("does not hide an input request behind a full map of running agents", () => {
+    const items = buildMap(
+      data([]),
+      [
+        thread({ id: "input", hasPendingInteraction: true }),
+        ...Array.from({ length: 15 }, (_, i) =>
+          thread({ id: `running${i}`, indicator: "runtime" }),
+        ),
+      ],
+      {},
+      now,
+    );
+    expect(selectVisible(items, 10).map((item) => item.id)).toContain(
+      "thread:input",
+    );
+    expect(arrangeMap(selectVisible(items, 10)).anchor?.id).toBe(
+      "thread:input",
+    );
+  });
   it("moves a session under its task when attached later, while comments do not transfer activity", () => {
     const session = thread({ indicator: "runtime", isPinned: true });
     const input = task({
@@ -146,7 +198,7 @@ describe("attention rules", () => {
     );
     expect(project.signal).toBe("waiting");
     expect(isWorking(project)).toBe(true);
-    expect(project.reason).toBe("1 working · 1 waiting for you");
+    expect(project.reason).toBe("1 needs review · 1 working");
   });
   it("uses the current status when the next-action field is a closed or blocked sentinel", () => {
     expect(
@@ -158,7 +210,7 @@ describe("attention rules", () => {
     for (const [indicator, signal] of [
       ["none", "inactive"],
       ["runtime", "working"],
-      ["unread-success", "waiting"],
+      ["unread-success", "unread"],
     ] as const) {
       const result = buildMap(
         data([]),
@@ -195,7 +247,7 @@ describe("attention rules", () => {
     expect(
       buildMap(input, [thread({ indicator: "unread-success" })], {}, now)[0]
         .children[0].signal,
-    ).toBe("waiting");
+    ).toBe("unread");
     expect(
       buildMap(input, [thread({ isArchived: true })], {}, now).flatMap(
         (item) => (item.kind === "project" ? item.children : [item]),
@@ -215,7 +267,7 @@ describe("attention rules", () => {
         {},
         now,
       )[0].children[0].reason,
-    ).toBe("Your review");
+    ).toBe("Needs review");
   });
   it("distinguishes planning dates and ignores backlog dates", () => {
     expect(dueLabel(task({ dueDate: "2026-09-17" }), now)).toBe(
@@ -280,7 +332,7 @@ describe("attention rules", () => {
     expect(visible.some((i) => i.id === "thread:thr_running")).toBe(true);
     expect(visible.some((i) => i.id === "thread:thr_pinned")).toBe(true);
   });
-  it("ranks an unread session above routine review tasks", () => {
+  it("ranks actionable review above an unread success", () => {
     const items = buildMap(
       data([
         task({
@@ -293,7 +345,84 @@ describe("attention rules", () => {
       {},
       now,
     );
-    expect(items[0].kind).toBe("thread");
+    expect(items[0].kind).toBe("project");
+  });
+  it("separates requests, failures, reviews and unread results in rank and reasons", () => {
+    const items = buildMap(
+      data([task({ status: "in_review" })]),
+      [
+        thread({ id: "result", indicator: "unread-success" }),
+        thread({ id: "input", indicator: "waiting-for-input" }),
+        thread({ id: "error", indicator: "unread-error" }),
+        thread({ id: "running", indicator: "runtime" }),
+      ],
+      {},
+      now,
+    );
+    expect(items.map((i) => i.id)).toEqual([
+      "thread:input",
+      "thread:error",
+      "project:p1",
+      "thread:result",
+      "thread:running",
+    ]);
+    expect(items.map((i) => i.reason)).toEqual([
+      "Needs your input",
+      "Run failed",
+      "1 needs review",
+      "New result · unread",
+      "Agent working",
+    ]);
+    expect(items[3]).toMatchObject({
+      signal: "unread",
+      attention: "unread",
+      unreadResults: 1,
+    });
+  });
+  it("keeps review actionable while independently tracking unread attached results", () => {
+    const snapshot = data([
+      task({ status: "in_review", threadIds: ["result", "running"] }),
+    ]);
+    const threads = [
+      thread({ id: "result", indicator: "unread-success" }),
+      thread({ id: "running", indicator: "runtime" }),
+    ];
+    const [project] = buildMap(snapshot, threads, {}, now);
+    expect(project.reason).toBe("1 needs review · 1 new result · 1 working");
+    expect(project.children[0]).toMatchObject({
+      signal: "waiting",
+      attention: "review",
+      unreadResults: 1,
+      reason: "Needs review",
+    });
+    expect(isWorking(project.children[0])).toBe(true);
+    const [read] = buildMap(
+      snapshot,
+      [thread({ id: "result" }), threads[1]],
+      {},
+      now,
+    );
+    expect(read.children[0]).toMatchObject({
+      signal: "waiting",
+      attention: "review",
+      unreadResults: 0,
+      reason: "Needs review",
+    });
+  });
+  it("raises a review with unread material above an otherwise equivalent review", () => {
+    const [project] = buildMap(
+      data([
+        task({ id: "a-read", status: "in_review" }),
+        task({ id: "z-unread", status: "in_review", threadIds: ["result"] }),
+      ]),
+      [thread({ id: "result", indicator: "unread-success" })],
+      {},
+      now,
+    );
+    expect(project.children.map((child) => child.id)).toEqual([
+      "task:z-unread",
+      "task:a-read",
+    ]);
   });
   it("parses the existing task contract without leaking lifecycle fields into summaries", () => {
     expect(

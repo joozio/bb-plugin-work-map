@@ -15,6 +15,7 @@ import {
   arrangeMap,
   dueLabel,
   isWorking,
+  needsReview,
   selectVisible,
   sessionItem,
   threadSignal,
@@ -33,7 +34,7 @@ import { AreaTools, ProjectDot, useAreaManager } from "./management-ui";
 import type { ManagementResult } from "./management-contract";
 import "./app.css";
 
-type Filter = "all" | "focus" | "waiting" | "working" | "inactive";
+type Filter = "all" | "focus" | "waiting" | "unread" | "working" | "inactive";
 type Previews = Record<string, { text: string; error: boolean }>;
 const EMPTY: Snapshot = {
   projects: [],
@@ -51,11 +52,35 @@ function age(timestamp: number, now: number) {
         ? `${Math.floor(minutes / 60)}h ago`
         : `${Math.floor(minutes / 1440)}d ago`;
 }
+function unreadLabel(count: number) {
+  return count === 1 ? "New result · unread" : `${count} new results · unread`;
+}
 function Status({ item }: { item: WorkItem }) {
   return (
-    <span className={`wm-status wm-${item.signal}`}>
-      <i aria-hidden="true" />
-      {item.reason}
+    <span
+      className={`wm-statuses ${item.kind === "project" ? "wm-project-summary" : ""}`}
+    >
+      <span
+        className={`wm-status wm-${item.signal}`}
+        data-attention={item.attention ?? undefined}
+      >
+        <i aria-hidden="true" />
+        {item.reason}
+      </span>
+      {needsReview(item) && item.attention !== "review" && (
+        <span className="wm-status wm-waiting" data-attention="review">
+          <i aria-hidden="true" />
+          Needs review
+        </span>
+      )}
+      {item.kind !== "project" &&
+        item.signal !== "unread" &&
+        item.unreadResults > 0 && (
+          <span className="wm-status wm-unread">
+            <i aria-hidden="true" />
+            {unreadLabel(item.unreadResults)}
+          </span>
+        )}
     </span>
   );
 }
@@ -325,7 +350,9 @@ function WorkMap() {
         ? item.focus
         : filter === "working"
           ? isWorking(item)
-          : item.signal === filter));
+          : filter === "unread"
+            ? item.unreadResults > 0
+            : item.signal === filter));
   // Search includes every open task, including tasks outside the current map.
   const candidates = (
     needle
@@ -431,7 +458,7 @@ function WorkMap() {
     : "";
   const captureLayout = useMapMotion(
     canvasRef,
-    `${spatial}:${mapWidth}:${zoom}:${selected?.id ?? ""}:${previewMode}:${launcher.context?.id ?? ""}:${launcher.threadId ?? ""}:${shown.map((item) => `${item.id}:${item.signal}:${item.focus}`).join("|")}`,
+    `${spatial}:${mapWidth}:${zoom}:${selected?.id ?? ""}:${previewMode}:${launcher.context?.id ?? ""}:${launcher.threadId ?? ""}:${shown.map((item) => `${item.id}:${item.signal}:${item.attention}:${item.unreadResults}:${item.focus}`).join("|")}`,
     zoom,
   );
   useEffect(() => {
@@ -441,6 +468,7 @@ function WorkMap() {
   const counts = {
     focus: items.filter((i) => i.focus).length,
     waiting: leaves.filter((i) => i.signal === "waiting").length,
+    unread: leaves.filter((i) => i.unreadResults > 0).length,
     working: leaves.filter(isWorking).length,
     inactive: leaves.filter((i) => i.signal === "inactive").length,
   };
@@ -531,12 +559,7 @@ function WorkMap() {
   function sessionState(threadId: string, lastStatus?: string) {
     const thread = sidebar.threads.find((item) => item.id === threadId);
     if (thread?.isArchived) return "Archived";
-    if (thread)
-      return threadSignal(thread) === "working"
-        ? "Working"
-        : threadSignal(thread) === "waiting"
-          ? "Needs attention"
-          : "Inactive";
+    if (thread) return sessionItem(thread, now).reason;
     return lastStatus
       ? `Last recorded: ${lastStatus} · Not in active sessions`
       : "Not in active sessions";
@@ -888,6 +911,8 @@ function WorkMap() {
           aria-controls={inspecting ? `detail-${item.id}` : undefined}
           type="button"
           className={`wm-tile wm-${item.signal} ${isWorking(item) ? "wm-has-working" : ""} ${item.focus ? "wm-focused" : ""} ${small ? "wm-small" : ""} ${selected?.id === item.id ? "wm-selected" : ""}`}
+          data-attention={item.attention ?? undefined}
+          data-kind={item.kind}
           onClick={() => openPreview(item)}
           draggable
           onDragStart={(event) => {
@@ -899,6 +924,12 @@ function WorkMap() {
           aria-label={[
             `Preview ${item.title}`,
             item.reason,
+            needsReview(item) && item.attention !== "review"
+              ? "Needs review"
+              : "",
+            item.signal !== "unread" && item.unreadResults
+              ? unreadLabel(item.unreadResults)
+              : "",
             item.focus ? "In focus" : "",
             item.task ? `${item.task.priority} priority` : "",
             due,
@@ -999,12 +1030,6 @@ function WorkMap() {
           <span className="wm-excerpt">{item.summary}</span>
           <span className="wm-project-status">
             <Status item={item} />
-            {hasWorking && item.signal !== "working" && (
-              <span className="wm-status wm-working">
-                <i aria-hidden="true" />
-                Agent working
-              </span>
-            )}
           </span>
         </button>
         <AreaTools
@@ -1535,6 +1560,7 @@ function WorkMap() {
               ["all", "Overview"],
               ["focus", "In focus"],
               ["waiting", "Waiting for you"],
+              ["unread", "New results"],
               ["working", "Working"],
               ["inactive", "Inactive"],
             ] as [Filter, string][]
@@ -1718,10 +1744,18 @@ function WorkMap() {
                           {orbit.anchor.focus
                             ? "IN FOCUS"
                             : orbit.anchor.signal === "waiting"
-                              ? "NEEDS YOU NOW"
-                              : isWorking(orbit.anchor)
-                                ? "WORKING NOW"
-                                : "IN VIEW"}
+                              ? orbit.anchor.attention === "review"
+                                ? "NEEDS REVIEW"
+                                : orbit.anchor.attention === "followup"
+                                  ? "FOLLOW-UP DUE"
+                                  : orbit.anchor.attention === "error"
+                                    ? "RUN FAILED"
+                                    : "NEEDS YOUR INPUT"
+                              : orbit.anchor.signal === "unread"
+                                ? "NEW RESULTS"
+                                : isWorking(orbit.anchor)
+                                  ? "WORKING NOW"
+                                  : "IN VIEW"}
                         </span>
                         {mapArea(orbit.anchor)}
                       </div>
@@ -1809,9 +1843,9 @@ function WorkMap() {
                 Green bar · Agent working
               </span>
               {" · "}
-              <span className="wm-legend-waiting">
-                Orange fill · Waiting for you
-              </span>
+              <span className="wm-legend-waiting">Amber · Action needed</span>
+              {" · "}
+              <span className="wm-legend-unread">Blue · New result</span>
               {" · "}
               {spatial
                 ? "Quieter work sits farther out."

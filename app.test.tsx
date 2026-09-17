@@ -759,17 +759,23 @@ describe("preview and native navigation", () => {
     slot.lifecycle.unmount();
   });
   it.each([null, "thr_parent"])(
-    "retains a viewed waiting session (parent %s) until collapse, then focuses the next result",
+    "retains a viewed new result (parent %s) until collapse, then focuses the next result",
     async (parentThreadId) => {
       const sessions = [
         thread({ indicator: "unread-success", isUnread: true, parentThreadId }),
+        thread({
+          id: "thr_next",
+          title: "Next result",
+          indicator: "unread-success",
+          isUnread: true,
+        }),
       ];
       const slot = await mount({
         tasks: [task({ status: "in_review" })],
         threads: sessions,
       });
       fireEvent.click(
-        await slot.findByRole("button", { name: "Waiting for you 2" }),
+        await slot.findByRole("button", { name: "New results 2" }),
       );
       fireEvent.click(slot.getByRole("button", { name: /^Preview Session/ }));
       const detail = slot.getByRole("region", { name: "Expanded: Session" });
@@ -784,7 +790,7 @@ describe("preview and native navigation", () => {
       // The SDK fake records setRead; drive the resulting host snapshot explicitly.
       sessions[0] = { ...sessions[0], indicator: "none", isUnread: false };
       await slot.behavior.emitRealtime("preferences-changed", {});
-      await slot.findByRole("button", { name: "Waiting for you 1" });
+      await slot.findByRole("button", { name: "New results 1" });
       expect(slot.getByRole("region", { name: "Expanded: Session" })).toBe(
         detail,
       );
@@ -802,7 +808,7 @@ describe("preview and native navigation", () => {
       ).toBeNull();
       await waitFor(() =>
         expect(document.activeElement).toBe(
-          slot.getByRole("button", { name: /^Preview Review proposal/ }),
+          slot.getByRole("button", { name: /^Preview Next result/ }),
         ),
       );
       slot.lifecycle.unmount();
@@ -1262,18 +1268,97 @@ describe("preview and native navigation", () => {
     ).toBeNull();
     slot.lifecycle.unmount();
   });
-  it("counts and ranks waiting tasks and standalone sessions once", async () => {
+  it("keeps task review and an attached unread result visible independently across filters", async () => {
+    const sessions = [thread({ indicator: "unread-success", isUnread: true })];
+    const slot = await mount({
+      tasks: [task({ status: "in_review", threadIds: ["thr_test"] })],
+      threads: sessions,
+    });
+    fireEvent.click(await slot.findByRole("button", { name: "New results 1" }));
+    const tile = slot.getByRole("button", { name: /^Preview Review proposal/ });
+    expect(within(tile).getByText("Needs review")).toBeTruthy();
+    expect(within(tile).getByText("New result · unread")).toBeTruthy();
+    fireEvent.click(tile);
+    await waitFor(() =>
+      expect(slot.inspection.sidebarActionCalls).toContainEqual({
+        method: "setRead",
+        threadId: "thr_test",
+        read: true,
+      }),
+    );
+    sessions[0] = { ...sessions[0], indicator: "none", isUnread: false };
+    await slot.behavior.emitRealtime("preferences-changed", {});
+    await slot.findByRole("button", { name: "New results 0" });
+    fireEvent.click(slot.getByRole("button", { name: "Waiting for you 1" }));
+    expect(
+      slot
+        .getByRole("button", { name: /^Preview Review proposal/ })
+        .getAttribute("data-attention"),
+    ).toBe("review");
+    expect(
+      slot.inspection.rpcCalls.some((call) => call.method === "settle"),
+    ).toBe(false);
+    slot.lifecycle.unmount();
+  });
+  it("shows failure, review, unread, working and focus together without acknowledging on browse", async () => {
+    const slot = await mount({
+      tasks: [
+        task({
+          status: "in_review",
+          threadIds: ["error", "result", "running"],
+        }),
+      ],
+      threads: [
+        thread({ id: "error", indicator: "unread-error" }),
+        thread({ id: "result", indicator: "unread-success" }),
+        thread({ id: "running", indicator: "runtime" }),
+      ],
+      preferences: { "task:task1": { focus: true } },
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: "Waiting for you 1" }),
+    );
+    const tile = slot.getByRole("button", { name: /^Preview Review proposal/ });
+    expect(tile.getAttribute("data-attention")).toBe("error");
+    expect(tile.classList.contains("wm-has-working")).toBe(true);
+    expect(tile.classList.contains("wm-focused")).toBe(true);
+    for (const label of [
+      "Run failed",
+      "Needs review",
+      "New result · unread",
+      "Agent working",
+    ])
+      expect(within(tile).getByText(label)).toBeTruthy();
+    expect(tile.getAttribute("aria-label")).toContain(
+      "Run failed. Needs review. New result · unread",
+    );
+    expect(slot.getByRole("button", { name: "New results 1" })).toBeTruthy();
+    expect(slot.getByRole("button", { name: "Working 1" })).toBeTruthy();
+    expect(
+      slot.inspection.sidebarActionCalls.filter((c) => c.method === "setRead"),
+    ).toHaveLength(0);
+    slot.lifecycle.unmount();
+  });
+  it("separates actionable tasks from unread results without acknowledging either on filter change", async () => {
     const slot = await mount({ tasks: [task({ status: "in_review" })] });
     fireEvent.click(
-      await slot.findByRole("button", { name: "Waiting for you 2" }),
+      await slot.findByRole("button", { name: "Waiting for you 1" }),
     );
     const tiles = slot.getAllByRole("button", { name: /^Preview / });
-    expect(tiles).toHaveLength(2);
-    expect(tiles[0].getAttribute("aria-label")).toMatch(/^Preview Session/);
-    expect(tiles[1].getAttribute("aria-label")).toMatch(
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0].getAttribute("aria-label")).toMatch(
       /^Preview Review proposal/,
     );
     expect(slot.queryByRole("button", { name: /^Open project/ })).toBeNull();
+    expect(tiles[0].getAttribute("data-attention")).toBe("review");
+    fireEvent.click(slot.getByRole("button", { name: "New results 1" }));
+    const result = slot.getByRole("button", { name: /^Preview Session/ });
+    expect(result.classList.contains("wm-unread")).toBe(true);
+    expect(result.classList.contains("wm-waiting")).toBe(false);
+    expect(within(result).getByText("New result · unread")).toBeTruthy();
+    expect(
+      slot.inspection.sidebarActionCalls.filter((c) => c.method === "setRead"),
+    ).toHaveLength(0);
     slot.lifecycle.unmount();
   });
   it("counts a project focused directly even when no child is focused", async () => {

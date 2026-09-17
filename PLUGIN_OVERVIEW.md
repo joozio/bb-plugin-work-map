@@ -1,6 +1,6 @@
 ## Your work, arranged by attention
 
-Pinned and focused work stays near the center. A coral ring marks focus, a green bar marks a running agent, and orange marks work waiting for you. Projects collect their tasks and inherit their activity. Quiet work stays around the edges.
+Pinned and focused work stays near the center. A coral ring marks focus and a green bar marks a running agent. Unread results have a quiet blue cue. Input requests, failures, review tasks and due follow-ups have separate labels and stronger priority. Projects stay neutral with counts pointing to their tasks. Waiting for you and New results have separate filters; reading a result leaves its task's review state intact.
 
 ## Open work where it sits
 

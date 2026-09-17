@@ -310,6 +310,9 @@
 .wm-filter.wm-waiting i {
   background: var(--wm-orange);
 }
+.wm-filter.wm-unread i {
+  background: var(--wm-blue);
+}
 .wm-filter.wm-working i {
   background: var(--wm-green);
 }
@@ -472,13 +475,37 @@
   line-height: 1.45;
   color: var(--wm-dim);
 }
+.wm-statuses {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .wm-status.wm-waiting {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--wm-orange) 8%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--wm-orange) 38%, var(--border));
+}
+.wm-status.wm-waiting[data-attention="input"] {
   color: #332009;
   background: var(--wm-orange);
+}
+.wm-status.wm-waiting[data-attention="error"] {
+  color: var(--foreground);
+  border-color: var(--destructive);
+  background: color-mix(in srgb, var(--destructive) 14%, var(--card));
+}
+.wm-status.wm-unread {
+  color: var(--foreground);
+  font-weight: 500;
+}
+.wm-status.wm-unread i {
+  background: var(--wm-blue);
 }
 .wm-status.wm-working {
   color: #092a1e;
   background: var(--wm-green);
+  border: 1px solid transparent;
 }
 .wm-status.wm-waiting,
 .wm-status.wm-working {
@@ -500,12 +527,23 @@
   color: var(--wm-dim);
 }
 .wm-tile.wm-waiting {
-  background: color-mix(in srgb, var(--wm-orange) 18%, var(--card));
-  border-color: color-mix(in srgb, var(--wm-orange) 68%, var(--border));
+  background: color-mix(in srgb, var(--wm-orange) 4%, var(--card));
+  border-color: color-mix(in srgb, var(--wm-orange) 35%, var(--border));
+}
+.wm-tile[data-attention="input"] {
+  background: color-mix(in srgb, var(--wm-orange) 12%, var(--card));
+  border-color: color-mix(in srgb, var(--wm-orange) 65%, var(--border));
+}
+.wm-tile[data-attention="error"] {
+  background: color-mix(in srgb, var(--destructive) 6%, var(--card));
+  border-color: color-mix(in srgb, var(--destructive) 55%, var(--border));
+}
+.wm-tile.wm-unread {
+  border-color: color-mix(in srgb, var(--wm-blue) 28%, var(--border));
 }
 /* Running work is carried by the green bar; the tint stays quieter than waiting. */
 .wm-tile.wm-working,
-.wm-tile.wm-has-working:not(.wm-waiting) {
+.wm-tile.wm-has-working:not(.wm-waiting):not(.wm-unread) {
   background: color-mix(in srgb, var(--wm-green) 12%, var(--card));
   border-color: color-mix(in srgb, var(--wm-green) 55%, var(--border));
 }
@@ -538,12 +576,22 @@
   transition: border-color 0.18s;
 }
 .wm-island.wm-waiting {
-  border-color: color-mix(in srgb, var(--wm-orange) 68%, var(--border));
-  background: color-mix(in srgb, var(--wm-orange) 12%, var(--background));
+  border-color: var(--border);
 }
 .wm-island.wm-has-working:not(.wm-waiting) {
-  border-color: color-mix(in srgb, var(--wm-green) 55%, var(--border));
-  background: color-mix(in srgb, var(--wm-green) 10%, var(--background));
+  border-color: color-mix(in srgb, var(--wm-green) 25%, var(--border));
+}
+/* Area summaries orient; the individual task carries the action emphasis. */
+.wm-statuses.wm-project-summary .wm-status {
+  color: var(--wm-dim);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-weight: 500;
+}
+.wm-tile[data-kind="project"] {
+  background: var(--card);
+  border-color: var(--border);
 }
 .wm-island.wm-focused {
   padding: 25px;
@@ -626,6 +674,10 @@
 }
 .wm-legend-waiting {
   color: var(--wm-orange);
+}
+.wm-legend-unread,
+.wm-center-label.wm-unread {
+  color: var(--wm-blue);
 }
 .wm-preview {
   width: 350px;
