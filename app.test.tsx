@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, cleanup, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  cleanup,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { data, task, thread } from "./fixtures";
 import { sessionPreview } from "./preview";
@@ -21,6 +27,115 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+it("fits collapsed Overview to height and width, keeps overflow reachable, and lets details scroll", async () => {
+  let width = 1500,
+    height = 780;
+  const observers = new Map<Element, ResizeObserverCallback>();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      targets: Element[] = [];
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        this.targets.push(target);
+        observers.set(target, this.callback);
+      }
+      disconnect() {
+        this.targets.forEach((target) => observers.delete(target));
+      }
+    },
+  );
+  const resize = () =>
+    act(async () => {
+      for (const [target, callback] of observers)
+        callback(
+          [{ target, contentRect: { width, height } } as ResizeObserverEntry],
+          {} as ResizeObserver,
+        );
+    });
+  const originalRect = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return this.classList.contains("wm-spatial")
+        ? {
+            width,
+            height,
+            x: 0,
+            y: 0,
+            top: 0,
+            left: 0,
+            right: width,
+            bottom: height,
+            toJSON: () => ({}),
+          }
+        : originalRect.call(this);
+    },
+  );
+  const slot = await mount({
+    tasks: [],
+    threads: Array.from({ length: 30 }, (_, i) =>
+      thread({ id: `fit${i}`, title: `Fit session ${i}`, isPinned: i === 0 }),
+    ),
+  });
+  await slot.findByText(/Fits this screen/);
+  const roots = () =>
+    Array.from(
+      slot.container.querySelectorAll<HTMLElement>("[data-layout-id]"),
+    );
+  const wideCount = roots().length;
+  expect(wideCount).toBeGreaterThan(5);
+  height = 60;
+  await resize();
+  expect(roots()).toHaveLength(0);
+  expect(slot.getByRole("button", { name: /Show all 31/ })).toBeTruthy();
+  expect(slot.queryByText("Nothing here needs attention")).toBeNull();
+  expect(slot.getByText("More room needed · Use Show all below")).toBeTruthy();
+  width = 480;
+  height = 340;
+  await resize();
+  expect(roots().length).toBeLessThan(wideCount);
+  expect(
+    roots().every(
+      (e) => parseFloat(e.style.top) + parseFloat(e.style.height) <= height,
+    ),
+  ).toBe(true);
+  const pinned = slot.getByRole("button", { name: /^Preview Fit session 0/ });
+  expect(pinned.closest(".wm-rich-card")).toBeTruthy();
+  expect(slot.inspection.sidebarActionCalls).toEqual([]);
+  expect(
+    slot.inspection.rpcCalls.some((c) => c.method === "setPreference"),
+  ).toBe(false);
+  fireEvent.click(pinned);
+  expect(slot.container.querySelector(".wm-fit-canvas")).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Collapse details" }));
+  await slot.findByText(/Fits this screen/);
+  fireEvent.click(slot.getByRole("button", { name: /Show all 31/ }));
+  expect(slot.queryByText(/Fits this screen/)).toBeNull();
+  expect(
+    slot.getAllByRole("button", { name: /^Preview Fit session/ }),
+  ).toHaveLength(30);
+  slot.lifecycle.unmount();
+});
+it("offers Explore when a short project card has no room for task tiles", async () => {
+  vi.stubGlobal("ResizeObserver", undefined);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 800, 180),
+  );
+  const slot = await mount({
+    threads: [],
+    tasks: Array.from({ length: 6 }, (_, i) =>
+      task({ id: `short${i}`, title: `Short task ${i}` }),
+    ),
+  });
+  await slot.findByText(/Fits this screen/);
+  expect(slot.container.querySelectorAll(".wm-small")).toHaveLength(0);
+  expect(slot.queryByText("+6 more tasks")).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: /Explore 6 tasks/ }));
+  expect(
+    slot.getAllByRole("button", { name: /^Preview Short task/ }),
+  ).toHaveLength(6);
+  slot.lifecycle.unmount();
 });
 it("shows recent activity without claiming an agent is running, and holds an open chat while it ages through a failed refresh", async () => {
   let clock = Date.now();
@@ -133,24 +248,35 @@ it("zooms out to more areas and project tasks without acknowledging work, and re
   slot.lifecycle.unmount();
 });
 
-it("reveals a longer readable session excerpt on zoom without opening or acknowledging it", async () => {
-  const previewText =
-    "A useful result. ".repeat(24) + "The next decision is which draft to use.";
-  const slot = await mount({ tasks: [], previewText });
-  const card = await slot.findByRole("button", { name: /^Preview Session/ });
-  await waitFor(() => expect(card.textContent).toContain("A useful result."));
-  expect(card.textContent).not.toContain("The next decision");
-  fireEvent.change(slot.getByRole("slider"), { target: { value: "160" } });
-  expect(card.textContent).toContain(
-    "The next decision is which draft to use.",
-  );
-  expect(card.getAttribute("aria-expanded")).toBe("false");
-  expect(slot.inspection.sidebarActionCalls).toHaveLength(0);
-  expect(
-    slot.inspection.rpcCalls.filter((c) => c.method === "setPreference"),
-  ).toHaveLength(0);
-  slot.lifecycle.unmount();
-});
+it.each(["none", "runtime"] as const)(
+  "shows useful central session context for %s without opening or acknowledging it",
+  async (indicator) => {
+    const previewText =
+      "A useful result. ".repeat(24) +
+      "The next decision is which draft to use.";
+    const slot = await mount({
+      tasks: [],
+      previewText,
+      threads: [thread({ indicator })],
+    });
+    const card = await slot.findByRole("button", { name: /^Preview Session/ });
+    await waitFor(() => expect(card.textContent).toContain("A useful result."));
+    expect(card.textContent).toContain("The next decision");
+    expect(card.textContent).toContain(
+      indicator === "runtime" ? "Latest available response" : "Latest response",
+    );
+    fireEvent.change(slot.getByRole("slider"), { target: { value: "160" } });
+    expect(card.textContent).toContain(
+      "The next decision is which draft to use.",
+    );
+    expect(card.getAttribute("aria-expanded")).toBe("false");
+    expect(slot.inspection.sidebarActionCalls).toHaveLength(0);
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "setPreference"),
+    ).toHaveLength(0);
+    slot.lifecycle.unmount();
+  },
+);
 
 it("adds standalone work at narrow widths and shows task context on zoom-in without expanding the project", async () => {
   vi.stubGlobal(

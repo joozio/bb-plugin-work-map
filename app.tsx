@@ -38,9 +38,20 @@ import type { Settlement } from "./settlement-contract";
 import { AreaTools, ProjectDot, useAreaManager } from "./management-ui";
 import type { ManagementResult } from "./management-contract";
 import { previewExcerpt, type SessionPreview } from "./preview";
+import { fitOverview } from "./overview-layout";
+import { useOverviewSize } from "./overview-size";
 import "./app.css";
+import "./overview.css";
 
 type Filter = "all" | "focus" | "waiting" | "unread" | "working" | "inactive";
+const filters: [Filter, string][] = [
+  ["all", "Overview"],
+  ["focus", "In focus"],
+  ["waiting", "Waiting for you"],
+  ["unread", "Ready to read"],
+  ["working", "Working"],
+  ["inactive", "Inactive"],
+];
 type Previews = Record<string, SessionPreview>;
 const EMPTY: Snapshot = {
   projects: [],
@@ -152,6 +163,7 @@ function WorkMap() {
   const panelRef = useRef<HTMLElement>(null);
   const canvasRef = useRef<HTMLElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
+  const overviewRef = useRef<HTMLElement>(null);
   const [inspectionLayout, setInspectionLayout] = useState<ReturnType<
     typeof arrangeMap
   > | null>(null);
@@ -364,6 +376,14 @@ function WorkMap() {
   );
   const { zoom } = zoomControl;
   const density = zoomDensity(zoom, mapWidth);
+  const spatial = !expanded && !needle && filter === "all";
+  const fitRequested =
+    spatial && !selection && !launcher.context && !manager.inlineProjectId;
+  const viewport = useOverviewSize(overviewRef, fitRequested && !!snapshot);
+  const fitting = fitRequested && viewport.width > 0;
+  useEffect(() => {
+    if (fitting && canvasRef.current) canvasRef.current.scrollTop = 0;
+  }, [fitting]);
   const matches = (item: WorkItem) =>
     (!needle ||
       `${item.title} ${item.kind === "project" ? "" : item.summary} ${item.task?.key ?? ""} ${item.scope}`
@@ -426,7 +446,14 @@ function WorkMap() {
           rotation,
           zoom === 1 ? undefined : zoomControl.anchorId,
         );
-  const spatial = !expanded && !needle && filter === "all";
+  const fit = fitOverview(
+    candidates,
+    viewport.width,
+    viewport.height,
+    zoom,
+    rotation,
+    zoom === 1 ? undefined : zoomControl.anchorId,
+  );
   // Keep every area in its original slot while it is being explored.
   const currentItem = (item: WorkItem) => {
     if (!itemById.has(item.id) && item.kind === "thread") {
@@ -463,7 +490,9 @@ function WorkMap() {
           north: inspectionLayout.north.map(currentItem),
           south: inspectionLayout.south.map(currentItem),
         }
-      : extendOrbit(arrangeMap(baseline), visible);
+      : fitting
+        ? fit.orbit
+        : extendOrbit(arrangeMap(baseline), visible);
   const shown = spatial
     ? [
         orbit.anchor,
@@ -482,7 +511,7 @@ function WorkMap() {
     : "";
   const captureLayout = useMapMotion(
     canvasRef,
-    `${spatial}:${mapWidth}:${zoom}:${selected?.id ?? ""}:${previewMode}:${chatTarget?.threadId ?? ""}:${launcher.context?.id ?? ""}:${launcher.threadId ?? ""}:${shown.map((item) => `${item.id}:${item.signal}:${item.attention}:${item.unreadResults}:${item.focus}`).join("|")}`,
+    `${spatial}:${mapWidth}:${viewport.height}:${zoom}:${selected?.id ?? ""}:${previewMode}:${chatTarget?.threadId ?? ""}:${launcher.context?.id ?? ""}:${launcher.threadId ?? ""}:${shown.map((item) => `${item.id}:${item.signal}:${item.attention}:${item.unreadResults}:${item.focus}`).join("|")}`,
     zoom,
   );
   useEffect(() => {
@@ -508,8 +537,7 @@ function WorkMap() {
     .sort()
     .join(",");
   const detailExcerpts = useMemo(() => {
-    if (zoom <= 1) return {} as Record<string, string>;
-    const limit = Math.round(240 + density.detail * 560);
+    const limit = Math.round(700 + density.detail * 200);
     return Object.fromEntries(
       visibleThreads.split(",").flatMap((id) => {
         const preview = previews[id];
@@ -518,7 +546,7 @@ function WorkMap() {
           : [];
       }),
     );
-  }, [zoom, density.detail, visibleThreads, previews]);
+  }, [density.detail, visibleThreads, previews]);
   useEffect(() => {
     if (!visibleThreads) return;
     let canceled = false;
@@ -969,12 +997,29 @@ function WorkMap() {
     const item = [...items, ...leaves].find((i) => i.id === id);
     if (item) void saveFocus(item, focus);
   };
+  function chooseFilter(value: Filter) {
+    if (manager.active) manager.close(false);
+    if (launcher.context) launcher.close();
+    setSelection(null);
+    setExpandedArea(null);
+    setFilter(value);
+    setExpanded(false);
+  }
   function tile(item: WorkItem, small = false) {
     const inspecting = selected?.id === item.id && previewMode === "inline";
+    const rich =
+      !small &&
+      !inspecting &&
+      (fitting
+        ? fit.placements[item.id]?.rich
+        : spatial &&
+          (item.focus ||
+            orbit.anchor?.id === item.id ||
+            orbit.near.some((near) => near.id === item.id)));
     const showExcerpt = !small || zoom > 1;
     const excerpt =
       item.kind === "thread"
-        ? detailExcerpts[item.threads[0]?.id] ||
+        ? ((rich || zoom > 1) && detailExcerpts[item.threads[0]?.id]) ||
           previews[item.threads[0]?.id]?.excerpt ||
           ""
         : item.nextAction || item.summary;
@@ -993,7 +1038,7 @@ function WorkMap() {
     return (
       <article
         key={item.id}
-        className={`wm-item ${item.focus ? "wm-focused" : ""} ${inspecting ? "wm-item-expanded" : ""}`}
+        className={`wm-item ${item.focus ? "wm-focused" : ""} ${inspecting ? "wm-item-expanded" : ""} ${rich ? "wm-rich-card" : ""}`}
       >
         <button
           data-work-id={item.id}
@@ -1027,7 +1072,9 @@ function WorkMap() {
             due,
             item.changed ? "Updated" : "",
             showExcerpt && !(inspecting && item.kind === "task") ? excerpt : "",
-            zoom > 1 && !(inspecting && item.kind === "task") ? zoomDetail : "",
+            (zoom > 1 || rich) && !(inspecting && item.kind === "task")
+              ? zoomDetail
+              : "",
           ]
             .filter(Boolean)
             .join(". ")}
@@ -1035,10 +1082,14 @@ function WorkMap() {
           <span className="wm-tile-meta">
             <span>
               {item.task?.key ?? item.scope}
-              {(!small || zoom > 1) && relatedCount > 0
+              {(!small || (zoom > 1 && !fitting)) &&
+              !(rich && item.kind === "thread") &&
+              relatedCount > 0
                 ? ` · ${relatedCount} ${item.kind === "thread" ? (relatedCount === 1 ? "related task" : "related tasks") : relatedCount === 1 ? "session" : "sessions"}`
                 : ""}
-              {zoom > 1 && item.task ? ` · ${item.task.priority} priority` : ""}
+              {zoom > 1 && item.task && (!fitting || (!small && !rich))
+                ? ` · ${item.task.priority} priority`
+                : ""}
               {!small && activityLabel(item, now) && (
                 <span
                   className="wm-activity-age"
@@ -1059,15 +1110,43 @@ function WorkMap() {
           <strong>{item.title}</strong>
           {showExcerpt && excerpt && !(inspecting && item.kind === "task") && (
             <span className="wm-excerpt">
-              {zoom > 1 && item.nextAction && (
+              {rich && item.kind === "thread" && (
+                <span className="wm-detail-label">
+                  {isWorking(item)
+                    ? "Latest available response"
+                    : "Latest response"}
+                </span>
+              )}
+              {(zoom > 1 || rich) && item.nextAction && (
                 <span className="wm-detail-label">Next: </span>
               )}
               {excerpt}
             </span>
           )}
-          {zoom > 1 && zoomDetail && !(inspecting && item.kind === "task") && (
-            <span className="wm-zoom-details">
-              <span className="wm-detail-label">Status</span> {zoomDetail}
+          {(zoom > 1 || rich) &&
+            zoomDetail &&
+            !(inspecting && item.kind === "task") && (
+              <span className="wm-zoom-details">
+                <span className="wm-detail-label">Status</span> {zoomDetail}
+              </span>
+            )}
+          {rich && item.kind === "thread" && relatedCount > 0 && (
+            <span className="wm-card-links">
+              <span className="wm-detail-label">Linked work</span>{" "}
+              {tasksBySession
+                .get(item.threads[0].id)
+                ?.slice(0, 2)
+                .map((task) => `${task.key} · ${task.title}`)
+                .join(" / ")}
+              {relatedCount > 2 ? ` · +${relatedCount - 2} more` : ""}
+            </span>
+          )}
+          {rich && item.task && (
+            <span className="wm-card-facts">
+              {item.task.priority} priority
+              {item.threads.length
+                ? ` · ${item.threads.length} connected ${item.threads.length === 1 ? "session" : "sessions"}`
+                : ""}
             </span>
           )}
           <span className="wm-tile-bottom">
@@ -1092,9 +1171,11 @@ function WorkMap() {
       area?.id === item.id && previewMode === "inline" && !!selected;
     const compact =
       !!area && !!selected && previewMode === "inline" && !inspecting;
-    const taskLimit = compact
-      ? 2
-      : zoomDensity(zoom, mapWidth, item.focus).tasks;
+    const taskLimit = fitting
+      ? (fit.placements[item.id]?.tasks ?? 0)
+      : compact
+        ? 2
+        : zoomDensity(zoom, mapWidth, item.focus).tasks;
     const children =
       inspecting &&
       selected?.task?.projectId === item.id.slice(8) &&
@@ -1104,7 +1185,7 @@ function WorkMap() {
     return (
       <article
         key={item.id}
-        className={`wm-island wm-${item.signal} ${item.focus ? "wm-focused" : ""} ${hasWorking ? "wm-has-working" : ""} ${inspecting ? "wm-area-expanded" : ""}`}
+        className={`wm-island wm-${item.signal} ${item.focus ? "wm-focused" : ""} ${hasWorking ? "wm-has-working" : ""} ${inspecting ? "wm-area-expanded" : ""} ${fitting && fit.placements[item.id]?.rich ? "wm-rich-card" : ""}`}
         data-has-results={item.unreadResults > 0 || undefined}
         data-kind="project"
       >
@@ -1243,7 +1324,9 @@ function WorkMap() {
               className="wm-project-more"
               onClick={() => openPreview(item)}
             >
-              {compact && item.children.length > taskLimit
+              {(compact || fitting) &&
+              taskLimit > 0 &&
+              item.children.length > taskLimit
                 ? `+${item.children.length - taskLimit} more tasks`
                 : `Explore ${item.children.length} tasks`}{" "}
               <span aria-hidden="true">↗</span>
@@ -1255,10 +1338,34 @@ function WorkMap() {
   }
   function mapArea(item: WorkItem) {
     const expandedHere = inspecting && area?.id === item.id;
+    const placement = fitting ? fit.placements[item.id] : undefined;
     return (
       <div
         key={item.id}
         data-layout-id={item.id}
+        data-task-columns={
+          placement ? (placement.width >= 350 ? 2 : 1) : undefined
+        }
+        data-card-size={
+          placement
+            ? placement.height < (item.kind === "project" ? 195 : 150)
+              ? "brief"
+              : placement.height < 290
+                ? "medium"
+                : "full"
+            : undefined
+        }
+        style={
+          placement
+            ? {
+                position: "absolute",
+                left: placement.x,
+                top: placement.y,
+                width: placement.width,
+                height: placement.height,
+              }
+            : undefined
+        }
         className={`wm-map-area ${expandedHere ? "wm-map-area-expanded" : inspecting ? "wm-map-area-compact" : ""}`}
       >
         {island(item)}
@@ -1796,30 +1903,28 @@ function WorkMap() {
         </div>
       </header>
       <div className="wm-filterbar">
+        <select
+          className="wm-filter-select"
+          aria-label="Filter work"
+          value={filter}
+          disabled={launcher.busy}
+          onChange={(event) => chooseFilter(event.target.value as Filter)}
+        >
+          {filters.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+              {value !== "all" ? ` · ${counts[value]}` : ""}
+            </option>
+          ))}
+        </select>
         <div className="wm-filters" role="group" aria-label="Filter work">
-          {(
-            [
-              ["all", "Overview"],
-              ["focus", "In focus"],
-              ["waiting", "Waiting for you"],
-              ["unread", "Ready to read"],
-              ["working", "Working"],
-              ["inactive", "Inactive"],
-            ] as [Filter, string][]
-          ).map(([value, label]) => (
+          {filters.map(([value, label]) => (
             <button
               key={value}
               className={`wm-filter wm-${value}`}
               aria-pressed={filter === value}
               disabled={launcher.busy}
-              onClick={() => {
-                if (manager.active) manager.close(false);
-                if (launcher.context) launcher.close();
-                setSelection(null);
-                setExpandedArea(null);
-                setFilter(value);
-                setExpanded(false);
-              }}
+              onClick={() => chooseFilter(value)}
             >
               <i />
               {label}
@@ -1886,7 +1991,7 @@ function WorkMap() {
         className={`wm-body ${manager.pane || (selected && previewMode === "pane") ? "wm-with-preview" : ""}`}
       >
         <main
-          className="wm-canvas"
+          className={`wm-canvas ${fitRequested ? "wm-fit-canvas" : ""}`}
           ref={canvasRef}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
@@ -1925,7 +2030,7 @@ function WorkMap() {
                 ? "Task data is unavailable. Use Retry refresh above."
                 : "Gathering your projects and sessions…"}
             </div>
-          ) : shown.length === 0 ? (
+          ) : shown.length === 0 && !(fitRequested && candidates.length) ? (
             <div className="wm-empty">
               <Icon name="Search" />
               <h2>
@@ -1940,7 +2045,7 @@ function WorkMap() {
           ) : (
             <div
               ref={worldRef}
-              className={`wm-map-world ${zoom < 1 ? "wm-zoomed-out" : zoom > 1 ? "wm-zoomed-in" : ""}`}
+              className={`wm-map-world ${zoom < 1 ? "wm-zoomed-out" : zoom > 1 ? "wm-zoomed-in" : ""} ${fitRequested ? "wm-fit-world" : ""}`}
               data-zoom={Math.round(zoom * 100)}
               data-detail={
                 zoom <= 0.8 ? "compact" : zoom > 1 ? "detail" : "overview"
@@ -1968,16 +2073,21 @@ function WorkMap() {
                           : "MATCHING WORK"}
                 </span>
                 <span>
-                  {zoom !== 1 && spatial
-                    ? inspectionLayout
-                      ? `${shown.length} areas and sessions · Layout held while expanded`
-                      : `${shown.length === candidates.length ? `All ${shown.length}` : `${shown.length} of ${candidates.length}`} areas and sessions · ${zoom < 1 ? "Compact" : "Detail"}`
-                    : "Click to expand · Pinch to zoom · Drag to focus"}
+                  {fitting
+                    ? shown.length
+                      ? `${shown.length} of ${candidates.length} areas and sessions · Fits this screen`
+                      : "More room needed · Use Show all below"
+                    : zoom !== 1 && spatial
+                      ? inspectionLayout
+                        ? `${shown.length} areas and sessions · Layout held while expanded`
+                        : `${shown.length === candidates.length ? `All ${shown.length}` : `${shown.length} of ${candidates.length}`} areas and sessions · ${zoom < 1 ? "Compact" : "Detail"}`
+                      : "Click to expand · Pinch to zoom · Drag to focus"}
                 </span>
               </div>
               {spatial ? (
                 <section
-                  className={`wm-spatial ${inspecting ? `wm-inspecting wm-expand-${expandedZone}` : ""}`}
+                  ref={overviewRef}
+                  className={`wm-spatial ${inspecting ? `wm-inspecting wm-expand-${expandedZone}` : ""} ${fitRequested ? "wm-fit-map" : ""}`}
                   aria-label="Work arranged around your focus"
                 >
                   <div className="wm-orbit-rings" aria-hidden="true" />
@@ -1989,6 +2099,19 @@ function WorkMap() {
                       <div className="wm-orbit-anchor">
                         <span
                           className={`wm-center-label wm-${orbit.anchor.focus ? "focused" : orbit.anchor.signal}`}
+                          style={
+                            fitting
+                              ? {
+                                  left: fit.placements[orbit.anchor.id].x,
+                                  right: "auto",
+                                  top: Math.max(
+                                    0,
+                                    fit.placements[orbit.anchor.id].y - 20,
+                                  ),
+                                  width: fit.placements[orbit.anchor.id].width,
+                                }
+                              : undefined
+                          }
                         >
                           {orbit.anchor.focus
                             ? "IN FOCUS"
@@ -2061,7 +2184,7 @@ function WorkMap() {
                   ))}
                 </section>
               )}
-              {browseCount > visible.length && (
+              {browseCount > (fitting ? shown.length : visible.length) && (
                 <button
                   className="wm-more"
                   onClick={() => {
