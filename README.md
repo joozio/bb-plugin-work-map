@@ -2,6 +2,8 @@
 
 An interactive attention map inside BB. Open **Work Map** in the sidebar, or `/plugins/work-map/map`.
 
+A slim toolbar keeps filters, search, creation and view controls together. Filter chips appear above 1360px of map width; narrower views use a picker with waiting and ready counts beside it. Small screens wrap into compact rows. Refresh shows the last update time on hover or keyboard focus, including an accessible description. The caption reports only the current item count or layout state, replacing the repeated heading and gesture hint. On the smallest screens, zoom buttons and a reset arrow remain available while the slider and percentage readout are hidden.
+
 This package is distributed from Git. The npm `private` flag prevents accidental npm publication; BB can build the source during a Git installation.
 
 Install from the public release:

@@ -26,7 +26,6 @@
 .wm-fit-world > .wm-map-caption {
   flex: none;
   margin-bottom: 10px;
-  gap: 12px;
 }
 .wm-map-world.wm-fit-world > .wm-spatial.wm-fit-map {
   display: block;
@@ -69,14 +68,6 @@
 .wm-fit-canvas > .wm-settled-expanded {
   max-height: 28%;
   overflow: auto;
-}
-@container (max-width: 560px) {
-  .wm-fit-world > .wm-map-caption > span:first-child {
-    display: none;
-  }
-  .wm-fit-world > .wm-map-caption > span + span {
-    display: inline;
-  }
 }
 .wm-map-world .wm-fit-map .wm-map-area > .wm-item,
 .wm-map-world .wm-fit-map .wm-map-area > .wm-island {
@@ -263,17 +254,6 @@
   -webkit-line-clamp: 2;
 }
 @media (max-height: 700px) {
-  .wm-root:has(.wm-fit-world) .wm-eyebrow {
-    display: none;
-  }
-  .wm-root:has(.wm-fit-world) .wm-toolbar {
-    padding-top: 10px;
-    padding-bottom: 8px;
-  }
-  .wm-root:has(.wm-fit-world) .wm-intro h1 {
-    font-size: 21px;
-    margin: 0;
-  }
   .wm-fit-canvas > .wm-footer > span {
     display: none;
   }
@@ -287,30 +267,6 @@
   }
   .wm-fit-world > .wm-map-caption {
     margin-bottom: 6px;
-  }
-  .wm-root:has(.wm-fit-world) .wm-intro {
-    display: none;
-  }
-  .wm-root:has(.wm-fit-world) .wm-filterbar {
-    padding-bottom: 8px;
-    gap: 5px;
-  }
-  @container (max-width: 850px) {
-    .wm-filterbar .wm-filters {
-      display: none;
-    }
-    .wm-filter-select {
-      display: block;
-      flex: 1;
-    }
-    .wm-filterbar {
-      flex-wrap: nowrap;
-      gap: 6px;
-    }
-    .wm-filterbar .wm-zoom-controls {
-      margin-left: auto;
-      flex: none;
-    }
   }
   .wm-fit-canvas > .wm-settled {
     margin-top: 6px;

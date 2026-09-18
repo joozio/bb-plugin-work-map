@@ -1861,24 +1861,67 @@ function WorkMap() {
       }}
     >
       <header className="wm-toolbar">
-        <div className="wm-intro">
-          <span className="wm-eyebrow">FOCUS, ACTIVITY & ATTENTION</span>
-          <h1>What needs you now.</h1>
+        <h1 className="sr-only">Work Map</h1>
+        <div className="wm-filterbar">
+          <select
+            className="wm-filter-select"
+            aria-label="Filter work"
+            value={filter}
+            disabled={launcher.busy}
+            onChange={(event) => chooseFilter(event.target.value as Filter)}
+          >
+            {filters.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+                {value !== "all" ? ` · ${counts[value]}` : ""}
+              </option>
+            ))}
+          </select>
+          <div
+            className="wm-filter-counts"
+            role="group"
+            aria-label="Attention counts"
+          >
+            <button
+              className="wm-filter wm-waiting"
+              aria-label={`Show work waiting for you (${counts.waiting})`}
+              title={`${counts.waiting} waiting for you`}
+              aria-pressed={filter === "waiting"}
+              disabled={launcher.busy}
+              onClick={() => chooseFilter("waiting")}
+            >
+              <i />
+              {counts.waiting}
+            </button>
+            <button
+              className="wm-filter wm-unread"
+              aria-label={`Show results ready to read (${counts.unread})`}
+              title={`${counts.unread} ready to read`}
+              aria-pressed={filter === "unread"}
+              disabled={launcher.busy}
+              onClick={() => chooseFilter("unread")}
+            >
+              <i />
+              {counts.unread}
+            </button>
+          </div>
+          <div className="wm-filters" role="group" aria-label="Filter work">
+            {filters.map(([value, label]) => (
+              <button
+                key={value}
+                className={`wm-filter wm-${value}`}
+                aria-pressed={filter === value}
+                disabled={launcher.busy}
+                onClick={() => chooseFilter(value)}
+              >
+                <i />
+                {label}
+                {value !== "all" && <b>{counts[value]}</b>}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="wm-tools">
-          <Button disabled={launcher.busy} onClick={() => startSession()}>
-            <Icon name="MessageCirclePlus" /> New session
-          </Button>
-          <Button
-            variant="outline"
-            disabled={launcher.busy || manager.busy}
-            onClick={() => {
-              setPreviewMode("inline");
-              manager.open("createProject");
-            }}
-          >
-            New project
-          </Button>
           <Input
             disabled={launcher.busy}
             value={query}
@@ -1889,69 +1932,61 @@ function WorkMap() {
               setExpandedArea(null);
               setQuery(event.target.value);
             }}
-            placeholder="Find a task or session…"
+            placeholder="Search work…"
             aria-label="Find a task or session"
           />
+          <Button disabled={launcher.busy} onClick={() => startSession()}>
+            <Icon name="MessageCirclePlus" /> New session
+          </Button>
           <Button
             variant="ghost"
-            size="icon"
-            aria-label="Refresh map"
-            onClick={() => void refresh(true)}
+            disabled={launcher.busy || manager.busy}
+            onClick={() => {
+              setPreviewMode("inline");
+              manager.open("createProject");
+            }}
           >
-            <Icon name="RefreshCw" />
+            New project
           </Button>
         </div>
-      </header>
-      <div className="wm-filterbar">
-        <select
-          className="wm-filter-select"
-          aria-label="Filter work"
-          value={filter}
-          disabled={launcher.busy}
-          onChange={(event) => chooseFilter(event.target.value as Filter)}
-        >
-          {filters.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-              {value !== "all" ? ` · ${counts[value]}` : ""}
-            </option>
-          ))}
-        </select>
-        <div className="wm-filters" role="group" aria-label="Filter work">
-          {filters.map(([value, label]) => (
-            <button
-              key={value}
-              className={`wm-filter wm-${value}`}
-              aria-pressed={filter === value}
-              disabled={launcher.busy}
-              onClick={() => chooseFilter(value)}
+        <div className="wm-view-tools">
+          <ZoomControls {...zoomControl} disabled={zoomDisabled} />
+          <button
+            type="button"
+            className="wm-tool-icon"
+            aria-label="Manage areas"
+            title="Manage areas"
+            disabled={launcher.busy || manager.busy}
+            onClick={() => {
+              setPreviewMode("inline");
+              manager.open();
+            }}
+          >
+            <Icon name="Settings" />
+          </button>
+          <button
+            type="button"
+            className="wm-tool-icon wm-refresh"
+            aria-label="Refresh map"
+            aria-describedby="wm-refresh-status"
+            onClick={() => void refresh(true)}
+          >
+            <Icon name="RotateCcw" />
+            {snapshot && !refreshError && (
+              <i className="wm-live-dot" aria-hidden="true" />
+            )}
+            <span
+              id="wm-refresh-status"
+              role="tooltip"
+              className="wm-refresh-status"
             >
-              <i />
-              {label}
-              {value !== "all" && <b>{counts[value]}</b>}
-            </button>
-          ))}
+              {snapshot
+                ? `Updated ${age(snapshot.generatedAt, now)}`
+                : "Connecting"}
+            </span>
+          </button>
         </div>
-        <ZoomControls {...zoomControl} disabled={zoomDisabled} />
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Manage areas"
-          disabled={launcher.busy || manager.busy}
-          onClick={() => {
-            setPreviewMode("inline");
-            manager.open();
-          }}
-        >
-          <Icon name="Settings" />
-        </Button>
-        <span className="wm-live">
-          <i />
-          {snapshot
-            ? `Updated ${age(snapshot.generatedAt, now)}`
-            : "Connecting"}
-        </span>
-      </div>
+      </header>
       {error && (
         <div role="alert" className="wm-error">
           {error}
@@ -2062,17 +2097,6 @@ function WorkMap() {
             >
               <div className="wm-map-caption">
                 <span>
-                  {spatial
-                    ? "FOCUS & RECENT ACTIVITY"
-                    : filter === "focus"
-                      ? "IN FOCUS"
-                      : needle
-                        ? "SEARCH RESULTS"
-                        : filter === "all"
-                          ? "ALL WORK"
-                          : "MATCHING WORK"}
-                </span>
-                <span>
                   {fitting
                     ? shown.length
                       ? `${shown.length} of ${candidates.length} areas and sessions · Fits this screen`
@@ -2081,7 +2105,7 @@ function WorkMap() {
                       ? inspectionLayout
                         ? `${shown.length} areas and sessions · Layout held while expanded`
                         : `${shown.length === candidates.length ? `All ${shown.length}` : `${shown.length} of ${candidates.length}`} areas and sessions · ${zoom < 1 ? "Compact" : "Detail"}`
-                      : "Click to expand · Pinch to zoom · Drag to focus"}
+                      : `${shown.length} of ${candidates.length} ${needle ? "search results" : "items"}`}
                 </span>
               </div>
               {spatial ? (
