@@ -230,18 +230,30 @@ export function useMapZoom(
 }
 
 export function ZoomControls({
-  zoom,
+  zoom: current,
   set,
   step,
   reset,
   disabled,
-}: ReturnType<typeof useMapZoom> & { disabled: boolean }) {
+  inert,
+}: ReturnType<typeof useMapZoom> & {
+  disabled: boolean;
+  /** Why zoom does nothing in this layout; set, the controls rest at 100%. */
+  inert?: string;
+}) {
+  const off = disabled || !!inert;
+  const zoom = inert ? 1 : current;
   return (
-    <div className="wm-zoom-controls" role="group" aria-label="Map zoom">
+    <div
+      className="wm-zoom-controls"
+      role="group"
+      aria-label="Map zoom"
+      title={inert}
+    >
       <button
         aria-label="Zoom out"
-        title="Zoom out: more work, less detail"
-        disabled={disabled || zoom <= MIN_ZOOM}
+        title={inert ?? "Zoom out: more work, less detail"}
+        disabled={off || zoom <= MIN_ZOOM}
         onClick={() => step(-1)}
       >
         −
@@ -255,15 +267,16 @@ export function ZoomControls({
           max={MAX_ZOOM * 100}
           step={1}
           value={Math.round(zoom * 100)}
-          disabled={disabled}
+          disabled={off}
+          title={inert}
           onChange={(event) => set(Number(event.target.value) / 100)}
         />
         <i aria-hidden="true" />
       </div>
       <button
         aria-label="Zoom in"
-        title="Zoom in: more detail"
-        disabled={disabled || zoom >= MAX_ZOOM}
+        title={inert ?? "Zoom in: more detail"}
+        disabled={off || zoom >= MAX_ZOOM}
         onClick={() => step(1)}
       >
         +
@@ -274,7 +287,7 @@ export function ZoomControls({
           className="wm-zoom-reset"
           aria-label="Reset to actual size"
           title="Reset to actual size (100%)"
-          disabled={disabled}
+          disabled={off}
           onClick={reset}
         >
           100% ↺

@@ -44,6 +44,8 @@ const FALLBACK = { width: 1280, height: 720 };
 const RUNNING = "agent running";
 /** The area header and the body padding are not available to the tiles. */
 const HEADER = 31;
+/** Below this area width the header keeps only the name and an orchestrator. */
+const TIGHT = 200;
 const BODY_PAD = 6;
 const box = (rect: Rect): CSSProperties => ({
   left: `${rect.x}%`,
@@ -210,7 +212,7 @@ export function HeatMap({
           <section
             key={area.id}
             data-layout-id={area.id}
-            className={`wm-heat-area ${open ? "wm-heat-area-open" : ""} ${width < 200 ? "wm-heat-area-tight" : ""}`}
+            className={`wm-heat-area ${open ? "wm-heat-area-open" : ""} ${width < TIGHT ? "wm-heat-area-tight" : ""}`}
             style={box(rect)}
             aria-label={`${area.title} · ${areaState(area)}`}
           >
@@ -231,7 +233,10 @@ export function HeatMap({
                       : undefined
                   }
                 >
-                  {areaState(area)}
+                  {/* A narrow header drops its counts but keeps who has taken the area. */}
+                  {width < TIGHT && area.orchestrator
+                    ? `orchestrator · ${area.orchestrator.running}/${area.orchestrator.limit}`
+                    : areaState(area)}
                 </em>
               </button>
             </header>

@@ -289,3 +289,49 @@ it("keeps open-area cards readable and scrolls the area body when they do not fi
     ).not.toBeNull();
   }
 });
+
+it("keeps a compact orchestrator line on a narrow area header, and only that", () => {
+  frame(180, 400);
+  const areas = buildHeat(
+    buildMap(
+      data([task({ id: "o1", key: "T-1", title: "Held" })]),
+      [],
+      {},
+      now,
+    ),
+    now,
+  );
+  const mapWith = (orchestrator: (typeof areas)[number]["orchestrator"]) =>
+    render(
+      <HeatMap
+        areas={areas.map((area) => ({ ...area, orchestrator, waiting: 1 }))}
+        now={now}
+        onOpenArea={() => {}}
+        onOpen={() => {}}
+        onDragStart={() => {}}
+        onDragEnd={() => {}}
+      />,
+    );
+  const held = mapWith({
+    threadId: "thr_o",
+    title: "Orch",
+    running: 2,
+    limit: 3,
+  });
+  const area = held.container.querySelector(".wm-heat-area")!;
+  expect(area.classList).toContain("wm-heat-area-tight");
+  const line = area.querySelector(".wm-heat-name em")!;
+  expect(line.textContent).toBe("orchestrator · 2/3");
+  expect(line.classList).toContain("wm-heat-orchestrated");
+  // The full state stays in the accessible name.
+  expect(area.getAttribute("aria-label")).toContain(
+    "1 need you · orchestrator · 2 of 3 running",
+  );
+  held.unmount();
+  // Without an orchestrator the narrow header keeps its full line for the
+  // accessible name; the stylesheet hides it there.
+  const free = mapWith(null);
+  const plain = free.container.querySelector(".wm-heat-name em")!;
+  expect(plain.classList).not.toContain("wm-heat-orchestrated");
+  expect(plain.textContent).toBe("1 need you");
+});

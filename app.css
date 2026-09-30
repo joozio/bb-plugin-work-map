@@ -2231,8 +2231,11 @@ i.wm-heat-key {
   flex: none;
   max-width: 55%;
 }
-.wm-heat-area-tight .wm-heat-name em {
+.wm-heat-area-tight .wm-heat-name em:not(.wm-heat-orchestrated) {
   display: none;
+}
+.wm-heat-area-tight .wm-heat-name em.wm-heat-orchestrated {
+  max-width: none;
 }
 .wm-heat-actions {
   flex: none;

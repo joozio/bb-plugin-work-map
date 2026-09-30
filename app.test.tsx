@@ -459,6 +459,7 @@ async function mount(
     settleError?: boolean;
     manageRequests?: ManagementInput[];
     layout?: "overview" | "heat";
+    noProjects?: boolean;
     delegateRequests?: { requestId: string; taskId: string }[];
     delegateError?: string;
   } = {},
@@ -467,17 +468,19 @@ async function mount(
   const storedPreferences = { ...options.preferences };
   const storedLayout = { layout: options.layout ?? ("overview" as const) };
   const settled: Settlement[] = [];
-  const projects = [
-    managedProjectSchema.parse({
-      id: "p1",
-      name: "Test project",
-      prefix: "TEST",
-      linkedBbProjectId:
-        options.linkedBbProjectId === undefined
-          ? "proj_bb"
-          : options.linkedBbProjectId,
-    }),
-  ];
+  const projects = options.noProjects
+    ? []
+    : [
+        managedProjectSchema.parse({
+          id: "p1",
+          name: "Test project",
+          prefix: "TEST",
+          linkedBbProjectId:
+            options.linkedBbProjectId === undefined
+              ? "proj_bb"
+              : options.linkedBbProjectId,
+        }),
+      ];
   const tasks = options.tasks ?? [
     task({ threadIds: ["thr_test"], status: options.done ? "done" : "todo" }),
   ];
@@ -3084,6 +3087,62 @@ describe("heat layout", () => {
         (call) => call.method === "open",
       ),
     ).toEqual([{ method: "open", threadId: "thr_orch" }]);
+    slot.lifecycle.unmount();
+  });
+
+  it("tells a truly empty account how to start instead of pointing at Overview", async () => {
+    for (const layout of ["heat", "overview"] as const) {
+      const slot = await mount({
+        tasks: [],
+        threads: [],
+        noProjects: true,
+        layout,
+      });
+      expect(
+        await slot.findByText(
+          "No open work yet. Create a project or start a session.",
+        ),
+      ).toBeTruthy();
+      expect(slot.queryByText(/Choose Overview/)).toBeNull();
+      slot.lifecycle.unmount();
+    }
+  });
+
+  it("rests the zoom controls in Heat, whose geometry ignores zoom, and hands them back in Overview", async () => {
+    const slot = await mount({ ...heatFixture(), layout: "heat" });
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat")).toBeTruthy(),
+    );
+    const controls = () => [
+      slot.getByRole("button", { name: "Zoom in" }),
+      slot.getByRole("button", { name: "Zoom out" }),
+      slot.getByRole("slider", { name: "Map zoom level" }),
+    ];
+    for (const control of controls()) {
+      expect((control as HTMLButtonElement).disabled).toBe(true);
+      expect(control.getAttribute("title")).toBe("Zoom applies to Overview");
+    }
+    expect(
+      slot.getByRole("group", { name: "Map zoom" }).getAttribute("title"),
+    ).toBe("Zoom applies to Overview");
+    expect(slot.getByLabelText("Current map zoom").textContent).toBe("100%");
+    fireEvent.click(slot.getByRole("button", { name: "Overview layout" }));
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat")).toBeNull(),
+    );
+    for (const control of controls()) {
+      expect(control.getAttribute("title")).not.toBe(
+        "Zoom applies to Overview",
+      );
+    }
+    expect(
+      (slot.getByRole("button", { name: "Zoom in" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(
+      (slot.getByRole("slider", { name: "Map zoom level" }) as HTMLInputElement)
+        .disabled,
+    ).toBe(false);
     slot.lifecycle.unmount();
   });
 

@@ -430,20 +430,22 @@ function WorkMap() {
     return index;
   }, [snapshot]);
   const needle = query.trim().toLowerCase();
-  const zoomDisabled = settling || launcher.busy || manager.busy || dragging;
-  const zoomControl = useMapZoom(
-    canvasRef,
-    worldRef,
-    selection?.id ?? expandedArea?.id,
-    zoomDisabled,
-  );
-  const { zoom } = zoomControl;
-  const density = zoomDensity(zoom, mapWidth);
-  const spatial = !expanded && !needle && filter === "all";
   // A treemap shows everything: the root budget that keeps the overview
   // readable would hide areas that Heat has room for.
   const heatOn =
     layoutMode === "heat" && filter === "all" && !needle && !expanded;
+  const zoomDisabled = settling || launcher.busy || manager.busy || dragging;
+  // Heat already fits every area to the screen and its geometry ignores zoom,
+  // so the control and its gestures rest there rather than promise a change.
+  const zoomControl = useMapZoom(
+    canvasRef,
+    worldRef,
+    selection?.id ?? expandedArea?.id,
+    zoomDisabled || heatOn,
+  );
+  const { zoom } = zoomControl;
+  const density = zoomDensity(zoom, mapWidth);
+  const spatial = !expanded && !needle && filter === "all";
   // Fitting the collapsed Overview to the viewport is that layout's own sizing.
   // Heat fills the map itself and stacks into scrolling bands when narrow.
   const fitRequested =
@@ -2371,7 +2373,11 @@ function WorkMap() {
               </button>
             ))}
           </div>
-          <ZoomControls {...zoomControl} disabled={zoomDisabled} />
+          <ZoomControls
+            {...zoomControl}
+            disabled={zoomDisabled}
+            inert={heatOn ? "Zoom applies to Overview" : undefined}
+          />
           <button
             type="button"
             className="wm-tool-icon"
@@ -2495,7 +2501,9 @@ function WorkMap() {
               <p>
                 {needle
                   ? "Try a task key, project name or a few words from its title."
-                  : "Choose Overview to see the rest of your work."}
+                  : !snapshot?.projects.length && !items.length
+                    ? "No open work yet. Create a project or start a session."
+                    : "Choose Overview to see the rest of your work."}
               </p>
             </div>
           ) : (
