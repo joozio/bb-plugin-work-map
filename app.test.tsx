@@ -460,6 +460,9 @@ async function mount(
     manageRequests?: ManagementInput[];
     layout?: "overview" | "heat";
     noProjects?: boolean;
+    /** Hold the layout and snapshot answers until these settle. */
+    layoutGate?: Promise<void>;
+    snapshotGate?: Promise<void>;
     delegateRequests?: { requestId: string; taskId: string }[];
     delegateError?: string;
   } = {},
@@ -632,12 +635,16 @@ async function mount(
           taskId: "task1",
           attachmentError: null,
         }),
-        snapshot: () => {
+        snapshot: async () => {
+          await options.snapshotGate;
           if (options.rejectSnapshot)
             throw new Error("Task source disconnected");
           return { ...data(tasks), projects };
         },
-        layout: () => ({ layout: storedLayout.layout }),
+        layout: async () => {
+          await options.layoutGate;
+          return { layout: storedLayout.layout };
+        },
         setLayout: ({ layout }) => {
           storedLayout.layout = layout;
           return { layout };
@@ -3106,6 +3113,55 @@ describe("heat layout", () => {
       expect(slot.queryByText(/Choose Overview/)).toBeNull();
       slot.lifecycle.unmount();
     }
+  });
+
+  it("never paints Overview's chrome while a stored Heat layout loads, nor in a Heat search", async () => {
+    let openLayout = () => {};
+    let openSnapshot = () => {};
+    const layoutGate = new Promise<void>((resolve) => (openLayout = resolve));
+    const snapshotGate = new Promise<void>(
+      (resolve) => (openSnapshot = resolve),
+    );
+    let footerSeen = false;
+    const watch = new MutationObserver(() => {
+      if (document.querySelector(".wm-footer")) footerSeen = true;
+    });
+    watch.observe(document.body, { childList: true, subtree: true });
+    const slot = await mount({
+      ...heatFixture(),
+      layout: "heat",
+      layoutGate,
+      snapshotGate,
+    });
+    const pressed = () =>
+      ["Overview layout", "Heat layout"].map((name) =>
+        slot.getByRole("button", { name }).getAttribute("aria-pressed"),
+      );
+    await slot.findByText("Gathering your projects and sessions…");
+    expect(pressed()).toEqual(["false", "false"]);
+    expect(slot.queryByRole("group", { name: "Attention counts" })).toBeNull();
+    // The tasks arrive first: still no layout, so still nothing but the wait.
+    openSnapshot();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      slot.getByText("Gathering your projects and sessions…"),
+    ).toBeTruthy();
+    expect(slot.container.querySelector(".wm-spatial")).toBeNull();
+    openLayout();
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat")).toBeTruthy(),
+    );
+    expect(pressed()).toEqual(["false", "true"]);
+    expect(slot.getByRole("group", { name: "Attention counts" })).toBeTruthy();
+    // A search from Heat that finds nothing is still Heat's: no Overview footer.
+    fireEvent.change(slot.getByRole("textbox"), {
+      target: { value: "zzz no such work" },
+    });
+    await slot.findByText("No matching work");
+    expect(slot.container.querySelector(".wm-footer")).toBeNull();
+    watch.disconnect();
+    expect(footerSeen).toBe(false);
+    slot.lifecycle.unmount();
   });
 
   it("rests the zoom controls in Heat, whose geometry ignores zoom, and hands them back in Overview", async () => {
