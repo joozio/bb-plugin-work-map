@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { data, now, task, thread } from "./fixtures";
@@ -153,4 +155,66 @@ it("says agent running whole on an open card, beside its green dot", () => {
   );
   const fact = tile(view, "Busy").querySelector(".wm-heat-run-fact");
   expect(fact?.textContent).toBe("agent running");
+});
+
+it("budgets a card's rows from the measured act row, not an assumed one", () => {
+  const budget = (actRow: number) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private callback: ResizeObserverCallback) {}
+        observe(target: Element) {
+          const row = target.classList.contains("wm-tile-actions");
+          const bar = target.classList.contains("wm-heat-actions-frame");
+          this.callback(
+            [
+              {
+                target,
+                contentRect: { width: 300, height: bar ? 0 : 200 },
+                borderBoxSize: row
+                  ? [{ blockSize: actRow, inlineSize: 300 }]
+                  : [],
+              } as unknown as ResizeObserverEntry,
+            ],
+            this as unknown as ResizeObserver,
+          );
+        }
+        disconnect() {}
+      },
+    );
+    const view = heat(
+      [task({ id: "card", key: "T-5", title: "Card", priority: "high" })],
+      [],
+      { tileActions: () => <div className="wm-tile-actions" /> },
+      true,
+    );
+    const slot = tile(view, "Card").parentElement!;
+    const rows = [
+      slot.style.getPropertyValue("--wm-heat-lines"),
+      slot.style.getPropertyValue("--wm-heat-line-rows"),
+    ];
+    view.unmount();
+    return rows;
+  };
+  // A desktop act row leaves room for the latest word; a phone-sized one
+  // takes that room back instead of pushing rows out of the card.
+  expect(budget(31)).toEqual(["4", "2"]);
+  expect(budget(90)).toEqual(["3", "0"]);
+});
+
+it("gives card acts, bulk acts and picker rows 24px, and 36px under 720px", () => {
+  const css = readFileSync(join(__dirname, "app.css"), "utf8");
+  const rule = (selector: string, from = 0) => {
+    const at = css.indexOf(`${selector} {`, from);
+    expect(at).toBeGreaterThanOrEqual(0);
+    return css.slice(at, css.indexOf("}", at));
+  };
+  expect(rule(".wm-tile-action")).toContain("min-height: 24px");
+  expect(rule(".wm-tile-action")).not.toMatch(/\bheight: 20px/);
+  expect(rule(".wm-bulk-row > button")).toContain("min-height: 24px");
+  expect(rule(".wm-bulk-pick")).toContain("min-height: 24px");
+  const phone = css.lastIndexOf("@media (max-width: 720px)");
+  expect(
+    rule(".wm-tile-action,\n  .wm-bulk-row > button,\n  .wm-bulk-pick", phone),
+  ).toContain("min-height: 36px");
 });

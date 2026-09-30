@@ -24,8 +24,11 @@ const AREA_SHARE = 0.66;
 const TILE_SHARE = 0.78;
 /** Inside an expanded area no tile is lighter than this share of the heaviest. */
 const EVEN_RATIO = 0.8;
-/** Pixels a card spends before its title: slot padding, act row, tile chrome, key line. */
-const CARD_FIXED = 4 + 27 + 12 + 14.35;
+/** Pixels a card spends before its title besides its act row: slot padding,
+    tile chrome, key line. The act row itself is measured from the page. */
+const CARD_CHROME = 4 + 12 + 14.35;
+/** Until the first measurement: a 24px button, 3px padding each side, a 1px edge. */
+const ACT_ROW = 24 + 6 + 1;
 const TITLE_LINE = 14.03;
 const LINE_ROW = 15.5;
 const LINE_MORE = 13.5;
@@ -105,6 +108,22 @@ export function HeatMap({
     observer.observe(node);
     return () => observer.disconnect();
   }, [expandedAreaId]);
+  // The card footer's height is read from the rendered act row, never assumed:
+  // its buttons grow to touch size on phones and the row budget must follow.
+  const [actRow, setActRow] = useState(ACT_ROW);
+  useEffect(() => {
+    const node = frame.current?.querySelector<HTMLElement>(
+      ".wm-heat-area-open .wm-tile-actions",
+    );
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      const height =
+        entry.borderBoxSize?.[0]?.blockSize ?? node.offsetHeight ?? 0;
+      if (height > 0) setActRow(height);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [expandedAreaId, expandedItemId, areas]);
   const ordered = useMemo(() => heatOrder(areas), [areas]);
   // Narrow screens stack areas as bands; the open one grows per card it holds.
   const openTiles =
@@ -228,6 +247,7 @@ export function HeatMap({
                     actions={open ? tileActions : undefined}
                     excerpt={open ? excerpt : undefined}
                     picked={!!selected?.includes(tile.item?.id ?? "")}
+                    actRow={actRow}
                   />
                 );
               })}
@@ -279,6 +299,7 @@ function Tile({
   actions,
   excerpt,
   picked,
+  actRow,
 }: {
   tile: HeatTile;
   rect: Rect;
@@ -296,6 +317,7 @@ function Tile({
   actions?: (item: WorkItem) => ReactNode;
   excerpt?: (item: WorkItem) => string;
   picked?: boolean;
+  actRow: number;
 }) {
   const item = tile.item;
   // Title from 30px of height; a key alone down to 30px of width; below that, colour only.
@@ -396,7 +418,7 @@ function Tile({
   let lineRows = 0;
   let showFacts = false;
   if (inside) {
-    let room = height - CARD_FIXED - TITLE_LINE;
+    let room = height - CARD_CHROME - actRow - TITLE_LINE;
     if (room >= TITLE_LINE) {
       lines = 2;
       room -= TITLE_LINE;

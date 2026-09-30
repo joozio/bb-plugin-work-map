@@ -2613,7 +2613,9 @@ i.wm-heat-key.wm-heat-late {
     width: auto !important;
     height: auto !important;
     flex: none;
-    min-height: calc(4px + 27px + 12px + 14.35px + 2 * 14.03px);
+    /* Slot padding, the 36px act row with its padding and edge, tile chrome,
+       key line and two title lines. */
+    min-height: calc(4px + 43px + 12px + 14.35px + 2 * 14.03px);
   }
 }
 
@@ -2731,7 +2733,7 @@ i.wm-heat-key.wm-heat-late {
   align-items: center;
   gap: 3px;
   min-width: 0;
-  height: 20px;
+  min-height: 24px;
   padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -2789,6 +2791,10 @@ i.wm-heat-key.wm-heat-late {
   align-items: center;
   gap: 6px;
 }
+/* Touch minimums: 24px tall on desktop, 36px under 720px (below). */
+.wm-bulk-row > button {
+  min-height: 24px;
+}
 .wm-bulk-hint {
   font-size: 10px;
   color: var(--wm-dim);
@@ -2813,6 +2819,7 @@ i.wm-heat-key.wm-heat-late {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-height: 24px;
   max-width: 260px;
   font-size: 10.5px;
 }
@@ -2893,5 +2900,17 @@ i.wm-heat-key.wm-heat-late {
 @container (max-width: 680px) {
   .wm-bulk-picks {
     max-height: 56px;
+  }
+}
+/* A finger needs 36px: card acts, bulk acts and picker rows all grow, and the
+   card budget follows because it measures the act row rather than assuming it. */
+@media (max-width: 720px) {
+  .wm-tile-action,
+  .wm-bulk-row > button,
+  .wm-bulk-pick {
+    min-height: 36px;
+  }
+  .wm-bulk-picks {
+    max-height: 112px;
   }
 }
