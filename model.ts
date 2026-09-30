@@ -86,6 +86,8 @@ export interface WorkItem {
   issue: boolean;
   /** The bb project agents for this work start in; null when none is linked. */
   bbProjectId: string | null;
+  /** Epoch ms a snoozed task stays quiet until; absent once it has passed. */
+  snoozedUntil?: number;
 }
 const RUNNING = new Set([
   "runtime",
@@ -186,6 +188,11 @@ export function dueLabel(task: MapTask, now: number) {
     return `${prefix} ${task.dueDate.slice(5)} · passed`;
   return `${prefix} ${task.dueDate.slice(5)}`;
 }
+/** "snoozed 6d": what a tile or card says about a snooze still running. */
+export function snoozeLabel(item: Pick<WorkItem, "snoozedUntil">, now: number) {
+  if (!item.snoozedUntil || item.snoozedUntil <= now) return "";
+  return `Snoozed ${Math.max(1, Math.ceil((item.snoozedUntil - now) / DAY))}d`;
+}
 function rank(
   item: Pick<
     WorkItem,
@@ -196,6 +203,7 @@ function rank(
     | "changed"
     | "task"
     | "activityAt"
+    | "snoozedUntil"
   >,
   now: number,
 ) {
@@ -218,6 +226,8 @@ function rank(
   score +=
     item.attention === "input" ? 3000 : item.attention === "error" ? 2500 : 0;
   const task = item.task;
+  // A snoozed task scores as inactive: its priority and date wait with it.
+  if (item.snoozedUntil) return score + activityLift(item.activityAt, now);
   if (task && !["done", "canceled", "backlog"].includes(task.status)) {
     score +=
       task.priority === "urgent" ? 180 : task.priority === "high" ? 90 : 0;
@@ -277,14 +287,22 @@ export function buildMap(
       /^\d{4}-\d{2}-\d{2}$/.test(task.checkAfter ?? "") &&
       task.checkAfter! <= localDay(now);
     const sessionAttention = attentionFor(linked);
+    // Snoozed lives in this plugin only; the clock ends it without a write.
+    const snoozedUntil =
+      (preferences[id]?.snoozedUntil ?? 0) > now &&
+      !["done", "canceled"].includes(task.status)
+        ? preferences[id]!.snoozedUntil
+        : undefined;
     const attention =
       sessionAttention === "input" || sessionAttention === "error"
         ? sessionAttention
-        : task.status === "in_review"
-          ? "review"
-          : followUp
-            ? "followup"
-            : sessionAttention;
+        : snoozedUntil
+          ? null
+          : task.status === "in_review"
+            ? "review"
+            : followUp
+              ? "followup"
+              : sessionAttention;
     const signal =
       attention && attention !== "unread"
         ? "waiting"
@@ -322,11 +340,13 @@ export function buildMap(
       focus: linked.some((t) => t.isPinned) || preferences[id]?.focus === true,
       signal,
       attention,
-      unreadResults: resultCount,
+      unreadResults: snoozedUntil ? 0 : resultCount,
       reason:
-        externalReview && signal === "inactive"
-          ? `Waiting on ${task.waitingOn.split(" | ")[0].replace(/:\s*review$/i, "") || "review"}`
-          : activityReason(attention, signal, resultCount),
+        snoozedUntil && !attention
+          ? `Snoozed until ${localDay(snoozedUntil)}`
+          : externalReview && signal === "inactive"
+            ? `Waiting on ${task.waitingOn.split(" | ")[0].replace(/:\s*review$/i, "") || "review"}`
+            : activityReason(attention, signal, resultCount),
       changed:
         updatedAt > (preferences[id]?.seenAt ?? 0) &&
         updatedAt <= now &&
@@ -340,6 +360,7 @@ export function buildMap(
       // Delegation starts an agent in the linked bb project, so a task with
       // none cannot be delegated. The map says so before the click, not after.
       bbProjectId: projectById.get(task.projectId)?.linkedBbProjectId ?? null,
+      ...(snoozedUntil ? { snoozedUntil } : {}),
     };
     item.score = rank(item, now);
     tasks.push(item);
@@ -352,7 +373,10 @@ export function buildMap(
     const working = children.filter(isWorking).length;
     const waiting = children.filter((c) => c.signal === "waiting").length;
     const linked = children.flatMap((c) => c.threads);
-    const unread = unreadResults(linked);
+    // A snoozed task's finished results wait with it.
+    const unread = unreadResults(
+      children.filter((c) => !c.snoozedUntil).flatMap((c) => c.threads),
+    );
     const attention =
       ATTENTION_ORDER.find((kind) =>
         children.some((c) => c.attention === kind),
@@ -519,8 +543,9 @@ export function hasAgent(item: WorkItem) {
     )
   );
 }
+/** A snoozed review is still in Review in Tasks, but it does not need you. */
 export function needsReview(item: WorkItem) {
-  return item.task?.status === "in_review";
+  return item.task?.status === "in_review" && !item.snoozedUntil;
 }
 function needsImmediateAction(item: WorkItem) {
   return item.attention === "input" || item.attention === "error";

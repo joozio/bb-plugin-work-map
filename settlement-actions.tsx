@@ -5,6 +5,20 @@ import type { SettleInput, Settlement } from "./settlement-contract";
 import { Button } from "./components/ui/button";
 
 const DISMISSED_SETTLEMENTS = "work-map:dismissed-settlements";
+/**
+ * A snooze made this session. It never touches Tasks, so it has no settlement
+ * record; it sits in the same list so its Undo is where every other one is.
+ */
+export type SnoozeRow = {
+  id: string;
+  action: "snooze";
+  at: number;
+  title: string;
+  itemId: string;
+  taskKey: string | null;
+  until: string;
+};
+export type SettledRow = Settlement | SnoozeRow;
 function readDismissedSettlements(): string[] {
   try {
     const value: unknown = JSON.parse(
@@ -338,7 +352,7 @@ export function SettledToday({
   pending,
   error,
 }: {
-  rows: Settlement[];
+  rows: SettledRow[];
   onUndo: (id: string) => void;
   pending: string | null;
   error: string;
@@ -421,21 +435,27 @@ export function SettledToday({
             <div className="wm-settled-copy">
               <strong title={row.title}>{row.title}</strong>
               <span>
-                {row.action === "done"
-                  ? "Task done"
-                  : row.action === "archive"
-                    ? "Session archived"
-                    : row.action === "review"
-                      ? row.reviewer
-                        ? `Waiting on ${row.reviewer} · follow up ${row.checkAfter}`
-                        : "Ready for your review"
-                      : "Paused · task remains open"}
-                {row.action !== "archive" && row.archivedThreadIds.length
+                {row.action === "snooze"
+                  ? `Snoozed until ${row.until} · Tasks unchanged`
+                  : row.action === "done"
+                    ? "Task done"
+                    : row.action === "archive"
+                      ? "Session archived"
+                      : row.action === "review"
+                        ? row.reviewer
+                          ? `Waiting on ${row.reviewer} · follow up ${row.checkAfter}`
+                          : "Ready for your review"
+                        : "Paused · task remains open"}
+                {row.action !== "archive" &&
+                row.action !== "snooze" &&
+                row.archivedThreadIds.length
                   ? " · session archived"
                   : ""}
               </span>
-              {expanded && row.nextAction && <span>{row.nextAction}</span>}
-              {row.warning && (
+              {expanded && row.action !== "snooze" && row.nextAction && (
+                <span>{row.nextAction}</span>
+              )}
+              {row.action !== "snooze" && row.warning && (
                 <span className="wm-settle-error" role="status">
                   {row.warning}
                 </span>

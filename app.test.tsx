@@ -645,6 +645,10 @@ async function mount(
             ...(input.seenAt === undefined ? {} : { seenAt: input.seenAt }),
             ...(input.hidden === undefined ? {} : { hidden: input.hidden }),
           };
+          if (input.snoozedUntil)
+            storedPreferences[input.id].snoozedUntil = input.snoozedUntil;
+          else if (input.snoozedUntil !== undefined)
+            delete storedPreferences[input.id].snoozedUntil;
           return storedPreferences[input.id];
         },
         previews: () => {
@@ -2818,6 +2822,66 @@ describe("heat layout", () => {
     // It lands in Settled today, which is where its Undo lives.
     const strip = await slot.findByRole("region", { name: "Settled today" });
     expect(within(strip).getByRole("button", { name: /Undo/ })).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+
+  it("snoozes one task for 7 days in this plugin only, with no confirmation, and Undo clears it", async () => {
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({ ...heatFixture(), settleRequests });
+    await expandProject(slot);
+    const snoozes = () =>
+      slot.inspection.rpcCalls
+        .filter((call) => call.method === "setPreference")
+        .map(
+          (call) => call.input as { id: string; snoozedUntil?: number | null },
+        )
+        .filter((input) => input.snoozedUntil !== undefined);
+    const before = Date.now();
+    fireEvent.click(
+      slot.getByRole("button", { name: "Snooze · Read the result" }),
+    );
+    await waitFor(() => expect(snoozes()).toHaveLength(1));
+    const after = Date.now();
+    // Reversible and outside Tasks, so a single card asks nothing first.
+    expect(slot.queryByRole("dialog")).toBeNull();
+    expect(snoozes()[0].id).toBe("task:t2");
+    const week = 7 * 86400000;
+    expect(snoozes()[0].snoozedUntil).toBeGreaterThanOrEqual(before + week);
+    expect(snoozes()[0].snoozedUntil).toBeLessThanOrEqual(after + week);
+    expect(settleRequests).toHaveLength(0);
+    const strip = await slot.findByRole("region", { name: "Settled today" });
+    expect(strip.textContent).toContain("Read the result");
+    expect(strip.textContent).toMatch(
+      /Snoozed until \d{4}-\d{2}-\d{2} · Tasks unchanged/,
+    );
+    fireEvent.click(within(strip).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(snoozes()).toHaveLength(2));
+    expect(snoozes()[1]).toEqual({ id: "task:t2", snoozedUntil: null });
+    await slot.findByText("Undone. Snooze cleared.");
+    expect(slot.queryByRole("region", { name: "Settled today" })).toBeNull();
+    expect(settleRequests).toHaveLength(0);
+    slot.lifecycle.unmount();
+  });
+
+  it("confirms a bulk snooze with honest copy and snoozes each task in turn", async () => {
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({ ...heatFixture(), settleRequests });
+    await expandProject(slot);
+    fireEvent.click(slot.getByRole("button", { name: /^Snooze all/ }));
+    const confirm = await slot.findByRole("dialog");
+    expect(confirm.textContent).toContain(
+      "Snoozing hides the task from what needs you for 7 days and changes nothing in Tasks. Undo restores it.",
+    );
+    expect(confirm.textContent).not.toContain("clears it from what needs you");
+    fireEvent.click(
+      within(confirm).getByRole("button", { name: "Snooze 3 tasks" }),
+    );
+    await slot.findByText("Snooze · 3 of 3 tasks.");
+    const ids = slot.inspection.rpcCalls
+      .filter((call) => call.method === "setPreference")
+      .map((call) => (call.input as { id: string }).id);
+    expect([...ids].sort()).toEqual(["task:t1", "task:t2", "task:t3"]);
+    expect(settleRequests).toHaveLength(0);
     slot.lifecycle.unmount();
   });
 

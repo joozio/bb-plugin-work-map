@@ -1,10 +1,11 @@
 import type { WorkItem } from "./model";
+import { localDay } from "./model";
 
 const DAY = 86400000;
 /** Days past due after which a date reads as stale rather than urgent. */
 export const LATE_DAYS = 14;
 export interface HeatTiming {
-  kind: "due" | "age";
+  kind: "due" | "age" | "snooze";
   days: number;
   weight: number;
   level: 1 | 2 | 3 | 4;
@@ -40,6 +41,22 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
     !Number.isFinite(now)
   )
     return null;
+  // A snooze speaks for the task until it ends: quiet, and it says so.
+  if (item.snoozedUntil && item.snoozedUntil > now) {
+    const days = Math.max(1, Math.ceil((item.snoozedUntil - now) / DAY));
+    return {
+      kind: "snooze",
+      days,
+      label: `snoozed ${days}d`,
+      description: `Snoozed until ${localDay(item.snoozedUntil)}${task.dueDate ? `; due ${task.dueDate}` : ""}`,
+      weight: 1,
+      level: 1,
+      overdue: false,
+      late: false,
+      aged: false,
+      prominent: false,
+    };
+  }
   if (task.dueDate) {
     const day = calendarDay(task.dueDate);
     if (day === null) return null;

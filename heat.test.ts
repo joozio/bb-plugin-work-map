@@ -733,3 +733,56 @@ describe("tile label row", () => {
     expect(fitsWord(80, "agent running")).toBe(false);
   });
 });
+
+describe("a snoozed task in Heat", () => {
+  it("carries the quiet tone, folds with the quiet group and labels the snooze, not the date", () => {
+    const tasks = [
+      task({
+        id: "late",
+        key: "TEST-1",
+        status: "in_review",
+        dueDate: "2026-09-10",
+        dateKind: "deadline",
+      }),
+      ...[2, 3, 4].map((n) =>
+        task({
+          id: `q${n}`,
+          key: `TEST-${n}`,
+          createdAt: new Date(now).toISOString(),
+        }),
+      ),
+    ];
+    const snoozedUntil = now + 6 * DAY;
+    const [root] = buildMap(
+      data(tasks),
+      [],
+      { "task:late": { snoozedUntil } },
+      now,
+    );
+    const late = root.children.find((c) => c.id === "task:late")!;
+    expect(heatTone(late)).toBe("quiet");
+    expect(heatLevel(late, now)).toBe(1);
+    const [area] = buildHeat([root], now, { keepQuiet: 1 });
+    const group = area.tiles.find((t) => t.id.startsWith("quiet:"));
+    expect(group?.members.map((m) => m.id)).toContain("task:late");
+    const [open] = buildHeat([root], now, { uncollapsed: [root.id] });
+    const tile = open.tiles.find((t) => t.id === "task:late")!;
+    expect(tile.timing).toMatchObject({
+      kind: "snooze",
+      label: "snoozed 6d",
+      overdue: false,
+      prominent: false,
+    });
+    expect(tile.timing!.description).toBe(
+      "Snoozed until 2026-09-23; due 2026-09-10",
+    );
+    // Unsnoozed, the same task is loud and overdue.
+    const [awake] = buildHeat(buildMap(data(tasks), [], {}, now), now, {
+      keepQuiet: 1,
+    });
+    expect(awake.tiles.find((t) => t.id === "task:late")).toMatchObject({
+      tone: "review",
+      timing: { kind: "due", overdue: true },
+    });
+  });
+});

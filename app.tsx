@@ -24,10 +24,12 @@ import {
   activityLabel,
   dueLabel,
   isWorking,
+  localDay,
   needsReview,
   preferredSession,
   selectVisible,
   sessionItem,
+  snoozeLabel,
   threadSignal,
   unreadLabel,
   type WorkItem,
@@ -41,13 +43,18 @@ import { extendOrbit, zoomDensity, zoomVisible } from "./zoom";
 import { SESSIONS_AREA, buildHeat, heatStats, type HeatArea } from "./heat";
 import { HeatMap } from "./heat-view";
 import { useSessionLauncher } from "./session-launcher";
-import { SettlementActions, SettledToday } from "./settlement-actions";
+import {
+  SettlementActions,
+  SettledToday,
+  type SnoozeRow,
+} from "./settlement-actions";
 import { AreaBulkActions, TileActions } from "./quick-actions";
 import {
   ACTION_LABEL,
   type ActionContext,
   ORCHESTRATOR_LIMIT,
   type QuickAction,
+  SNOOZE_DAYS,
 } from "./delegation";
 import type { Settlement } from "./settlement-contract";
 import { AreaTools, ProjectDot, useAreaManager } from "./management-ui";
@@ -169,6 +176,8 @@ function WorkMap() {
   const [busy, setBusy] = useState(false);
   const [settling, setSettling] = useState(false);
   const [settled, setSettled] = useState<Settlement[]>([]);
+  // Snoozes made here: they live in preferences, not in settlement records.
+  const [snoozes, setSnoozes] = useState<SnoozeRow[]>([]);
   const [settledError, setSettledError] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [acting, setActing] = useState<{
@@ -1011,9 +1020,10 @@ function WorkMap() {
     setInspectionLayout(null);
     void refresh(true);
   };
-  // One act on one piece of work. Done and Snooze reuse the settlement service
-  // that the expanded details already use, so they land in Settled today with
-  // the same Undo. Delegate is its own path: it hands the task to an agent.
+  // One act on one piece of work. Done reuses the settlement service that the
+  // expanded details already use, so it lands in Settled today with the same
+  // Undo. Snooze writes only this plugin's own preference and never touches
+  // Tasks; its row sits in the same list. Delegate hands the task to an agent.
   const runAction = async (
     action: QuickAction,
     item: WorkItem,
@@ -1031,6 +1041,36 @@ function WorkMap() {
       });
       setHandedOver((current) => ({ ...current, [taskId]: Date.now() }));
       return `${result.taskKey} handed to an agent on ${result.preset}${result.movedFrom ? ", out of review" : ""}.`;
+    }
+    if (action === "snooze") {
+      const id = item.id;
+      const taskKey = item.task.key;
+      const at = Date.now();
+      const until = at + SNOOZE_DAYS * 86400000;
+      const preference = await rpc.call("setPreference", {
+        id,
+        snoozedUntil: until,
+      });
+      if (!quiet) captureLayout();
+      setPreferences((previous) => ({ ...previous, [id]: preference }));
+      setSnoozes((rows) => [
+        {
+          id: `snooze:${id}:${at}`,
+          action: "snooze",
+          at,
+          title: item.title,
+          itemId: id,
+          taskKey,
+          until: localDay(until),
+        },
+        ...rows.filter((row) => row.itemId !== id),
+      ]);
+      setSettledError("");
+      if (!quiet) {
+        close();
+        setInspectionLayout(null);
+      }
+      return null;
     }
     const result = await rpc.call("settle", {
       id: `${Date.now()}-${crypto.randomUUID()}`,
@@ -1186,7 +1226,22 @@ function WorkMap() {
     undoLock.current = true;
     setUndoing(id);
     setSettledError("");
+    const snooze = snoozes.find((row) => row.id === id);
     try {
+      if (snooze) {
+        const preference = await rpc.call("setPreference", {
+          id: snooze.itemId,
+          snoozedUntil: null,
+        });
+        captureLayout();
+        setPreferences((previous) => ({
+          ...previous,
+          [snooze.itemId]: preference,
+        }));
+        setSnoozes((rows) => rows.filter((row) => row.id !== id));
+        setNotice("Undone. Snooze cleared.");
+        return;
+      }
       const result = await rpc.call("undoSettlement", { id });
       captureLayout();
       setSettled((rows) => rows.filter((row) => row.id !== id));
@@ -1306,7 +1361,11 @@ function WorkMap() {
           previews[item.threads[0]?.id]?.excerpt ||
           ""
         : item.nextAction || item.summary;
-    const due = item.task ? dueLabel(item.task, now) : "";
+    const due = item.snoozedUntil
+      ? snoozeLabel(item, now)
+      : item.task
+        ? dueLabel(item.task, now)
+        : "";
     const zoomDetail =
       item.kind !== "thread" && item.summary !== excerpt ? item.summary : "";
     const relatedCount =
@@ -2769,7 +2828,7 @@ function WorkMap() {
             </div>
           )}
           <SettledToday
-            rows={settled}
+            rows={[...snoozes, ...settled].sort((a, b) => b.at - a.at)}
             onUndo={(id) => void undoSettlement(id)}
             pending={undoing}
             error={settledError}
