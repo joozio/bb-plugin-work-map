@@ -247,8 +247,10 @@ describe("the brief handed to an area's orchestrator", () => {
   it("runs each task as a child under itself and attached to that task", () => {
     expect(ORCHESTRATOR_PROMPT).toContain("child thread of yourself");
     expect(ORCHESTRATOR_PROMPT).toContain("attached to that task");
+    // A task dispatch cannot set a parent, so the two-step path is the path.
     expect(ORCHESTRATOR_PROMPT).toContain("bb thread spawn --parent-self");
-    expect(ORCHESTRATOR_PROMPT).toContain("bb tasks dispatch");
+    expect(ORCHESTRATOR_PROMPT).toContain("bb tasks attach <task> --thread");
+    expect(ORCHESTRATOR_PROMPT).toContain("Check both sides before you rely on it");
   });
   it("carries the concurrency limit as the one number, never a loose 3", () => {
     expect(ORCHESTRATOR_LIMIT).toBe(3);
