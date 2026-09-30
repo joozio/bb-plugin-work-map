@@ -2826,6 +2826,37 @@ describe("heat layout", () => {
     slot.lifecycle.unmount();
   });
 
+  it("shows the pick list in whole rows and fades its last row while more wait below", async () => {
+    const slot = await mount({ ...heatFixture() });
+    await expandProject(slot);
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("wm-bulk-picks") ? 200 : 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("wm-bulk-picks") ? 76 : 0;
+      },
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Pick tasks" }));
+    const list = slot.getByRole("list", { name: /^Pick work in/ });
+    await waitFor(() => expect(list.classList).toContain("wm-bulk-picks-more"));
+    // Scrolled to the end, nothing waits below: the fade goes.
+    Object.defineProperty(list, "scrollTop", {
+      value: 124,
+      configurable: true,
+    });
+    fireEvent.scroll(list);
+    await waitFor(() =>
+      expect(list.classList).not.toContain("wm-bulk-picks-more"),
+    );
+    const css = readFileSync(join(__dirname, "app.css"), "utf8");
+    expect(css).toContain("max-height: calc(3 * 24px + 2 * 2px);");
+    expect(css).toContain("max-height: calc(3 * 36px + 2 * 2px);");
+    slot.lifecycle.unmount();
+  });
+
   it("acts on the picked subset only, and cancelling changes nothing", async () => {
     const delegateAreaRequests: {
       requestId: string;

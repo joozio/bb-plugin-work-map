@@ -2859,12 +2859,15 @@ i.wm-heat-key.wm-heat-late {
   color: var(--wm-dim);
   white-space: nowrap;
 }
+/* Whole rows only (three here, fewer on narrow bars), a scrollbar that stays
+   visible, and a fade on the last row while more rows wait below. */
 .wm-bulk-picks {
   display: flex;
   flex-wrap: wrap;
   gap: 2px 10px;
-  max-height: 84px;
-  overflow: auto;
+  max-height: calc(3 * 24px + 2 * 2px);
+  overflow-y: auto;
+  scrollbar-width: thin;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -2881,6 +2884,16 @@ i.wm-heat-key.wm-heat-late {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.wm-bulk-picks::-webkit-scrollbar {
+  width: 6px;
+}
+.wm-bulk-picks::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--foreground) 30%, transparent);
+}
+.wm-bulk-picks-more {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent);
 }
 /* The confirmation lies over the tiles instead of pushing them: positions
    hold while you read the list, and Cancel leaves the area exactly as it was. */
@@ -2953,7 +2966,7 @@ i.wm-heat-key.wm-heat-late {
 }
 @container (max-width: 680px) {
   .wm-bulk-picks {
-    max-height: 56px;
+    max-height: calc(2 * 24px + 2px);
   }
 }
 /* A finger needs 36px: card acts, bulk acts and picker rows all grow, and the
@@ -2965,6 +2978,6 @@ i.wm-heat-key.wm-heat-late {
     min-height: 36px;
   }
   .wm-bulk-picks {
-    max-height: 112px;
+    max-height: calc(3 * 36px + 2 * 2px);
   }
 }

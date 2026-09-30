@@ -49,6 +49,8 @@ const HEADER = 31;
 /** Below this area width the header keeps only the name and an orchestrator. */
 const TIGHT = 200;
 const BODY_PAD = 6;
+/** The gap between rows of the bulk bar. */
+const BULK_GAP = 6;
 const box = (rect: Rect): CSSProperties => ({
   left: `${rect.x}%`,
   top: `${rect.y}%`,
@@ -100,15 +102,24 @@ export function HeatMap({
   }, []);
   const actionsRef = useRef<HTMLDivElement>(null);
   const [actionsHeight, setActionsHeight] = useState(0);
+  const [transient, setTransient] = useState(0);
   useEffect(() => {
     const node = actionsRef.current;
     if (!node || typeof ResizeObserver === "undefined") {
       setActionsHeight(0);
       return;
     }
-    const observer = new ResizeObserver(([entry]) =>
-      setActionsHeight(entry.contentRect.height),
-    );
+    const observer = new ResizeObserver(([entry]) => {
+      setActionsHeight(entry.contentRect.height);
+      // The picker and its hint come and go; the cards keep their width.
+      let passing = 0;
+      node
+        .querySelectorAll<HTMLElement>(".wm-bulk-transient")
+        .forEach((part) => {
+          if (part.offsetHeight > 0) passing += part.offsetHeight + BULK_GAP;
+        });
+      setTransient(passing);
+    });
     observer.observe(node);
     return () => observer.disconnect();
   }, [expandedAreaId]);
@@ -170,9 +181,11 @@ export function HeatMap({
       // An open area with nothing expanded inside it is a grid of cards in
       // rank order, each at least readable; the body scrolls past that.
       if (open && !expandedItemId) {
+        // Columns are chosen as if the picker were shut, so opening it
+        // scrolls the cards rather than narrowing them into icon-only acts.
         const grid = cardLayout(
           ranked.map((tile) => tile.id),
-          { w: bodyWidth, h: bodyHeight },
+          { w: bodyWidth, h: bodyHeight + transient },
           minCard,
         );
         return {
@@ -208,6 +221,7 @@ export function HeatMap({
     size.width,
     size.height,
     actionsHeight,
+    transient,
     actRow,
   ]);
   return (

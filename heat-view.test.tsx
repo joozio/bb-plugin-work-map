@@ -335,3 +335,66 @@ it("keeps a compact orchestrator line on a narrow area header, and only that", (
   expect(plain.classList).not.toContain("wm-heat-orchestrated");
   expect(plain.textContent).toBe("1 need you");
 });
+
+it("keeps every card's width and act tier when the picker opens, scrolling instead", () => {
+  const cards = (bar: number) => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private callback: ResizeObserverCallback) {}
+        observe(target: Element) {
+          const frame = target.classList.contains("wm-heat-actions-frame");
+          this.callback(
+            [
+              {
+                target,
+                contentRect: { width: 1100, height: frame ? bar : 640 },
+              } as ResizeObserverEntry,
+            ],
+            this as unknown as ResizeObserver,
+          );
+        }
+        disconnect() {}
+      },
+    );
+    // The picker is the bar's only transient part; it is all of its height.
+    const offset = vi
+      .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains("wm-bulk-transient") ? bar - 6 : 0;
+      });
+    const view = heat(
+      Array.from({ length: 12 }, (_, index) =>
+        task({
+          id: `t${index}`,
+          key: `DT-${index + 1}`,
+          title: `Draft DT-${index + 1}`,
+          status: "in_review",
+        }),
+      ),
+      [],
+      {
+        areaActions: () => <div className="wm-bulk-transient" />,
+        tileActions: () => <div className="wm-tile-actions" />,
+      },
+      true,
+    );
+    const shape = Array.from(
+      view.container.querySelectorAll<HTMLElement>(
+        ".wm-heat-area-open .wm-heat-slot",
+      ),
+      (slot) => `${slot.style.width}|${slot.dataset.acts}`,
+    );
+    const scrolls = !!view.container.querySelector(".wm-heat-body-scroll");
+    view.unmount();
+    offset.mockRestore();
+    return { shape, scrolls };
+  };
+  const shut = cards(0);
+  const picking = cards(220);
+  expect(picking.shape).toEqual(shut.shape);
+  expect(new Set(shut.shape.map((entry) => entry.split("|")[1]))).not.toContain(
+    "icons",
+  );
+  expect(picking.scrolls).toBe(true);
+});

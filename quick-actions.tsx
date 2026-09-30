@@ -95,7 +95,9 @@ export function TileActions({
             type="button"
             className={`wm-tile-action wm-tile-${action}`}
             disabled={disabled || !!busy || !!why}
-            title={why ? `${ACTION_LABEL[action]}: ${why}` : ACTION_LABEL[action]}
+            title={
+              why ? `${ACTION_LABEL[action]}: ${why}` : ACTION_LABEL[action]
+            }
             aria-label={`${ACTION_LABEL[action]} · ${item.title}${why ? ` · unavailable: ${why}` : ""}`}
             onClick={(event) => {
               // The tile underneath opens the task; these act on it instead.
@@ -148,6 +150,16 @@ export function AreaBulkActions({
   // The picker stays shut by default: an expanded area is mostly for reading
   // its tiles, and a list of every task would take the room they need.
   const [picking, setPicking] = useState(false);
+  // The pick list shows whole rows and fades its last one while more wait below.
+  const picksRef = useRef<HTMLUListElement>(null);
+  const [more, setMore] = useState(false);
+  const measureMore = () => {
+    const list = picksRef.current;
+    setMore(
+      !!list && list.scrollHeight - list.scrollTop - list.clientHeight > 1,
+    );
+  };
+  useEffect(measureMore, [picking, items.length]);
   const dialogRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLButtonElement | null>(null);
   const headingId = useId();
@@ -186,20 +198,18 @@ export function AreaBulkActions({
   return (
     <div className="wm-bulk">
       <div className="wm-bulk-row">
-        {order
-          .filter(offer)
-          .map((action) => (
-            <Button
-              key={action}
-              size="sm"
-              variant={action === "delegate" ? "default" : "outline"}
-              disabled={disabled || !!running}
-              onClick={(event) => open(action, event)}
-            >
-              <Icon name={ICON[action]} />
-              {running === action ? "Working…" : label(action)}
-            </Button>
-          ))}
+        {order.filter(offer).map((action) => (
+          <Button
+            key={action}
+            size="sm"
+            variant={action === "delegate" ? "default" : "outline"}
+            disabled={disabled || !!running}
+            onClick={(event) => open(action, event)}
+          >
+            <Icon name={ICON[action]} />
+            {running === action ? "Working…" : label(action)}
+          </Button>
+        ))}
         {selected.length > 0 && (
           <Button
             size="sm"
@@ -236,93 +246,98 @@ export function AreaBulkActions({
         </p>
       )}
       {(selected.length > 0 || picking) && (
-        <p className="wm-bulk-hint">
+        <p className="wm-bulk-hint wm-bulk-transient">
           {selected.length
             ? "Acts apply to your pick."
             : `Nothing picked: acts apply to all ${items.length} in ${title}.`}
         </p>
       )}
-      <div hidden={!picking}>
-      <ul className="wm-bulk-picks" aria-label={`Pick work in ${title}`}>
-        {items.map((item) => (
-          <li key={item.id}>
-            <label className="wm-bulk-pick">
-              <input
-                type="checkbox"
-                checked={selected.includes(item.id)}
-                disabled={disabled || !!running}
-                onChange={() => onToggle(item.id)}
-              />
-              <span>
-                {item.task?.key ? `${item.task.key} · ` : ""}
-                {item.title}
-              </span>
-            </label>
-          </li>
-        ))}
-      </ul>
+      <div className="wm-bulk-transient" hidden={!picking}>
+        <ul
+          ref={picksRef}
+          className={`wm-bulk-picks ${more ? "wm-bulk-picks-more" : ""}`}
+          aria-label={`Pick work in ${title}`}
+          onScroll={measureMore}
+        >
+          {items.map((item) => (
+            <li key={item.id}>
+              <label className="wm-bulk-pick">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(item.id)}
+                  disabled={disabled || !!running}
+                  onChange={() => onToggle(item.id)}
+                />
+                <span>
+                  {item.task?.key ? `${item.task.key} · ` : ""}
+                  {item.title}
+                </span>
+              </label>
+            </li>
+          ))}
+        </ul>
       </div>
       {intent && plan && (
         <div className="wm-bulk-anchor">
-        <div
-          className={`wm-bulk-confirm wm-bulk-confirm-${intent}`}
-          role="dialog"
-          aria-modal="false"
-          aria-labelledby={headingId}
-          tabIndex={-1}
-          ref={dialogRef}
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && !event.defaultPrevented) {
-              event.stopPropagation();
-              close();
-            }
-          }}
-        >
-          <h4 id={headingId}>{confirmHeading(intent, plan.take.length)}</h4>
-          <ul className="wm-bulk-list">
-            {plan.take.map((item) => (
-              <li key={item.id}>
-                {item.task?.key ? <b>{item.task.key}</b> : null} {item.title}
-              </li>
-            ))}
-          </ul>
-          {plan.skip.length > 0 && (
-            <p className="wm-bulk-skip">
-              Leaving out {plan.skip.length}:{" "}
-              {plan.skip
-                .map(
-                  ({ item, why }) =>
-                    `${item.task?.key ?? item.title} (${why})`,
-                )
-                .join(", ")}
-            </p>
-          )}
-          <p className="wm-bulk-note">
-            {confirmNote(intent, title, plan.take.length)}
-          </p>
-          {intent === "delegate" && (
-            <p className="wm-bulk-note">
-              The orchestrator runs on the <b>{preset}</b> preset.
-            </p>
-          )}
-          <div className="wm-bulk-row">
-            <Button
-              size="sm"
-              variant={intent === "done" ? "destructive" : "default"}
-              disabled={!plan.take.length}
-              onClick={() => {
-                const take = plan.take;
+          <div
+            className={`wm-bulk-confirm wm-bulk-confirm-${intent}`}
+            role="dialog"
+            aria-modal="false"
+            aria-labelledby={headingId}
+            tabIndex={-1}
+            ref={dialogRef}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !event.defaultPrevented) {
+                event.stopPropagation();
                 close();
-                onRun(intent, take);
-              }}
-            >
-              {confirmHeading(intent, plan.take.length).replace(/\?$/, "")}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={close}>
-              Cancel
-            </Button>
+              }
+            }}
+          >
+            <h4 id={headingId}>{confirmHeading(intent, plan.take.length)}</h4>
+            <ul className="wm-bulk-list">
+              {plan.take.map((item) => (
+                <li key={item.id}>
+                  {item.task?.key ? <b>{item.task.key}</b> : null} {item.title}
+                </li>
+              ))}
+            </ul>
+            {plan.skip.length > 0 && (
+              <p className="wm-bulk-skip">
+                Leaving out {plan.skip.length}:{" "}
+                {plan.skip
+                  .map(
+                    ({ item, why }) =>
+                      `${item.task?.key ?? item.title} (${why})`,
+                  )
+                  .join(", ")}
+              </p>
+            )}
+            <p className="wm-bulk-note">
+              {confirmNote(intent, title, plan.take.length)}
+            </p>
+            {intent === "delegate" && (
+              <p className="wm-bulk-note">
+                The orchestrator runs on the <b>{preset}</b> preset.
+              </p>
+            )}
+            <div className="wm-bulk-row">
+              <Button
+                size="sm"
+                variant={intent === "done" ? "destructive" : "default"}
+                disabled={!plan.take.length}
+                onClick={() => {
+                  const take = plan.take;
+                  close();
+                  onRun(intent, take);
+                }}
+              >
+                {confirmHeading(intent, plan.take.length).replace(/\?$/, "")}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={close}>
+                Cancel
+              </Button>
+            </div>
           </div>
-        </div>
         </div>
       )}
     </div>
