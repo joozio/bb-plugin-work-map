@@ -29,6 +29,14 @@ export const NEEDS_YOU = "Needs you:";
 export function reportTitle(area: string, done: number, needYou: number) {
   return `${orchestratorTitle(area)}: ${done} done, ${needYou} need you`;
 }
+/**
+ * Whether a task is an orchestrator's report. It is written for the owner
+ * and only the owner can close it: handing it to an agent, alone or inside
+ * "let agents decide all", would start an orchestrator on its own summary.
+ */
+export function isOrchestratorReport(title: string) {
+  return /\borchestrator: \d+ done, \d+ need you$/.test(title.trim());
+}
 const CLOSED = ["done", "canceled"];
 
 /**
@@ -133,6 +141,8 @@ export function blockedReason(
   // Dispatch needs a bb project to start the agent in. Saying so here is the
   // difference between a disabled act with a reason and a failed click.
   if (!item.bbProjectId) return "project not linked to a bb project";
+  if (isOrchestratorReport(item.title))
+    return "an orchestrator's report is for you to read";
   if (hasAgent(item)) return "an agent is already running on it";
   const handedOver = context.handedOver?.[item.task.id];
   if (handedOver && (context.now ?? Date.now()) - handedOver < HANDOVER_GRACE)

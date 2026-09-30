@@ -16,6 +16,7 @@ import {
   orchestratorTitle,
   NEEDS_YOU,
   reportTitle,
+  isOrchestratorReport,
 } from "./delegation";
 import type { WorkItem } from "./model";
 import { task, thread } from "./fixtures";
@@ -304,6 +305,18 @@ describe("the brief handed to an area's orchestrator", () => {
   it("names no person, so nothing private ships in the prompt", () => {
     expect(ORCHESTRATOR_PROMPT).not.toMatch(/pawel|wiz\b/i);
     expect(brief).not.toMatch(/pawel|wiz\b/i);
+  });
+});
+
+describe("an orchestrator's report", () => {
+  it("is recognised by its title and never handed to an agent", () => {
+    expect(isOrchestratorReport("Digital Thoughts orchestrator: 4 done, 1 need you")).toBe(true);
+    expect(isOrchestratorReport(reportTitle("Test project", 0, 12))).toBe(true);
+    expect(isOrchestratorReport("Review the orchestrator: 4 done, 1 need you draft")).toBe(false);
+    expect(isOrchestratorReport("Test project orchestrator")).toBe(false);
+    const report = item({ title: reportTitle("Test project", 4, 1), task: { ...task(), status: "in_review" } });
+    expect(blockedReason(report, "delegate")).toBe("an orchestrator's report is for you to read");
+    expect(blockedReason(report, "done")).toBeNull();
   });
 });
 
