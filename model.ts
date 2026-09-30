@@ -72,6 +72,8 @@ export interface WorkItem {
   children: WorkItem[];
   scope: string;
   issue: boolean;
+  /** The bb project agents for this work start in; null when none is linked. */
+  bbProjectId: string | null;
 }
 const RUNNING = new Set([
   "runtime",
@@ -245,6 +247,7 @@ export function buildMap(
     threads.map((t) => [t.id, sessionActivity(t, now)]),
   );
   const attached = new Set<string>();
+  const projectById = new Map(snapshot.projects.map((p) => [p.id, p]));
   const projectActivity = new Map<string, number>();
   const tasks: WorkItem[] = [];
   for (const task of snapshot.tasks) {
@@ -320,9 +323,11 @@ export function buildMap(
       activityAt,
       recent: recentlyActive(activityAt, now),
       score: 0,
-      scope:
-        snapshot.projects.find((p) => p.id === task.projectId)?.name ?? "Tasks",
+      scope: projectById.get(task.projectId)?.name ?? "Tasks",
       issue: linked.some((t) => t.indicator === "unread-error"),
+      // Delegation starts an agent in the linked bb project, so a task with
+      // none cannot be delegated. The map says so before the click, not after.
+      bbProjectId: projectById.get(task.projectId)?.linkedBbProjectId ?? null,
     };
     item.score = rank(item, now);
     tasks.push(item);
@@ -404,6 +409,7 @@ export function buildMap(
       recent: recentlyActive(activityAt, now),
       scope: project.prefix,
       issue: children.some((c) => c.issue),
+      bbProjectId: project.linkedBbProjectId ?? null,
     };
   });
   const standalone: WorkItem[] = active
@@ -444,12 +450,28 @@ export function sessionItem(
     children: [],
     scope: "Session",
     issue: thread.indicator === "unread-error",
+    bbProjectId: null,
   };
   item.score = rank(item, now);
   return item;
 }
 export function isWorking(item: WorkItem) {
   return item.threads.some((t) => threadSignal(t) === "working");
+}
+const HELD_BY_AGENT = new Set(["starting", "working"]);
+/**
+ * Whether an agent already holds this work. A dispatch seconds old is
+ * "starting" on the task's own link while the session list still shows it as
+ * nothing, and that gap is what lets a second click double the agents. Tasks
+ * reconciles a link that ends, so a finished agent stops holding the work.
+ */
+export function hasAgent(item: WorkItem) {
+  return (
+    isWorking(item) ||
+    (item.task?.sessionLinks ?? []).some((link) =>
+      HELD_BY_AGENT.has(link.liveStatus ?? ""),
+    )
+  );
 }
 export function needsReview(item: WorkItem) {
   return item.task?.status === "in_review";

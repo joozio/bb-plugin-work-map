@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { WorkItem } from "./model";
 import {
   ACTION_LABEL,
+  type ActionContext,
+  blockedReason,
   bulkPlan,
   confirmHeading,
   confirmNote,
@@ -25,40 +27,78 @@ export function TileActions({
   item,
   disabled,
   busy,
+  context,
+  error,
   onAct,
+  onDismissError,
 }: {
   item: WorkItem;
   disabled: boolean;
   busy: QuickAction | null;
+  context?: ActionContext;
+  /** What went wrong on this card's own act, shown where it was clicked. */
+  error?: string;
   onAct: (action: QuickAction, item: WorkItem) => void;
+  onDismissError?: () => void;
 }) {
   const actions: QuickAction[] = ["delegate", "done", "snooze"];
-  const offered = actions.filter((action) => eligible(item, action));
-  if (!offered.length) return null;
+  // Work that cannot be settled at all offers nothing. When only the handover
+  // is blocked, the act stays on the card and says why, because a reason where
+  // the click would have been is worth more than a button that disappeared.
+  const settleable = !blockedReason(item, "done", context);
+  if (!settleable && !error) return null;
+  const offered = settleable
+    ? actions.map((action) => ({
+        action,
+        why: blockedReason(item, action, context),
+      }))
+    : [];
+  const stopped = offered.find((row) => row.why)?.why;
   return (
-    <div
-      className="wm-tile-actions"
-      role="group"
-      aria-label={`Act on ${item.title}`}
-    >
-      {offered.map((action) => (
-        <button
-          key={action}
-          type="button"
-          className={`wm-tile-action wm-tile-${action}`}
-          disabled={disabled || !!busy}
-          title={ACTION_LABEL[action]}
-          aria-label={`${ACTION_LABEL[action]} · ${item.title}`}
-          onClick={(event) => {
-            // The tile underneath opens the task; these act on it instead.
-            event.stopPropagation();
-            onAct(action, item);
-          }}
-        >
-          <Icon name={ICON[action]} />
-          <span>{busy === action ? "…" : ACTION_LABEL[action]}</span>
-        </button>
-      ))}
+    <div className="wm-tile-acts">
+      {error ? (
+        <p className="wm-tile-error" role="alert">
+          <span>{error}</span>
+          {onDismissError && (
+            <button
+              type="button"
+              aria-label={`Dismiss the error on ${item.title}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDismissError();
+              }}
+            >
+              Dismiss
+            </button>
+          )}
+        </p>
+      ) : (
+        stopped && <p className="wm-tile-note">{`Cannot hand over: ${stopped}`}</p>
+      )}
+      <div
+        className="wm-tile-actions"
+        role="group"
+        aria-label={`Act on ${item.title}`}
+      >
+        {offered.map(({ action, why }) => (
+          <button
+            key={action}
+            type="button"
+            className={`wm-tile-action wm-tile-${action}`}
+            disabled={disabled || !!busy || !!why}
+            title={why ? `${ACTION_LABEL[action]}: ${why}` : ACTION_LABEL[action]}
+            aria-label={`${ACTION_LABEL[action]} · ${item.title}${why ? ` · unavailable: ${why}` : ""}`}
+            onClick={(event) => {
+              // The tile underneath opens the task; these act on it instead.
+              event.stopPropagation();
+              onAct(action, item);
+            }}
+          >
+            <Icon name={ICON[action]} />
+            <span>{busy === action ? "…" : ACTION_LABEL[action]}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -71,9 +111,12 @@ export function AreaBulkActions({
   disabled,
   running,
   preset,
+  context,
+  error,
   onToggle,
   onClearSelection,
   onRun,
+  onDismissError,
 }: {
   title: string;
   items: WorkItem[];
@@ -81,9 +124,13 @@ export function AreaBulkActions({
   disabled: boolean;
   running: QuickAction | null;
   preset: string;
+  context?: ActionContext;
+  /** What went wrong on the last bulk run, shown in the bar that started it. */
+  error?: string;
   onToggle: (id: string) => void;
   onClearSelection: () => void;
   onRun: (action: QuickAction, items: WorkItem[]) => void;
+  onDismissError?: () => void;
 }) {
   const [intent, setIntent] = useState<QuickAction | null>(null);
   // Mark all done sits last: it is one click from closing everything here,
@@ -99,7 +146,7 @@ export function AreaBulkActions({
   const chosen = selected.length
     ? items.filter((item) => selected.includes(item.id))
     : items;
-  const plan = intent ? bulkPlan(chosen, intent) : null;
+  const plan = intent ? bulkPlan(chosen, intent, context) : null;
   // Focus lands on the dialog itself, not on its act: Enter must never confirm
   // a bulk close before the list has been read. Tab reaches the act next.
   useEffect(() => {
@@ -114,7 +161,7 @@ export function AreaBulkActions({
     setIntent(action);
   };
   const offer = (action: QuickAction) =>
-    chosen.some((item) => eligible(item, action));
+    chosen.some((item) => eligible(item, action, context));
   const label = (action: QuickAction) =>
     action === "delegate"
       ? selected.length
@@ -169,6 +216,16 @@ export function AreaBulkActions({
             : `${items.length} ${items.length === 1 ? "task" : "tasks"}`}
         </span>
       </div>
+      {error && (
+        <p className="wm-bulk-error" role="alert">
+          <span>{error}</span>
+          {onDismissError && (
+            <button type="button" onClick={onDismissError}>
+              Dismiss
+            </button>
+          )}
+        </p>
+      )}
       {(selected.length > 0 || picking) && (
         <p className="wm-bulk-hint">
           {selected.length
@@ -231,10 +288,12 @@ export function AreaBulkActions({
                 .join(", ")}
             </p>
           )}
-          <p className="wm-bulk-note">{confirmNote(intent)}</p>
+          <p className="wm-bulk-note">
+            {confirmNote(intent, title, plan.take.length)}
+          </p>
           {intent === "delegate" && (
             <p className="wm-bulk-note">
-              Each agent runs on the <b>{preset}</b> preset.
+              The orchestrator runs on the <b>{preset}</b> preset.
             </p>
           )}
           <div className="wm-bulk-row">

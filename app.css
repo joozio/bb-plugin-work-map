@@ -2637,6 +2637,41 @@ i.wm-heat-key.wm-heat-stale {
 .wm-heat-inside .wm-heat-line {
   flex: none;
 }
+/* The footer is a column: what went wrong, or why an act cannot run, sits
+   directly above the acts it belongs to rather than at the top of the map. */
+.wm-tile-acts {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.wm-tile-error,
+.wm-tile-note {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+.wm-tile-error {
+  color: var(--wm-orange);
+  border-color: color-mix(in srgb, var(--wm-orange) 40%, var(--border));
+  background: color-mix(in srgb, var(--wm-orange) 10%, var(--card));
+}
+.wm-tile-note {
+  color: var(--wm-dim);
+  background: color-mix(in srgb, var(--card) 88%, var(--muted));
+}
+.wm-tile-error span {
+  min-width: 0;
+}
+.wm-tile-error button {
+  flex: none;
+  text-decoration: underline;
+}
 .wm-tile-actions {
   flex: none;
   display: flex;
@@ -2799,6 +2834,19 @@ i.wm-heat-key.wm-heat-stale {
   font-size: 10px;
   line-height: 1.4;
   color: var(--wm-dim);
+}
+/* A failed bulk run reports in the bar that started it, with its count. */
+.wm-bulk-error {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--wm-orange);
+}
+.wm-bulk-error button {
+  flex: none;
+  text-decoration: underline;
 }
 @container (max-width: 680px) {
   .wm-bulk-picks {

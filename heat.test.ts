@@ -51,6 +51,7 @@ function item(overrides: Partial<WorkItem> = {}): WorkItem {
     children: [],
     scope: "TEST",
     issue: false,
+    bbProjectId: "proj_test",
     ...overrides,
   };
 }

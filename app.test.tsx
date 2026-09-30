@@ -444,7 +444,14 @@ async function mount(
     threads?: PluginSidebarThread[];
     preferences?: Record<string, Preference>;
     attachmentError?: boolean;
-    linkedBbProjectId?: string;
+    linkedBbProjectId?: string | null;
+    delegateAreaRequests?: {
+      requestId: string;
+      projectId: string;
+      taskIds: string[];
+    }[];
+    delegateAreaError?: string;
+    areaRunning?: boolean;
     createRequests?: { taskId?: string; request: { projectId: string } }[];
     settleRequests?: SettleInput[];
     settleError?: boolean;
@@ -463,7 +470,10 @@ async function mount(
       id: "p1",
       name: "Test project",
       prefix: "TEST",
-      linkedBbProjectId: options.linkedBbProjectId ?? null,
+      linkedBbProjectId:
+        options.linkedBbProjectId === undefined
+          ? "proj_bb"
+          : options.linkedBbProjectId,
     }),
   ];
   const tasks = options.tasks ?? [
@@ -552,6 +562,49 @@ async function mount(
             preset: "wiz",
             movedFrom: target?.status === "in_review" ? "in_review" : null,
             commented: true,
+          };
+        },
+        delegateArea: (input) => {
+          options.delegateAreaRequests?.push({
+            requestId: input.requestId,
+            projectId: input.projectId,
+            taskIds: [...input.taskIds],
+          });
+          if (options.delegateAreaError)
+            throw new Error(options.delegateAreaError);
+          const covered = input.taskIds.flatMap((taskId) => {
+            const target = tasks.find((row) => row.id === taskId);
+            if (!target || ["done", "canceled"].includes(target.status))
+              return [];
+            // A real dispatch attaches the orchestrator to every task it owns,
+            // which is what makes a second click see the work as taken.
+            target.threadIds.push("thr_orch");
+            target.sessionLinks = [
+              ...(target.sessionLinks ?? []),
+              {
+                threadId: "thr_orch",
+                title: "Test project orchestrator",
+                attachedAt: new Date().toISOString(),
+                liveStatus: "starting",
+              },
+            ];
+            return [
+              {
+                taskId,
+                taskKey: target.key,
+                movedFrom: target.status === "in_review" ? "in_review" : null,
+                commented: true,
+                attached: true,
+              },
+            ];
+          });
+          return {
+            threadId: "thr_orch",
+            title: "Test project orchestrator",
+            preset: "wiz",
+            reused: !!options.areaRunning,
+            covered,
+            dropped: [],
           };
         },
         undoSettlement: ({ id }) => {
@@ -1446,7 +1499,7 @@ describe("preview and native navigation", () => {
       taskId?: string;
       request: { projectId: string };
     }[] = [];
-    const slot = await mount({ createRequests });
+    const slot = await mount({ createRequests, linkedBbProjectId: null });
     fireEvent.click(
       await slot.findByRole("button", { name: /^Open project Test project/ }),
     );
@@ -2674,9 +2727,13 @@ describe("heat layout", () => {
     slot.lifecycle.unmount();
   });
 
-  it("names the count and every task before a bulk act runs", async () => {
-    const delegateRequests: { requestId: string; taskId: string }[] = [];
-    const slot = await mount({ ...heatFixture(), delegateRequests });
+  it("names the count, the orchestrator and its limit before a bulk act runs", async () => {
+    const delegateAreaRequests: {
+      requestId: string;
+      projectId: string;
+      taskIds: string[];
+    }[] = [];
+    const slot = await mount({ ...heatFixture(), delegateAreaRequests });
     await expandProject(slot);
     fireEvent.click(
       slot.getByRole("button", { name: /^Let agents decide all/ }),
@@ -2691,33 +2748,35 @@ describe("heat layout", () => {
       expect(within(confirm).getByText(key)).toBeTruthy();
     expect(
       within(confirm).getByText(
-        /cannot unstart an agent that has already begun/,
+        /Starts Test project orchestrator for 3 tasks\. It runs at most 3 at a time and brings every task to done or back to you with a reason\./,
       ),
     ).toBeTruthy();
     expect(within(confirm).getByText(/wiz/)).toBeTruthy();
     // Nothing is dispatched by opening the confirmation.
-    expect(delegateRequests).toHaveLength(0);
+    expect(delegateAreaRequests).toHaveLength(0);
     fireEvent.click(
       within(confirm).getByRole("button", {
         name: "Let agents decide 3 tasks",
       }),
     );
-    await waitFor(() => expect(delegateRequests).toHaveLength(3));
-    expect(delegateRequests.map((call) => call.taskId)).toEqual([
-      "t1",
-      "t2",
-      "t3",
-    ]);
-    // One request id per task: a bulk run is never one dispatch repeated.
-    expect(new Set(delegateRequests.map((call) => call.requestId)).size).toBe(
-      3,
+    // One orchestrator for the area, never one agent per task.
+    await waitFor(() => expect(delegateAreaRequests).toHaveLength(1));
+    expect(delegateAreaRequests[0].projectId).toBe("p1");
+    expect(delegateAreaRequests[0].taskIds).toEqual(["t1", "t2", "t3"]);
+    expect(delegateAreaRequests[0].requestId).toMatch(/^[0-9a-f-]{36}$/);
+    await slot.findByText(
+      /Test project orchestrator started on wiz for 3 tasks, at most 3 at a time\./,
     );
     slot.lifecycle.unmount();
   });
 
   it("acts on the picked subset only, and cancelling changes nothing", async () => {
-    const delegateRequests: { requestId: string; taskId: string }[] = [];
-    const slot = await mount({ ...heatFixture(), delegateRequests });
+    const delegateAreaRequests: {
+      requestId: string;
+      projectId: string;
+      taskIds: string[];
+    }[] = [];
+    const slot = await mount({ ...heatFixture(), delegateAreaRequests });
     await expandProject(slot);
     // The picker is shut by default so the area keeps its room for tiles.
     expect(slot.queryByRole("checkbox", { name: /TEST-2/ })).toBeNull();
@@ -2734,15 +2793,15 @@ describe("heat layout", () => {
     expect(within(confirm).queryByText("TEST-1")).toBeNull();
     fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
-    expect(delegateRequests).toHaveLength(0);
+    expect(delegateAreaRequests).toHaveLength(0);
     fireEvent.click(slot.getByRole("button", { name: /^Let agents decide 1/ }));
     fireEvent.click(
       within(await slot.findByRole("dialog")).getByRole("button", {
         name: "Let agents decide 1 task",
       }),
     );
-    await waitFor(() => expect(delegateRequests).toHaveLength(1));
-    expect(delegateRequests[0].taskId).toBe("t2");
+    await waitFor(() => expect(delegateAreaRequests).toHaveLength(1));
+    expect(delegateAreaRequests[0].taskIds).toEqual(["t2"]);
     slot.lifecycle.unmount();
   });
 
@@ -2787,12 +2846,16 @@ describe("heat layout", () => {
     slot.lifecycle.unmount();
   });
 
-  it("stops a bulk run at the first failure and says how far it got", async () => {
-    const delegateRequests: { requestId: string; taskId: string }[] = [];
+  it("reports a failed area dispatch in the bar that started it, with its count", async () => {
+    const delegateAreaRequests: {
+      requestId: string;
+      projectId: string;
+      taskIds: string[];
+    }[] = [];
     const slot = await mount({
       ...heatFixture(),
-      delegateRequests,
-      delegateError: "Preset is gone.",
+      delegateAreaRequests,
+      delegateAreaError: "Preset is gone.",
     });
     await expandProject(slot);
     fireEvent.click(
@@ -2803,8 +2866,178 @@ describe("heat layout", () => {
         name: "Let agents decide 3 tasks",
       }),
     );
-    await slot.findByText(/Stopped after 0 of 3; the rest are unchanged\./);
-    expect(delegateRequests).toHaveLength(1);
+    // The failure lands in the bulk bar, announced, not in Settled today.
+    const failure = await waitFor(() => {
+      const row = slot.container.querySelector(".wm-bulk-error");
+      expect(row).toBeTruthy();
+      return row as HTMLElement;
+    });
+    expect(failure.getAttribute("role")).toBe("alert");
+    expect(failure.textContent).toContain("Preset is gone.");
+    expect(failure.textContent).toContain(
+      "No agent was started; all 3 tasks are unchanged.",
+    );
+    expect(delegateAreaRequests).toHaveLength(1);
+    // A failed handover frees the work: the act comes back, not stays spent.
+    await slot.findByRole("button", { name: /^Let agents decide all/ });
+    fireEvent.click(within(failure).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-bulk-error")).toBeNull(),
+    );
+    slot.lifecycle.unmount();
+  });
+
+  it("stops a bulk settle at the first failure and says how far it got", async () => {
+    const slot = await mount({
+      ...heatFixture(),
+      settleError: true,
+    });
+    await expandProject(slot);
+    fireEvent.click(slot.getByRole("button", { name: /^Mark all done/ }));
+    fireEvent.click(
+      within(await slot.findByRole("dialog")).getByRole("button", {
+        name: /^Mark \d+ tasks? done$/,
+      }),
+    );
+    const failure = await waitFor(() => {
+      const row = slot.container.querySelector(".wm-bulk-error");
+      expect(row).toBeTruthy();
+      return row as HTMLElement;
+    });
+    expect(failure.textContent).toContain(
+      "Stopped after 0 of 3; the rest are unchanged.",
+    );
+    slot.lifecycle.unmount();
+  });
+
+  it("shows a failed card act on that card, dismissibly and announced", async () => {
+    const slot = await mount({
+      ...heatFixture(),
+      delegateError: "This task changed since you opened it.",
+    });
+    await expandProject(slot);
+    fireEvent.click(
+      slot.getByRole("button", { name: "Agent decides · Pick a direction" }),
+    );
+    // The reason appears on the card that was clicked, not in the settled strip.
+    const failure = await waitFor(() => {
+      const row = slot.container.querySelector(".wm-tile-error");
+      expect(row).toBeTruthy();
+      return row as HTMLElement;
+    });
+    expect(failure.getAttribute("role")).toBe("alert");
+    expect(failure.textContent).toContain(
+      "This task changed since you opened it.",
+    );
+    expect(failure.closest(".wm-heat-slot")?.textContent).toContain(
+      "Pick a direction",
+    );
+    fireEvent.click(
+      within(failure).getByRole("button", {
+        name: "Dismiss the error on Pick a direction",
+      }),
+    );
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-tile-error")).toBeNull(),
+    );
+    slot.lifecycle.unmount();
+  });
+
+  it("disables the handover with its reason when the area has no bb project", async () => {
+    const delegateAreaRequests: {
+      requestId: string;
+      projectId: string;
+      taskIds: string[];
+    }[] = [];
+    const slot = await mount({
+      ...heatFixture(),
+      linkedBbProjectId: null,
+      delegateAreaRequests,
+    });
+    await expandProject(slot);
+    // The act stays on the card, disabled, saying why: the click that failed
+    // tonight is now impossible to make.
+    const blocked = slot.getByRole("button", {
+      name: "Agent decides · Pick a direction · unavailable: project not linked to a bb project",
+    });
+    expect(blocked.hasAttribute("disabled")).toBe(true);
+    expect(
+      slot.container.querySelector(".wm-tile-note")?.textContent,
+    ).toContain("Cannot hand over: project not linked to a bb project");
+    // With nothing to hand over, the area never offers the bulk act either.
+    expect(
+      slot.queryByRole("button", { name: /^Let agents decide/ }),
+    ).toBeNull();
+    // Closing and snoozing never needed an agent, so they still work.
+    expect(
+      slot
+        .getByRole("button", { name: "Done · Pick a direction" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+    expect(delegateAreaRequests).toHaveLength(0);
+    slot.lifecycle.unmount();
+  });
+
+  it("will not hand an area over twice while its first agents are starting", async () => {
+    const delegateAreaRequests: {
+      requestId: string;
+      projectId: string;
+      taskIds: string[];
+    }[] = [];
+    const slot = await mount({ ...heatFixture(), delegateAreaRequests });
+    await expandProject(slot);
+    const open = () =>
+      slot.queryByRole("button", { name: /^Let agents decide all/ });
+    fireEvent.click(open()!);
+    const confirm = await slot.findByRole("dialog");
+    const run = within(confirm).getByRole("button", {
+      name: "Let agents decide 3 tasks",
+    });
+    // Two clicks in the same moment, which is how twelve tasks became twenty-four.
+    fireEvent.click(run);
+    fireEvent.click(run);
+    await waitFor(() => expect(delegateAreaRequests).toHaveLength(1));
+    // The bulk act does not come back before the refresh shows the new state,
+    // and once it does, the work reads as taken and cannot be handed over again.
+    await waitFor(() => expect(open()).toBeNull());
+    expect(delegateAreaRequests).toHaveLength(1);
+    // Every card says the same thing, in the place the click would have been.
+    expect(delegateAreaRequests).toHaveLength(1);
+    // Every card in the area says the same thing where the click would have been.
+    for (const title of [
+      "Pick a direction",
+      "Read the result",
+      "Quiet backlog item",
+    ])
+      expect(
+        slot
+          .getByRole("button", {
+            name: `Agent decides · ${title} · unavailable: an agent is already running on it`,
+          })
+          .hasAttribute("disabled"),
+      ).toBe(true);
+    slot.lifecycle.unmount();
+  });
+
+  it("opens a running orchestrator instead of starting a second one", async () => {
+    const slot = await mount({ ...heatFixture(), areaRunning: true });
+    await expandProject(slot);
+    fireEvent.click(
+      slot.getByRole("button", { name: /^Let agents decide all/ }),
+    );
+    fireEvent.click(
+      within(await slot.findByRole("dialog")).getByRole("button", {
+        name: "Let agents decide 3 tasks",
+      }),
+    );
+    await slot.findByText(
+      /Test project orchestrator is already running this area\. Opened it instead of starting another\./,
+    );
+    expect(
+      slot.inspection.sidebarActionCalls.filter(
+        (call) => call.method === "open",
+      ),
+    ).toEqual([{ method: "open", threadId: "thr_orch" }]);
     slot.lifecycle.unmount();
   });
 

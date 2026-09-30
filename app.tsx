@@ -43,7 +43,12 @@ import { HeatMap } from "./heat-view";
 import { useSessionLauncher } from "./session-launcher";
 import { SettlementActions, SettledToday } from "./settlement-actions";
 import { AreaBulkActions, TileActions } from "./quick-actions";
-import { ACTION_LABEL, type QuickAction } from "./delegation";
+import {
+  ACTION_LABEL,
+  type ActionContext,
+  ORCHESTRATOR_LIMIT,
+  type QuickAction,
+} from "./delegation";
 import type { Settlement } from "./settlement-contract";
 import { AreaTools, ProjectDot, useAreaManager } from "./management-ui";
 import type { ManagementResult } from "./management-contract";
@@ -171,6 +176,16 @@ function WorkMap() {
     action: QuickAction;
   } | null>(null);
   const [bulk, setBulk] = useState<QuickAction | null>(null);
+  // A failed act belongs where it was clicked: on that card, or in the bulk bar
+  // that started the run. The settled strip is for what settled.
+  const [actError, setActError] = useState<{
+    scope: "item" | "bulk";
+    id: string;
+    message: string;
+  } | null>(null);
+  // Handovers this session made, by task id. Tasks needs a moment to show a
+  // new agent, and until it does this is the only thing that knows.
+  const [handedOver, setHandedOver] = useState<Record<string, number>>({});
   const [preset, setPreset] = useState("wiz");
   const [undoing, setUndoing] = useState<string | null>(null);
   const undoLock = useRef(false);
@@ -981,6 +996,7 @@ function WorkMap() {
       setActiveSession(null);
     } else close();
   };
+  const actionContext: ActionContext = { now, handedOver };
   const recordSettlement = (result: Settlement) => {
     setSettled((rows) => [
       result,
@@ -1007,11 +1023,13 @@ function WorkMap() {
   ) => {
     if (!item.task) return;
     if (action === "delegate") {
+      const taskId = item.task.id;
       const result = await rpc.call("delegate", {
         requestId: crypto.randomUUID(),
-        taskId: item.task.id,
+        taskId,
         expectedUpdatedAt: item.task.updatedAt,
       });
+      setHandedOver((current) => ({ ...current, [taskId]: Date.now() }));
       return `${result.taskKey} handed to an agent on ${result.preset}${result.movedFrom ? ", out of review" : ""}.`;
     }
     const result = await rpc.call("settle", {
@@ -1030,7 +1048,7 @@ function WorkMap() {
   const act = async (action: QuickAction, item: WorkItem) => {
     if (acting || bulk || settling) return;
     setActing({ id: item.id, action });
-    setSettledError("");
+    setActError(null);
     try {
       const note = await runAction(action, item);
       if (note) {
@@ -1038,17 +1056,87 @@ function WorkMap() {
         await refresh(true);
       }
     } catch (cause) {
-      setSettledError(cause instanceof Error ? cause.message : String(cause));
+      setActError({
+        scope: "item",
+        id: item.id,
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
     } finally {
       setActing(null);
     }
   };
+  /**
+   * A whole area goes to one orchestrator, not one agent per task: it reads the
+   * area together, finds what connects, and holds its own children to the
+   * concurrency limit. Done and Snooze stay the same act repeated in order.
+   */
+  const delegateArea = async (area: WorkItem, items: WorkItem[]) => {
+    const projectId = area.id.startsWith("project:") ? area.id.slice(8) : "";
+    const taskIds = items.flatMap((item) => (item.task ? [item.task.id] : []));
+    if (!projectId || !taskIds.length) return;
+    setBulk("delegate");
+    setActError(null);
+    // The map counts this work as taken from the click, so a second click
+    // cannot reach tasks whose agent Tasks has not published yet.
+    const at = Date.now();
+    setHandedOver((current) => ({
+      ...current,
+      ...Object.fromEntries(taskIds.map((id) => [id, at])),
+    }));
+    try {
+      const result = await rpc.call("delegateArea", {
+        requestId: crypto.randomUUID(),
+        projectId,
+        taskIds,
+      });
+      setPicked([]);
+      const covered = `${result.covered.length} ${result.covered.length === 1 ? "task" : "tasks"}`;
+      setNotice(
+        result.reused
+          ? `${result.title} is already running this area. Opened it instead of starting another.`
+          : `${result.title} started on ${result.preset} for ${covered}, at most ${ORCHESTRATOR_LIMIT} at a time.${result.dropped.length ? ` Left out ${result.dropped.length}.` : ""}`,
+      );
+      if (result.reused) actions.open(result.threadId);
+    } catch (cause) {
+      // The handover never happened, so the tasks are free to click again.
+      setHandedOver((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([id]) => !taskIds.includes(id)),
+        ),
+      );
+      setActError({
+        scope: "bulk",
+        id: area.id,
+        message: `${cause instanceof Error ? cause.message : String(cause)} No agent was started; all ${taskIds.length} tasks are unchanged.`,
+      });
+    } finally {
+      // Refresh first, then release the bar: the act stays disabled until the
+      // map can show the state its own click created.
+      await refresh(true);
+      setBulk(null);
+    }
+  };
   // A bulk act is the same act repeated in order, never a different code path.
   // One failure stops the run so the rest stay exactly as they were.
-  const actAll = async (action: QuickAction, items: WorkItem[]) => {
+  const actAll = async (
+    action: QuickAction,
+    items: WorkItem[],
+    area?: WorkItem,
+  ) => {
     if (acting || bulk || settling || !items.length) return;
+    if (action === "delegate") {
+      if (area) await delegateArea(area, items);
+      else
+        setActError({
+          scope: "bulk",
+          id: "bulk",
+          message:
+            "Work can only be handed over from its own area. Open the area and try again.",
+        });
+      return;
+    }
     setBulk(action);
-    setSettledError("");
+    setActError(null);
     let done = 0;
     try {
       for (const item of items) {
@@ -1060,12 +1148,14 @@ function WorkMap() {
       );
       setPicked([]);
     } catch (cause) {
-      setSettledError(
-        `${cause instanceof Error ? cause.message : String(cause)} Stopped after ${done} of ${items.length}; the rest are unchanged.`,
-      );
+      setActError({
+        scope: "bulk",
+        id: area?.id ?? "bulk",
+        message: `${cause instanceof Error ? cause.message : String(cause)} Stopped after ${done} of ${items.length}; the rest are unchanged.`,
+      });
     } finally {
-      setBulk(null);
       await refresh(true);
+      setBulk(null);
     }
   };
   useEffect(() => {
@@ -1577,6 +1667,13 @@ function WorkMap() {
             disabled={settling || launcher.busy || manager.busy || !!acting}
             running={bulk}
             preset={preset}
+            context={actionContext}
+            error={
+              actError?.scope === "bulk" && actError.id === root.id
+                ? actError.message
+                : undefined
+            }
+            onDismissError={() => setActError(null)}
             onToggle={(id) =>
               setPicked((current) =>
                 current.includes(id)
@@ -1585,7 +1682,7 @@ function WorkMap() {
               )
             }
             onClearSelection={() => setPicked([])}
-            onRun={(action, items) => void actAll(action, items)}
+            onRun={(action, items) => void actAll(action, items, root)}
           />
         )}
         {(manager.inlineProjectId === root.id.slice(8) ||
@@ -2511,7 +2608,14 @@ function WorkMap() {
                       item={item}
                       disabled={settling || launcher.busy || !!bulk}
                       busy={acting?.id === item.id ? acting.action : null}
+                      context={actionContext}
+                      error={
+                        actError?.scope === "item" && actError.id === item.id
+                          ? actError.message
+                          : undefined
+                      }
                       onAct={(action, target) => void act(action, target)}
+                      onDismissError={() => setActError(null)}
                     />
                   )}
                   excerpt={(item) =>

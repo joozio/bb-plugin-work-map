@@ -3,11 +3,17 @@ import {
   ACTION_LABEL,
   DELEGATION_COMMENT,
   DELEGATION_PROMPT,
+  HANDOVER_GRACE,
+  ORCHESTRATOR_LIMIT,
+  ORCHESTRATOR_PROMPT,
   blockedReason,
   bulkPlan,
   confirmHeading,
   confirmNote,
   eligible,
+  orchestratorBrief,
+  orchestratorComment,
+  orchestratorTitle,
 } from "./delegation";
 import type { WorkItem } from "./model";
 import { task, thread } from "./fixtures";
@@ -34,6 +40,7 @@ function item(overrides: Partial<WorkItem> = {}): WorkItem {
     children: [],
     scope: "Test project",
     issue: false,
+    bbProjectId: "proj_test",
     ...overrides,
   };
 }
@@ -138,5 +145,168 @@ describe("the standing brief handed to a delegated agent", () => {
   it("labels the act the same way everywhere", () => {
     expect(ACTION_LABEL.delegate).toBe("Agent decides");
     expect(DELEGATION_COMMENT).toBe("Delegated: decide on your own");
+  });
+});
+
+describe("what stops a handover before the click", () => {
+  it("refuses an area with no bb project to start an agent in, naming it", () => {
+    const unlinked = item({ bbProjectId: null });
+    expect(blockedReason(unlinked, "delegate")).toBe(
+      "project not linked to a bb project",
+    );
+    // Closing and snoozing it never needed an agent, so they stay available.
+    expect(eligible(unlinked, "done")).toBe(true);
+    expect(eligible(unlinked, "snooze")).toBe(true);
+  });
+  it("counts a dispatch seconds old as taken, before any indicator moves", () => {
+    // This is tonight's double-click: the session list still shows nothing.
+    const starting = item({
+      task: task({
+        id: "t1",
+        key: "TEST-1",
+        threadIds: ["thr_new"],
+        sessionLinks: [
+          {
+            threadId: "thr_new",
+            title: "Agent",
+            attachedAt: "",
+            liveStatus: "starting",
+          },
+        ],
+      }),
+    });
+    expect(blockedReason(starting, "delegate")).toBe(
+      "an agent is already running on it",
+    );
+  });
+  it("frees the work again once that agent's link has ended", () => {
+    const finished = item({
+      task: task({
+        id: "t1",
+        sessionLinks: [
+          {
+            threadId: "thr_old",
+            title: "Agent",
+            attachedAt: "",
+            liveStatus: "completed",
+          },
+        ],
+      }),
+    });
+    expect(blockedReason(finished, "delegate")).toBeNull();
+  });
+  it("holds a task this session handed over, then lets it go", () => {
+    const now = 1_000_000;
+    const handedOver = { t1: now - 1000 };
+    expect(blockedReason(item(), "delegate", { now, handedOver })).toBe(
+      "just handed to an agent",
+    );
+    expect(
+      blockedReason(item(), "delegate", {
+        now: now + HANDOVER_GRACE,
+        handedOver,
+      }),
+    ).toBeNull();
+    // Another task's handover says nothing about this one.
+    expect(
+      blockedReason(item(), "delegate", { now, handedOver: { other: now } }),
+    ).toBeNull();
+  });
+  it("lists the unlinked reason in a bulk plan, so the dialog can show it", () => {
+    const plan = bulkPlan(
+      [item({ id: "a" }), item({ id: "b", bbProjectId: null })],
+      "delegate",
+    );
+    expect(plan.take.map((row) => row.id)).toEqual(["a"]);
+    expect(plan.skip.map(({ why }) => why)).toEqual([
+      "project not linked to a bb project",
+    ]);
+  });
+});
+
+describe("the brief handed to an area's orchestrator", () => {
+  const brief = orchestratorBrief("Test project", [
+    { id: "t1", key: "TEST-1", title: "Review the draft" },
+    { id: "t2", key: "TEST-2", title: "Decide the price" },
+  ]);
+  it("is named for its area, and says so on the task it takes", () => {
+    expect(orchestratorTitle("Test project")).toBe("Test project orchestrator");
+    expect(orchestratorComment("Test project")).toContain(
+      "Test project orchestrator",
+    );
+  });
+  it("reads everything and writes the plan before starting anything", () => {
+    expect(ORCHESTRATOR_PROMPT).toContain("Read every task in full first");
+    expect(ORCHESTRATOR_PROMPT).toContain(
+      "Start nothing until you have read all of them",
+    );
+    expect(ORCHESTRATOR_PROMPT).toContain("duplicates");
+    expect(ORCHESTRATOR_PROMPT).toContain("depend on another finishing first");
+    expect(ORCHESTRATOR_PROMPT).toContain("Post that plan as your first message");
+  });
+  it("runs each task as a child under itself and attached to that task", () => {
+    expect(ORCHESTRATOR_PROMPT).toContain("child thread of yourself");
+    expect(ORCHESTRATOR_PROMPT).toContain("attached to that task");
+    expect(ORCHESTRATOR_PROMPT).toContain("bb thread spawn --parent-self");
+    expect(ORCHESTRATOR_PROMPT).toContain("bb tasks dispatch");
+  });
+  it("carries the concurrency limit as the one number, never a loose 3", () => {
+    expect(ORCHESTRATOR_LIMIT).toBe(3);
+    expect(ORCHESTRATOR_PROMPT).toContain(
+      `at most ${ORCHESTRATOR_LIMIT} children running at once`,
+    );
+    expect(ORCHESTRATOR_PROMPT).toContain(
+      "Start the next one when a running one finishes",
+    );
+  });
+  it("pushes a short result once, then ends every task done or in Review", () => {
+    expect(ORCHESTRATOR_PROMPT).toContain("not its whole transcript");
+    expect(ORCHESTRATOR_PROMPT).toContain("re-brief that child once");
+    expect(ORCHESTRATOR_PROMPT).toContain("never between them");
+    expect(ORCHESTRATOR_PROMPT).toContain("one line naming the limit");
+    expect(ORCHESTRATOR_PROMPT).toContain("Stop your finished children");
+  });
+  it("lists the work it owns by key, id and title", () => {
+    expect(brief).toContain("Your 2 tasks in Test project:");
+    expect(brief).toContain("- TEST-1 (t1): Review the draft");
+    expect(brief).toContain("- TEST-2 (t2): Decide the price");
+    expect(brief.startsWith(ORCHESTRATOR_PROMPT)).toBe(true);
+  });
+  it("names no person, so nothing private ships in the prompt", () => {
+    expect(ORCHESTRATOR_PROMPT).not.toMatch(/pawel|wiz\b/i);
+    expect(brief).not.toMatch(/pawel|wiz\b/i);
+  });
+});
+
+describe("the voice limit, on both briefs", () => {
+  it("stops an agent approving or closing work that ships as the owner", () => {
+    for (const prompt of [DELEGATION_PROMPT, ORCHESTRATOR_PROMPT]) {
+      expect(prompt).toContain("ship in the owner's name or voice");
+      expect(prompt).toContain("approving, closing or signing off");
+      for (const kind of ["post", "draft", "email", "social", "product copy"])
+        expect(prompt).toContain(kind);
+      // It still does the review it can, as a comment, and says where it stopped.
+      expect(prompt).toContain("the concrete edits you propose");
+      expect(prompt).toContain("as a task comment");
+      expect(prompt).toMatch(/back to Review/);
+    }
+  });
+  it("keeps both briefs' limits identical, so neither can drift", () => {
+    const stops = (prompt: string) =>
+      prompt
+        .split("\n")
+        .filter((line) => line.startsWith("- "))
+        .join("\n");
+    expect(stops(ORCHESTRATOR_PROMPT)).toContain(stops(DELEGATION_PROMPT));
+  });
+});
+
+describe("the confirmation before a whole area is handed over", () => {
+  it("names the orchestrator, the count and the limit", () => {
+    const note = confirmNote("delegate", "Digital Thoughts", 12);
+    expect(note).toBe(
+      "Starts Digital Thoughts orchestrator for 12 tasks. It runs at most 3 at a time and brings every task to done or back to you with a reason. Undo cannot unstart an agent that has already begun.",
+    );
+    expect(confirmNote("delegate", "Test project", 1)).toContain("for 1 task.");
   });
 });

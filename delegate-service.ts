@@ -1,14 +1,44 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { DELEGATION_COMMENT, DELEGATION_PROMPT } from "./delegation";
+import {
+  DELEGATION_COMMENT,
+  DELEGATION_PROMPT,
+  orchestratorBrief,
+  orchestratorComment,
+  orchestratorTitle,
+} from "./delegation";
 
 /** The worker preset a delegated task runs on, unless a stored choice names another. */
 const DEFAULT_PRESET = "wiz";
 const PRESET_KEY = "delegate:preset";
-const presetSchema = z.object({ id: z.string(), name: z.string() });
+/**
+ * A preset's execution, as Tasks reports it. Only the id and name are relied
+ * on for the single-task path, which Tasks itself dispatches; the rest is what
+ * an orchestrator thread has to be spawned with here, so it is read leniently
+ * and checked once, where a missing field can still be explained.
+ */
+const presetSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  providerId: z.string().optional(),
+  modelId: z.string().optional(),
+  reasoningLevel: z.string().optional(),
+  serviceTier: z.string().nullable().optional(),
+  permissionMode: z.string().optional(),
+  environmentKind: z.string().optional(),
+  baseBranch: z.string().nullable().optional(),
+  machineId: z.string().nullable().optional(),
+});
+type Preset = z.infer<typeof presetSchema>;
+const trackerProjectSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  linkedBbProjectId: z.string().nullable().optional(),
+});
 const taskState = z.object({
   id: z.string(),
   key: z.string(),
+  title: z.string().default(""),
   status: z.string(),
   updatedAt: z.string(),
 });
@@ -27,10 +57,39 @@ export const delegateInput = z.object({
   taskId: z.string().min(1),
   expectedUpdatedAt: z.string().optional(),
 });
+export const areaDelegationSchema = z.object({
+  threadId: z.string(),
+  title: z.string(),
+  preset: z.string(),
+  /** True when an orchestrator for this area was already running. */
+  reused: z.boolean(),
+  covered: z.array(
+    z.object({
+      taskId: z.string(),
+      taskKey: z.string(),
+      movedFrom: z.string().nullable(),
+      commented: z.boolean(),
+      attached: z.boolean(),
+    }),
+  ),
+  /** Work the dispatch left alone after the map was drawn, with the reason. */
+  dropped: z.array(z.object({ taskId: z.string(), why: z.string() })),
+});
+export type AreaDelegation = z.infer<typeof areaDelegationSchema>;
+export const delegateAreaInput = z.object({
+  requestId: z.string().uuid(),
+  /** The task project, never a bb project: its link is read here. */
+  projectId: z.string().min(1),
+  taskIds: z.array(z.string().min(1)).min(1).max(100),
+});
 export const delegationContract = {
   delegate: { input: delegateInput, output: delegationSchema },
+  delegateArea: { input: delegateAreaInput, output: areaDelegationSchema },
   delegatePreset: { input: z.null(), output: z.object({ preset: z.string() }) },
 };
+
+/** Thread states that mean an orchestrator is still on the work. */
+const RUNNING_THREAD = new Set(["pending", "starting", "active", "stopping"]);
 
 export function delegationService(bb: BbPluginApi, changed: () => void) {
   const call = <T>(method: string, input: unknown, output: z.ZodType<T>) =>
@@ -63,6 +122,35 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
       presets[0]
     );
   };
+  const commentOn = async (taskId: string, body: string) => {
+    try {
+      await call(
+        "createComment",
+        { taskId, body, notify: false },
+        z.looseObject({}),
+      );
+      return true;
+    } catch {
+      /* The dispatch itself records the handover in the task's own history. */
+      return false;
+    }
+  };
+  // Tasks moves backlog and todo to in_progress itself. Review is the column
+  // this action exists to empty, so move that one here.
+  const leaveReview = async (task: z.infer<typeof taskState>) => {
+    if (task.status !== "in_review") return null;
+    try {
+      await call(
+        "updateTask",
+        { taskId: task.id, status: "in_progress", authorName: "You" },
+        z.looseObject({}),
+      );
+      return "in_review";
+    } catch {
+      /* The agent is running; its own first comment shows the task moved. */
+      return null;
+    }
+  };
   // A repeated click or a retry must never start a second agent on one task.
   const runs = new Map<string, Promise<Delegation>>();
   const run = async (input: z.infer<typeof delegateInput>) => {
@@ -84,17 +172,7 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
     const preset = await resolvePreset();
     // Record the handover before dispatch: if the agent starts, the task
     // already says who asked for it and why it stopped waiting on you.
-    let commented = false;
-    try {
-      await call(
-        "createComment",
-        { taskId: task.id, body: DELEGATION_COMMENT, notify: false },
-        z.looseObject({}),
-      );
-      commented = true;
-    } catch {
-      /* The dispatch itself records the handover in the task's own history. */
-    }
+    const commented = await commentOn(task.id, DELEGATION_COMMENT);
     const { threadId } = await call(
       "delegate",
       {
@@ -104,21 +182,7 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
       },
       z.object({ threadId: z.string() }),
     );
-    // Tasks moves backlog and todo to in_progress itself. Review is the column
-    // this action exists to empty, so move that one here.
-    let movedFrom: string | null = null;
-    if (task.status === "in_review") {
-      try {
-        await call(
-          "updateTask",
-          { taskId: task.id, status: "in_progress", authorName: "You" },
-          z.looseObject({}),
-        );
-        movedFrom = "in_review";
-      } catch {
-        /* The agent is running; its own first comment shows the task moved. */
-      }
-    }
+    const movedFrom = await leaveReview(task);
     const result: Delegation = {
       taskId: task.id,
       taskKey: task.key,
@@ -135,6 +199,174 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
     changed();
     return result;
   };
+
+  /** Whether a recorded orchestrator is still working on its area. */
+  const stillRunning = async (threadId: string) => {
+    try {
+      const thread = await bb.sdk.threads.get({ threadId });
+      return thread.deletedAt == null && RUNNING_THREAD.has(thread.status);
+    } catch {
+      // A thread bb can no longer read is no reason to refuse a fresh one.
+      return false;
+    }
+  };
+  /** The preset's own environment, so an orchestrator runs where its work does. */
+  const environmentFor = async (preset: Preset) => {
+    if (!preset.environmentKind || preset.environmentKind === "project-default")
+      return { type: "project-default" as const };
+    const hostId =
+      preset.machineId ?? (await bb.sdk.system.config()).primaryHostId;
+    if (!hostId)
+      throw new Error(
+        `Preset "${preset.name}" needs a worktree, and bb has no default machine to make one on.`,
+      );
+    return {
+      type: "host" as const,
+      hostId,
+      workspace: {
+        type: "managed-worktree" as const,
+        baseBranch: preset.baseBranch
+          ? { kind: "named" as const, name: preset.baseBranch }
+          : { kind: "default" as const },
+      },
+    };
+  };
+  const spawnOrchestrator = async (
+    preset: Preset,
+    bbProjectId: string,
+    title: string,
+    area: string,
+    tasks: z.infer<typeof taskState>[],
+  ) => {
+    const { providerId, modelId, reasoningLevel, permissionMode } = preset;
+    if (!providerId || !modelId || !reasoningLevel || !permissionMode)
+      throw new Error(
+        `Preset "${preset.name}" does not say what to run an orchestrator on. Update it in Tasks, or let agents decide one task at a time.`,
+      );
+    const thread = await bb.sdk.threads.spawn({
+      projectId: bbProjectId,
+      environment: await environmentFor(preset),
+      providerId,
+      model: modelId,
+      // BB owns which execution choices are valid, including values added after
+      // this SDK version, so the preset's own strings are passed through.
+      reasoningLevel: reasoningLevel as never,
+      ...(preset.serviceTier
+        ? { serviceTier: preset.serviceTier as never }
+        : {}),
+      permissionMode: permissionMode as never,
+      visibility: "visible",
+      title,
+      prompt: orchestratorBrief(area, tasks),
+    });
+    return thread.id;
+  };
+  /**
+   * One area, one orchestrator. It reads the whole area before starting
+   * anything, holds its own children to the concurrency limit, and is the only
+   * agent this dispatch creates, so a click on twelve tasks starts one thread.
+   */
+  const areas = new Map<string, Promise<AreaDelegation>>();
+  const runArea = async (input: z.infer<typeof delegateAreaInput>) => {
+    const key = `area:${input.requestId}`;
+    const stored = await bb.storage.kv.get<AreaDelegation>(key);
+    if (stored) return areaDelegationSchema.parse(stored);
+    const { projects } = await call(
+      "listProjects",
+      {},
+      z.object({ projects: z.array(z.looseObject(trackerProjectSchema.shape)) }),
+    );
+    const project = projects.find((row) => row.id === input.projectId);
+    if (!project)
+      throw new Error("This task project no longer exists. Refresh the map.");
+    if (!project.linkedBbProjectId)
+      throw new Error(
+        `Task project "${project.name}" is not linked to a bb project, so no agent can be started in it. Link it in Tasks, then try again.`,
+      );
+    const title = orchestratorTitle(project.name);
+    // A second click while this area's orchestrator runs belongs to that one.
+    const liveKey = `orchestrator:${project.id}`;
+    const live = await bb.storage.kv.get<AreaDelegation>(liveKey);
+    const running = areaDelegationSchema.safeParse(live);
+    if (running.success && (await stillRunning(running.data.threadId)))
+      return { ...running.data, reused: true };
+    const preset = await resolvePreset();
+    // Settle what the dispatch really covers before spawning anything, so the
+    // brief never names work that closed while the map was on screen.
+    const covered: z.infer<typeof taskState>[] = [];
+    const dropped: AreaDelegation["dropped"] = [];
+    for (const taskId of input.taskIds) {
+      let task: z.infer<typeof taskState> | null = null;
+      try {
+        ({ task } = await call(
+          "getTask",
+          { taskId },
+          z.object({ task: taskState.nullable() }),
+        ));
+      } catch {
+        dropped.push({ taskId, why: "could not be read" });
+        continue;
+      }
+      if (!task) dropped.push({ taskId, why: "no longer exists" });
+      else if (["done", "canceled"].includes(task.status))
+        dropped.push({ taskId, why: "already closed" });
+      else covered.push(task);
+    }
+    if (!covered.length)
+      throw new Error(
+        "None of these tasks is still open. Refresh the map and try again.",
+      );
+    const threadId = await spawnOrchestrator(
+      preset,
+      project.linkedBbProjectId,
+      title,
+      project.name,
+      covered,
+    );
+    const result: AreaDelegation = {
+      threadId,
+      title,
+      preset: preset.name,
+      reused: false,
+      covered: [],
+      dropped,
+    };
+    // Attaching the orchestrator to every task it owns is what makes the work
+    // read as taken: the map shows one running agent per card, and a second
+    // click sees it before any child thread exists.
+    for (const task of covered) {
+      const commented = await commentOn(task.id, orchestratorComment(project.name));
+      let attached = false;
+      try {
+        await call(
+          "taskThreadsAttach",
+          { taskId: task.id, threadId },
+          z.looseObject({}),
+        );
+        attached = true;
+      } catch {
+        /* The orchestrator still owns it; its own comment records that. */
+      }
+      result.covered.push({
+        taskId: task.id,
+        taskKey: task.key,
+        movedFrom: await leaveReview(task),
+        commented,
+        attached,
+      });
+    }
+    for (const [target, value] of [
+      [key, result],
+      [liveKey, result],
+    ] as const)
+      try {
+        await bb.storage.kv.set(target, value);
+      } catch {
+        /* The in-memory receipt still prevents a repeat dispatch. */
+      }
+    changed();
+    return result;
+  };
   return {
     delegatePreset: async () => ({ preset: (await resolvePreset()).name }),
     delegate: (input: z.infer<typeof delegateInput>) => {
@@ -143,6 +375,22 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
       const started = run(input);
       runs.set(input.requestId, started);
       void started.catch(() => runs.delete(input.requestId));
+      return started;
+    },
+    delegateArea: (input: z.infer<typeof delegateAreaInput>) => {
+      // Two clicks that reach the server together must share one dispatch, not
+      // race to discover each other's receipt.
+      const existing =
+        areas.get(input.requestId) ?? areas.get(`project:${input.projectId}`);
+      if (existing) return existing;
+      const started = runArea(input);
+      areas.set(input.requestId, started);
+      areas.set(`project:${input.projectId}`, started);
+      const forget = () => areas.delete(`project:${input.projectId}`);
+      void started.then(forget, () => {
+        forget();
+        areas.delete(input.requestId);
+      });
       return started;
     },
   };
