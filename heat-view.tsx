@@ -4,10 +4,11 @@ import type { WorkItem, AreaOrchestrator } from "./model";
 import { activityLabel, dueLabel, isWorking } from "./model";
 import {
   HEAT_LABEL,
-  cardGrid,
+  cardLayout,
   evenOut,
   expandedWeights,
   fitsWord,
+  foldSmall,
   heatOrder,
   labelRow,
   needsYou,
@@ -29,6 +30,8 @@ const EVEN_RATIO = 0.8;
 const CARD_CHROME = 4 + 12 + 14.35;
 /** Until the first measurement: a 24px button, 3px padding each side, a 1px edge. */
 const ACT_ROW = 24 + 6 + 1;
+/** A card in an open area is never narrower than this; the grid scrolls instead. */
+const MIN_CARD_W = 150;
 const TITLE_LINE = 14.03;
 const LINE_ROW = 15.5;
 const LINE_MORE = 13.5;
@@ -53,8 +56,6 @@ export interface HeatProps {
   expandedAreaId?: string;
   expandedItemId?: string;
   now: number;
-  /** 0 at actual size, 1 fully zoomed in: more label detail, same geometry. */
-  detail: number;
   onOpenArea: (area: HeatArea) => void;
   onOpen: (item: WorkItem) => void;
   onDragStart: (event: DragEvent, item: WorkItem) => void;
@@ -72,7 +73,6 @@ export function HeatMap({
   expandedAreaId,
   expandedItemId,
   now,
-  detail,
   onOpenArea,
   onOpen,
   onDragStart,
@@ -134,39 +134,53 @@ export function HeatMap({
       expandedWeights(ordered, expandedAreaId, AREA_SHARE),
       UNIT,
     );
+    // Two title lines and the measured act row: the least a card can be.
+    const minCard = { w: MIN_CARD_W, h: CARD_CHROME + actRow + 2 * TITLE_LINE };
     return ordered.map((area) => {
       const rect = rects.get(area.id) ?? UNIT;
-      const tiles = heatOrder(area.tiles);
-      // Every tile in an expanded area is a card to read and act on, so the
-      // pull range is evened out; order still carries the rank.
-      const sized =
-        area.id === expandedAreaId ? evenOut(tiles, EVEN_RATIO) : tiles;
+      const open = area.id === expandedAreaId;
+      const ranked = heatOrder(area.tiles);
       const bodyHeight = Math.max(
         1,
         (rect.h / 100) * size.height -
           HEADER -
           BODY_PAD -
-          (area.id === expandedAreaId ? actionsHeight : 0),
+          (open ? actionsHeight : 0),
       );
-      const bodyWidth = (rect.w / 100) * size.width;
+      const bodyWidth = Math.max(1, (rect.w / 100) * size.width - BODY_PAD);
       // An open area with nothing expanded inside it is a grid of cards in
-      // rank order; once a tile opens, the rest squarify around its details.
-      const inner =
-        area.id === expandedAreaId && !expandedItemId
-          ? cardGrid(
-              tiles.map((tile) => tile.id),
-              { w: bodyWidth, h: bodyHeight },
-            )
-          : place(
-              partition(sized, { ...UNIT, w: bodyWidth, h: bodyHeight }),
-              expandedWeights(
-                sized,
-                area.id === expandedAreaId ? expandedItemId : undefined,
-                TILE_SHARE,
-              ),
-              UNIT,
-            );
-      return { area, rect, tiles, inner, bodyHeight };
+      // rank order, each at least readable; the body scrolls past that.
+      if (open && !expandedItemId) {
+        const grid = cardLayout(
+          ranked.map((tile) => tile.id),
+          { w: bodyWidth, h: bodyHeight },
+          minCard,
+        );
+        return {
+          area,
+          rect,
+          tiles: ranked,
+          inner: grid.rects,
+          bodyHeight: grid.height,
+          scroll: grid.height > bodyHeight + 0.5,
+        };
+      }
+      // Every tile in an expanded area is a card to read and act on, so the
+      // pull range is evened out; order still carries the rank. Anything the
+      // squarified map would draw too small for its key and a title line
+      // folds into one "+N more" tile instead of a blank sliver.
+      const keep = open ? expandedItemId : undefined;
+      const tiles = foldSmall(
+        open ? evenOut(ranked, EVEN_RATIO) : ranked,
+        { w: bodyWidth, h: bodyHeight },
+        { id: area.id, keep, share: TILE_SHARE },
+      );
+      const inner = place(
+        partition(tiles, { ...UNIT, w: bodyWidth, h: bodyHeight }),
+        expandedWeights(tiles, keep, TILE_SHARE),
+        UNIT,
+      );
+      return { area, rect, tiles, inner, bodyHeight, scroll: false };
     });
   }, [
     ordered,
@@ -175,6 +189,7 @@ export function HeatMap({
     size.width,
     size.height,
     actionsHeight,
+    actRow,
   ]);
   return (
     <div
@@ -187,7 +202,7 @@ export function HeatMap({
         } as CSSProperties
       }
     >
-      {layout.map(({ area, rect, tiles, inner, bodyHeight }) => {
+      {layout.map(({ area, rect, tiles, inner, bodyHeight, scroll }) => {
         const open = area.id === expandedAreaId;
         const width = (rect.w / 100) * size.width;
         const height = (rect.h / 100) * size.height;
@@ -225,32 +240,38 @@ export function HeatMap({
                 {areaActions?.(area)}
               </div>
             )}
-            <div className="wm-heat-body">
-              {tiles.map((tile) => {
-                const cell = inner.get(tile.id) ?? UNIT;
-                return (
-                  <Tile
-                    key={tile.id}
-                    tile={tile}
-                    rect={cell}
-                    width={(cell.w / 100) * Math.max(0, width - BODY_PAD)}
-                    height={(cell.h / 100) * bodyHeight}
-                    area={area}
-                    now={now}
-                    detail={detail}
-                    open={open && tile.id === expandedItemId}
-                    onOpen={onOpen}
-                    onOpenArea={onOpenArea}
-                    onDragStart={onDragStart}
-                    onDragEnd={onDragEnd}
-                    details={tileDetails}
-                    actions={open ? tileActions : undefined}
-                    excerpt={open ? excerpt : undefined}
-                    picked={!!selected?.includes(tile.item?.id ?? "")}
-                    actRow={actRow}
-                  />
-                );
-              })}
+            <div
+              className={`wm-heat-body ${scroll ? "wm-heat-body-scroll" : ""}`}
+            >
+              <div
+                className="wm-heat-cards"
+                style={scroll ? { height: bodyHeight } : undefined}
+              >
+                {tiles.map((tile) => {
+                  const cell = inner.get(tile.id) ?? UNIT;
+                  return (
+                    <Tile
+                      key={tile.id}
+                      tile={tile}
+                      rect={cell}
+                      width={(cell.w / 100) * Math.max(0, width - BODY_PAD)}
+                      height={(cell.h / 100) * bodyHeight}
+                      area={area}
+                      now={now}
+                      open={open && tile.id === expandedItemId}
+                      onOpen={onOpen}
+                      onOpenArea={onOpenArea}
+                      onDragStart={onDragStart}
+                      onDragEnd={onDragEnd}
+                      details={tileDetails}
+                      actions={open ? tileActions : undefined}
+                      excerpt={open ? excerpt : undefined}
+                      picked={!!selected?.includes(tile.item?.id ?? "")}
+                      actRow={actRow}
+                    />
+                  );
+                })}
+              </div>
             </div>
           </section>
         );
@@ -289,7 +310,6 @@ function Tile({
   height,
   area,
   now,
-  detail,
   open,
   onOpen,
   onOpenArea,
@@ -307,7 +327,6 @@ function Tile({
   height: number;
   area: HeatArea;
   now: number;
-  detail: number;
   open: boolean;
   onOpen: (item: WorkItem) => void;
   onOpenArea: (area: HeatArea) => void;
@@ -324,6 +343,33 @@ function Tile({
   const tiny = !open && (width < 52 || height < 30);
   const sliver = !open && (width < 44 || height < 18);
   const roomy = open || (height > 92 && width > 150);
+  if (!item && tile.overflow) {
+    const names = tile.members.map(
+      (member) => member.task?.key ?? member.title,
+    );
+    const count = tile.members.length;
+    return (
+      <div className="wm-heat-slot" data-layout-id={tile.id} style={box(rect)}>
+        <button
+          type="button"
+          className="wm-heat-tile wm-heat-quiet wm-heat-group wm-heat-more"
+          // A project opens as its card grid; the Sessions area has no grid, so
+          // its "+N more" opens the heaviest folded session in place.
+          onClick={() =>
+            area.root || !tile.members[0]
+              ? onOpenArea(area)
+              : onOpen(tile.members[0])
+          }
+          title={names.join(", ")}
+          aria-label={`Show ${count} more in ${area.title}: ${names.join(", ")}`}
+        >
+          <span className="wm-heat-meta">
+            <span>+{count} more</span>
+          </span>
+        </button>
+      </div>
+    );
+  }
   if (!item) {
     const finished = tile.members.every((member) => member.kind === "thread");
     const noun = finished
@@ -372,9 +418,7 @@ function Tile({
           : "<1d"
       : due && !due.endsWith("passed")
         ? due.replace(/^(Due|Planned) /, (word) => word.toLowerCase())
-        : item.task && detail > 0
-          ? shortAge
-          : "";
+        : "";
   // The key never gives way; the label shows whole or not at all, and the
   // accessible description keeps it either way.
   const row = open ? { lead, label } : labelRow(width, lead, label, working);

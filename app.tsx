@@ -2614,7 +2614,6 @@ function WorkMap() {
                       : undefined
                   }
                   now={now}
-                  detail={density.detail}
                   onOpen={openPreview}
                   onOpenArea={(heatArea) => {
                     if (heatArea.root) openPreview(heatArea.root);

@@ -6,12 +6,15 @@ import { areaState } from "./heat-view";
 import { data } from "./fixtures";
 import {
   type HeatArea,
+  type HeatTile,
   SESSIONS_AREA,
   buildHeat,
   cardGrid,
+  cardLayout,
   evenOut,
   expandedWeights,
   fitsWord,
+  foldSmall,
   heatOrder,
   labelRow,
   labelWidth,
@@ -731,5 +734,117 @@ describe("tile label row", () => {
     });
     expect(fitsWord(120, "agent running")).toBe(true);
     expect(fitsWord(80, "agent running")).toBe(false);
+  });
+});
+
+describe("folding tiles too small to read", () => {
+  const heatTile = (id: string, weight: number): HeatTile => ({
+    id,
+    weight,
+    tone: "review",
+    item: { id, title: id } as WorkItem,
+    members: [],
+    stale: 0,
+    waited: null,
+    level: 1,
+    timing: null,
+  });
+  const size = { w: 300, h: 200 };
+  const min = { w: 64, h: 42 };
+  const geometry = (tiles: HeatTile[], keep?: string) =>
+    place(
+      partition(tiles, { x: 0, y: 0, ...size }),
+      expandedWeights(tiles, keep, 0.78),
+      { x: 0, y: 0, ...size },
+    );
+
+  it("folds the unreadable tiles into one +N more with their summed weight and leaves no hole", () => {
+    const tiles = [
+      heatTile("a", 10),
+      heatTile("b", 8),
+      heatTile("c", 6),
+      heatTile("d", 0.4),
+      heatTile("e", 0.3),
+      heatTile("f", 0.2),
+    ];
+    // Unfolded, the light tiles are slivers.
+    const before = geometry(tiles);
+    expect(
+      ["d", "e", "f"].every((id) => {
+        const cell = before.get(id)!;
+        return cell.w < min.w || cell.h < min.h;
+      }),
+    ).toBe(true);
+    const shown = foldSmall(tiles, size, { id: "p1", min });
+    const more = shown.find((tile) => tile.overflow)!;
+    expect(more.id).toBe("more:p1");
+    expect(more.members.map((member) => member.id).sort()).toEqual([
+      "d",
+      "e",
+      "f",
+    ]);
+    expect(more.weight).toBeCloseTo(0.9);
+    expect(
+      shown.filter((tile) => !tile.overflow).map((tile) => tile.id),
+    ).toEqual(["a", "b", "c"]);
+    const after = geometry(shown);
+    for (const tile of shown.filter((entry) => !entry.overflow)) {
+      const cell = after.get(tile.id)!;
+      expect(cell.w).toBeGreaterThanOrEqual(min.w);
+      expect(cell.h).toBeGreaterThanOrEqual(min.h);
+    }
+    const covered = [...after.values()].reduce(
+      (sum, cell) => sum + cell.w * cell.h,
+      0,
+    );
+    expect(covered).toBeCloseTo(size.w * size.h, 4);
+  });
+
+  it("keeps readable areas untouched, and never folds the expanded tile", () => {
+    const roomy = [heatTile("a", 5), heatTile("b", 4)];
+    expect(foldSmall(roomy, size, { id: "p1", min })).toEqual(heatOrder(roomy));
+    const tiles = [heatTile("a", 10), heatTile("b", 9), heatTile("tiny", 0.2)];
+    const shown = foldSmall(tiles, size, { id: "p1", min, keep: "tiny" });
+    expect(shown.some((tile) => tile.id === "tiny")).toBe(true);
+    // An existing quiet group folds by its members, not as one item.
+    const group: HeatTile = {
+      ...heatTile("quiet:p1", 0.3),
+      tone: "quiet",
+      item: null,
+      members: [{ id: "q1" } as WorkItem, { id: "q2" } as WorkItem],
+    };
+    const folded = foldSmall([heatTile("a", 30), group], size, {
+      id: "p1",
+      min,
+    });
+    expect(
+      folded.find((tile) => tile.overflow)?.members.map((member) => member.id),
+    ).toEqual(["q1", "q2"]);
+  });
+
+  it("lays open-area cards out at a minimum size and grows taller instead of shrinking them", () => {
+    const ids = Array.from({ length: 12 }, (_, index) => `t${index}`);
+    const { rects, height } = cardLayout(
+      ids,
+      { w: 400, h: 300 },
+      {
+        w: 150,
+        h: 90,
+      },
+    );
+    const cols = Math.max(
+      ...ids.map((id) => Math.round(100 / rects.get(id)!.w)),
+    );
+    expect(cols).toBeLessThanOrEqual(2);
+    expect(height).toBeGreaterThan(300);
+    for (const id of ids) {
+      const cell = rects.get(id)!;
+      expect((cell.h / 100) * height).toBeGreaterThanOrEqual(90 - 0.01);
+      expect((cell.w / 100) * 400).toBeGreaterThanOrEqual(150);
+    }
+    // With room to spare it is the plain grid.
+    expect(cardLayout(ids, { w: 1400, h: 900 }, { w: 150, h: 90 }).height).toBe(
+      900,
+    );
   });
 });

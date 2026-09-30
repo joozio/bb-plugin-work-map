@@ -2268,6 +2268,15 @@ i.wm-heat-key {
   min-height: 0;
   padding: 3px;
 }
+/* The tiles' own box: the body's full padding box, as before, or a taller
+   grid of readable cards that the body scrolls through. */
+.wm-heat-cards {
+  position: absolute;
+  inset: 0;
+}
+.wm-heat-body-scroll {
+  overflow-y: auto;
+}
 .wm-heat-slot {
   position: absolute;
   padding: 2px;
@@ -2542,6 +2551,16 @@ i.wm-heat-key.wm-heat-late {
   outline: 2px solid var(--wm-blue);
   outline-offset: -2px;
 }
+/* Tiles too small to read, folded: a name and a count, never a blank sliver. */
+.wm-heat-more {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+.wm-heat-more .wm-heat-meta {
+  font-size: 10px;
+  font-weight: 600;
+}
 .wm-heat-dots {
   display: flex;
   flex-wrap: wrap;
@@ -2633,6 +2652,9 @@ i.wm-heat-key.wm-heat-late {
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+  }
+  .wm-heat-area-open .wm-heat-cards {
+    display: contents;
   }
   .wm-heat-area-open .wm-heat-slot {
     position: relative;

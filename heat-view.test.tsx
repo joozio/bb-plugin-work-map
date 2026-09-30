@@ -49,7 +49,6 @@ function heat(
     <HeatMap
       areas={areas}
       now={now}
-      detail={0}
       onOpenArea={() => {}}
       onOpen={() => {}}
       onDragStart={() => {}}
@@ -59,7 +58,7 @@ function heat(
   );
 }
 const tile = (view: ReturnType<typeof render>, title: string) =>
-  view.getByRole("button", { name: new RegExp(`^Preview ${title}`) });
+  view.getByRole("button", { name: new RegExp(`^Preview ${title}\\.`) });
 
 it("renders the whole key on a narrow tile and drops the label instead of cutting it", () => {
   frame(260, 150);
@@ -138,7 +137,7 @@ it("shows running whole on a roomy session tile and only the dot on a narrow one
   expect(roomy.className).toContain("wm-heat-running");
   expect(roomy.querySelector(".wm-heat-key-text")?.textContent).toBe("running");
   wide.unmount();
-  frame(64, 700);
+  frame(76, 700);
   const narrow = heat([], live);
   const slim = tile(narrow, "Work Map build");
   expect(slim.className).toContain("wm-heat-running");
@@ -217,4 +216,76 @@ it("gives card acts, bulk acts and picker rows 24px, and 36px under 720px", () =
   expect(
     rule(".wm-tile-action,\n  .wm-bulk-row > button,\n  .wm-bulk-pick", phone),
   ).toContain("min-height: 36px");
+});
+
+it("draws no titleless tile in a small area: the unreadable ones fold into a named +N more", () => {
+  frame(320, 170);
+  const keys = Array.from({ length: 14 }, (_, index) => `DT-${index + 1}`);
+  const view = heat(
+    keys.map((key, index) =>
+      task({
+        id: `t${index}`,
+        key,
+        title: `Draft ${key}`,
+        status: "in_review",
+        dateKind: "deadline",
+        dueDate: due(index - 7),
+      }),
+    ),
+  );
+  const tiles = Array.from(
+    view.container.querySelectorAll<HTMLElement>(".wm-heat-tile"),
+  );
+  const more = tiles.filter((tile) => tile.classList.contains("wm-heat-more"));
+  expect(more).toHaveLength(1);
+  const drawn = tiles.filter(
+    (tile) => !tile.classList.contains("wm-heat-group"),
+  );
+  // Every drawn task tile has its key and a title line.
+  for (const tile of drawn) {
+    expect(tile.querySelector(".wm-heat-title")).not.toBeNull();
+    expect(tile.querySelector(".wm-heat-key-text")?.textContent).toMatch(
+      /^DT-\d+$/,
+    );
+  }
+  const folded = Number(/\+(\d+) more/.exec(more[0].textContent!)![1]);
+  expect(folded).toBeGreaterThan(0);
+  expect(drawn.length + folded).toBe(keys.length);
+  // Named, not blank: the tooltip lists the keys it holds.
+  expect(more[0].getAttribute("title")!.split(", ")).toHaveLength(folded);
+});
+
+it("keeps open-area cards readable and scrolls the area body when they do not fit", () => {
+  frame(420, 260);
+  const keys = Array.from({ length: 12 }, (_, index) => `DT-${index + 1}`);
+  const view = heat(
+    keys.map((key, index) =>
+      task({
+        id: `t${index}`,
+        key,
+        title: `Draft ${key}`,
+        status: "in_review",
+      }),
+    ),
+    [],
+    { tileActions: () => <div className="wm-tile-actions" /> },
+    true,
+  );
+  const body = view.container.querySelector(
+    ".wm-heat-area-open .wm-heat-body",
+  )!;
+  expect(body.classList).toContain("wm-heat-body-scroll");
+  const cards = body.querySelector<HTMLElement>(".wm-heat-cards")!;
+  const height = parseFloat(cards.style.height);
+  expect(height).toBeGreaterThan(260);
+  for (const key of keys) {
+    const slot = tile(view, `Draft ${key}`).parentElement!;
+    // Two title lines plus the act row, never less.
+    expect(
+      (parseFloat(slot.style.height) / 100) * height,
+    ).toBeGreaterThanOrEqual(4 + 12 + 14.35 + 31 + 2 * 14.03 - 0.01);
+    expect(
+      tile(view, `Draft ${key}`).querySelector(".wm-heat-title"),
+    ).not.toBeNull();
+  }
 });

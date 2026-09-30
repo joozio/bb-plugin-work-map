@@ -409,14 +409,30 @@ export function cardGrid(
   size: { w: number; h: number },
   aspect = 1.4,
 ): Map<string, Rect> {
-  const out = new Map<string, Rect>();
+  return cardLayout(ids, size, undefined, aspect).rects;
+}
+/**
+ * The card grid with a minimum card size. Columns never make a card narrower
+ * than `min.w`; rows never make one shorter than `min.h`, so the grid grows
+ * taller than `size.h` instead and the area body scrolls. `height` is the
+ * grid's height in pixels; rects are percentages of it.
+ */
+export function cardLayout(
+  ids: readonly string[],
+  size: { w: number; h: number },
+  min?: { w: number; h: number },
+  aspect = 1.4,
+): { rects: Map<string, Rect>; height: number } {
+  const rects = new Map<string, Rect>();
   const n = ids.length;
-  if (!n) return out;
+  if (!n) return { rects, height: size.h };
+  const widest = min ? Math.max(1, Math.floor(size.w / min.w)) : n;
+  const rowHeight = (rows: number) => Math.max(size.h / rows, min?.h ?? 0);
   let cols = 1;
   let best = Infinity;
-  for (let candidate = 1; candidate <= n; candidate++) {
+  for (let candidate = 1; candidate <= Math.min(n, widest); candidate++) {
     const rows = Math.ceil(n / candidate);
-    const ratio = size.w / candidate / (size.h / rows);
+    const ratio = size.w / candidate / rowHeight(rows);
     const miss = Math.abs(Math.log(ratio / aspect));
     if (miss < best) {
       best = miss;
@@ -429,14 +445,14 @@ export function cardGrid(
     const row = Math.floor(index / cols);
     const inRow = row === rows - 1 ? n - row * cols : cols;
     const w = 100 / inRow;
-    out.set(id, {
+    rects.set(id, {
       x: round((index - row * cols) * w),
       y: round(row * h),
       w: round(w),
       h: round(h),
     });
   });
-  return out;
+  return { rects, height: Math.max(size.h, rows * rowHeight(rows)) };
 }
 export function treemap(items: readonly Weighted[], rect: Rect) {
   const ordered = heatOrder(items);
@@ -458,6 +474,8 @@ export interface HeatTile {
   waited: number | null;
   level: 1 | 2 | 3 | 4;
   timing: HeatTiming | null;
+  /** Stands for tiles too small to read, folded into one "+N more". */
+  overflow?: boolean;
 }
 export interface HeatArea {
   id: string;
@@ -547,6 +565,64 @@ function areaFrom(
     running: items.filter(isWorking).length,
     orchestrator: root?.orchestrator ?? null,
   };
+}
+/** A drawn tile must hold its key and one title line; below this it folds. */
+export const MIN_TILE = { w: 64, h: 42 };
+function moreTile(id: string, folded: readonly HeatTile[]): HeatTile {
+  return {
+    id,
+    weight: round(total(folded)),
+    tone: "quiet",
+    item: null,
+    members: folded.flatMap((tile) => (tile.item ? [tile.item] : tile.members)),
+    stale: 0,
+    waited: 0,
+    level: 1,
+    timing: null,
+    overflow: true,
+  };
+}
+/**
+ * Squarify at the real pixel size, fold every tile under `min` into one
+ * "+N more" tile carrying their summed weight, and squarify again until
+ * nothing left is too small. Folding changes sizes, so a pass can expose a
+ * new small tile; each pass folds at least one more, so it ends. `keep` (an
+ * expanded tile, grown to `share`) never folds, and neither does the fold.
+ */
+export function foldSmall(
+  tiles: readonly HeatTile[],
+  size: { w: number; h: number },
+  options: {
+    id: string;
+    min?: { w: number; h: number };
+    keep?: string;
+    share?: number;
+  },
+): HeatTile[] {
+  const min = options.min ?? MIN_TILE;
+  const moreId = `more:${options.id}`;
+  const rect = { x: 0, y: 0, w: size.w, h: size.h };
+  let shown = heatOrder(tiles);
+  let folded: HeatTile[] = [];
+  for (let pass = 0; pass <= tiles.length; pass++) {
+    const rects = place(
+      partition(shown, rect),
+      expandedWeights(shown, options.keep, options.share ?? 0.78),
+      rect,
+    );
+    const small = shown.filter((tile) => {
+      if (tile.id === moreId || tile.id === options.keep) return false;
+      const cell = rects.get(tile.id);
+      return !cell || cell.w < min.w || cell.h < min.h;
+    });
+    if (!small.length) break;
+    folded = [...folded, ...small];
+    shown = heatOrder([
+      ...shown.filter((tile) => tile.id !== moreId && !small.includes(tile)),
+      moreTile(moreId, folded),
+    ]);
+  }
+  return shown;
 }
 /**
  * Areas are the map's own roots: a project area per project, and one Sessions
