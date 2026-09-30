@@ -15,6 +15,8 @@ import {
   expandedWeights,
   fitsWord,
   foldSmall,
+  closedStatus,
+  heatWorking,
   MIN_AREA,
   openAreaShare,
   heatOrder,
@@ -1021,5 +1023,50 @@ describe("area shares", () => {
       { w: 700, h: 500 },
     ])
       expect(rowsOf(13, size)).not.toContain(1);
+  });
+});
+
+describe("closed work with an agent still attached", () => {
+  it("reads as done: quiet, not working, not counted as running, no working pull", () => {
+    const orchestrator = thread({ id: "thr_orch", indicator: "runtime" });
+    const roots = buildMap(
+      data([
+        task({
+          id: "done",
+          key: "T-1",
+          status: "done",
+          threadIds: ["thr_orch"],
+        }),
+        task({
+          id: "gone",
+          key: "T-2",
+          status: "canceled",
+          threadIds: ["thr_orch"],
+        }),
+        task({ id: "open", key: "T-3", threadIds: ["thr_orch"] }),
+      ]),
+      [orchestrator],
+      {},
+      now,
+    );
+    const items = roots[0].children;
+    const byKey = (key: string) => items.find((i) => i.task?.key === key)!;
+    const done = byKey("T-1");
+    const gone = byKey("T-2");
+    const open = byKey("T-3");
+    expect(closedStatus(done)).toBe("done");
+    expect(closedStatus(gone)).toBe("canceled");
+    expect(closedStatus(open)).toBeNull();
+    for (const closed of [done, gone]) {
+      expect(heatTone(closed)).toBe("quiet");
+      expect(heatWorking(closed)).toBe(false);
+    }
+    expect(heatTone(open)).toBe("working");
+    // The same closed task without the agent pulls exactly as hard.
+    const detached = { ...done, threads: [] };
+    expect(heatPull(done, now)).toBe(heatPull(detached, now));
+    const [area] = buildHeat(roots, now, { uncollapsed: [roots[0].id] });
+    expect(area.running).toBe(1);
+    expect(heatStats([area], now).running).toBe(1);
   });
 });

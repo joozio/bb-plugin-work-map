@@ -21,11 +21,25 @@ export const HEAT_LABEL: Record<HeatTone, string> = {
 export function needsYou(tone: HeatTone) {
   return ACTION.includes(tone);
 }
+/**
+ * A task marked done or canceled reads as closed however its sessions look:
+ * an orchestrator stays attached to tasks its children already closed, and
+ * its running thread must not paint them as live work.
+ */
+export function closedStatus(item: WorkItem): "done" | "canceled" | null {
+  const status = item.task?.status;
+  return status === "done" || status === "canceled" ? status : null;
+}
+/** Working as Heat shows it: an agent is running and the work is still open. */
+export function heatWorking(item: WorkItem) {
+  return !closedStatus(item) && isWorking(item);
+}
 export function heatTone(item: WorkItem): HeatTone {
+  if (closedStatus(item)) return "quiet";
   if (item.attention) return item.attention;
   if (needsReview(item)) return "review";
   if (item.unreadResults > 0) return "unread";
-  if (isWorking(item)) return "working";
+  if (heatWorking(item)) return "working";
   return "quiet";
 }
 /**
@@ -211,12 +225,12 @@ export function heatPull(item: WorkItem, now: number) {
       timing.weight +
         attention +
         priority +
-        (isWorking(item) ? 0.3 : 0) +
+        (heatWorking(item) ? 0.3 : 0) +
         (item.focus ? 2 : 0),
     );
   }
   let pull = 0.8 + TONE_PULL[tone];
-  if (tone !== "working" && isWorking(item)) pull += 1.2;
+  if (tone !== "working" && heatWorking(item)) pull += 1.2;
   if (item.focus) pull += 2;
   // Sessions and tasks with unavailable timing retain their attention signals.
   // Invalid task dates never silently fall back to creation or a date bonus.
@@ -601,7 +615,7 @@ function areaFrom(
         Math.min(QUIET_CAP, total(shown.filter((t) => !active.includes(t)))),
     ),
     waiting: items.filter((item) => needsYou(heatTone(item))).length,
-    running: items.filter(isWorking).length,
+    running: items.filter(heatWorking).length,
     orchestrator: root?.orchestrator ?? null,
   };
 }
@@ -743,7 +757,7 @@ export function heatStats(areas: readonly HeatArea[], now: number) {
   return {
     waiting: items.filter((item) => needsYou(heatTone(item))).length,
     unread: items.filter((item) => heatTone(item) === "unread").length,
-    running: items.filter(isWorking).length,
+    running: items.filter(heatWorking).length,
     stale: items.filter((item) => staleDays(item, now)).length,
     overdue: items.filter((item) => heatTiming(item, now)?.overdue).length,
     aged: items.filter((item) => heatTiming(item, now)?.aged).length,

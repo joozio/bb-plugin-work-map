@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent, ReactNode } from "react";
 import type { WorkItem, AreaOrchestrator } from "./model";
-import { activityLabel, dueLabel, isWorking } from "./model";
+import { activityLabel, dueLabel } from "./model";
 import {
   HEAT_LABEL,
   cardLayout,
+  closedStatus,
   evenOut,
   expandedWeights,
   fitsWord,
   foldSmall,
   heatOrder,
+  heatWorking,
   openAreaShare,
   openAreaWant,
   labelRow,
@@ -440,7 +442,9 @@ function Tile({
   const age = activityLabel(item, now);
   // Narrow tiles cannot hold "Active 2h ago", and a clipped label reads as a bug.
   const shortAge = age.replace(/^Active /, "").replace(/ ago$/, "");
-  const working = isWorking(item);
+  // Closed status wins over any attached agent: no ring, no "running".
+  const closed = closedStatus(item);
+  const working = heatWorking(item);
   const waiting = needsYou(tile.tone);
   // Tasks name their timing driver; session wait ages remain separate.
   const lead = item.task?.key ?? (working ? "running" : shortAge);
@@ -470,20 +474,25 @@ function Tile({
   // The hue already says what the work needs; a fact repeats it only when it
   // adds something the legend does not: who it waits on, what it asked for.
   const reason =
-    item.reason === HEAT_LABEL[tile.tone] || item.reason === "Inactive"
+    closed ||
+    item.reason === HEAT_LABEL[tile.tone] ||
+    item.reason === "Inactive"
       ? ""
       : item.reason;
   const facts = inside
     ? [
+        closed ?? "",
         reason,
         item.task && item.task.priority !== "none"
           ? `${item.task.priority} priority`
           : "",
-        working
-          ? RUNNING
-          : attached
-            ? `${attached} session${attached === 1 ? "" : "s"}`
-            : "",
+        closed
+          ? ""
+          : working
+            ? RUNNING
+            : attached
+              ? `${attached} session${attached === 1 ? "" : "s"}`
+              : "",
         item.task?.waitingOn && item.task.waitingOn !== "none"
           ? `waiting on ${item.task.waitingOn}`
           : "",
@@ -568,7 +577,11 @@ function Tile({
         title={label && !row.label ? label : undefined}
         aria-label={[
           `Preview ${item.title}`,
-          HEAT_LABEL[tile.tone],
+          closed
+            ? closed === "done"
+              ? "Done"
+              : "Canceled"
+            : HEAT_LABEL[tile.tone],
           item.focus ? "In focus" : "",
           tile.timing?.description ?? "",
           waiting
@@ -593,7 +606,9 @@ function Tile({
         </span>
         {!tiny && <span className="wm-heat-title">{title}</span>}
         {roomy && !inside && (
-          <span className="wm-heat-reason">{item.reason}</span>
+          <span className="wm-heat-reason">
+            {closed ? (closed === "done" ? "Done" : "Canceled") : item.reason}
+          </span>
         )}
         {showFacts && (
           <span className="wm-heat-facts">
