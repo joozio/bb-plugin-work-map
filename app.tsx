@@ -24,10 +24,12 @@ import {
   activityLabel,
   dueLabel,
   isWorking,
+  localDay,
   needsReview,
   preferredSession,
   selectVisible,
   sessionItem,
+  snoozeLabel,
   threadSignal,
   unreadLabel,
   type WorkItem,
@@ -35,19 +37,25 @@ import {
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Icon } from "./components/ui/icon";
-import { useMapMotion } from "./layout-motion";
+import { keyMovesLayout, useMapMotion } from "./layout-motion";
 import { useMapZoom, ZoomControls } from "./map-zoom";
 import { extendOrbit, zoomDensity, zoomVisible } from "./zoom";
-import { SESSIONS_AREA, buildHeat, heatStats, type HeatArea } from "./heat";
+import { SESSIONS_AREA, heatStats, type HeatArea } from "./heat";
+import { useHeatModel } from "./heat-memo";
 import { HeatMap } from "./heat-view";
 import { useSessionLauncher } from "./session-launcher";
-import { SettlementActions, SettledToday } from "./settlement-actions";
+import {
+  SettlementActions,
+  SettledToday,
+  type SnoozeRow,
+} from "./settlement-actions";
 import { AreaBulkActions, TileActions } from "./quick-actions";
 import {
   ACTION_LABEL,
   type ActionContext,
   ORCHESTRATOR_LIMIT,
   type QuickAction,
+  SNOOZE_DAYS,
 } from "./delegation";
 import type { Settlement } from "./settlement-contract";
 import { AreaTools, ProjectDot, useAreaManager } from "./management-ui";
@@ -169,6 +177,8 @@ function WorkMap() {
   const [busy, setBusy] = useState(false);
   const [settling, setSettling] = useState(false);
   const [settled, setSettled] = useState<Settlement[]>([]);
+  // Snoozes made here: they live in preferences, not in settlement records.
+  const [snoozes, setSnoozes] = useState<SnoozeRow[]>([]);
   const [settledError, setSettledError] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [acting, setActing] = useState<{
@@ -217,8 +227,12 @@ function WorkMap() {
     if (live.current)
       setError(cause instanceof Error ? cause.message : String(cause));
   }, []);
+  // Refreshes overlap: a slow older one must never replace a newer result.
+  const refreshStarted = useRef(0);
+  const refreshApplied = useRef(0);
   const refresh = useCallback(
     async (fresh = false) => {
+      const generation = ++refreshStarted.current;
       // Activity still ages when a source refresh fails.
       if (live.current) setNow(Date.now());
       try {
@@ -226,6 +240,8 @@ function WorkMap() {
           rpc.call("snapshot", fresh ? { fresh: true } : null),
           rpc.call("preferences"),
         ]);
+        if (generation < refreshApplied.current) return;
+        refreshApplied.current = generation;
         if (live.current) {
           setSnapshot(data);
           setPreferences(prefs);
@@ -233,7 +249,7 @@ function WorkMap() {
           if (!selectionRef.current) setInspectionLayout(null);
         }
       } catch (cause) {
-        if (live.current)
+        if (live.current && generation >= refreshApplied.current)
           setRefreshError(
             cause instanceof Error ? cause.message : String(cause),
           );
@@ -566,7 +582,14 @@ function WorkMap() {
       : fitting
         ? fit.orbit
         : extendOrbit(arrangeMap(baseline), visible);
-  const heatRoots = heatOn ? (heatFreeze?.map(currentItem) ?? visible) : [];
+  // Frozen roots are remapped once per data change, not on every render, so
+  // the Heat model below can tell an unchanged map from a new one.
+  const frozenRoots = useMemo(
+    () => heatFreeze?.map(currentItem) ?? null,
+    // currentItem reads only the item index, the sidebar and the clock.
+    [heatFreeze, itemById, sidebar.threads, now],
+  );
+  const heatRoots = heatOn ? (frozenRoots ?? visible) : [];
   const shown = heatOn
     ? heatRoots
     : spatial
@@ -586,12 +609,14 @@ function WorkMap() {
     : undefined;
   // An expanded project reveals its quiet tasks, as the overview does. Opening
   // one session is not a request to unpack every finished agent beside it.
-  const heatAreas = heatOn
-    ? buildHeat(heatRoots, now, {
-        uncollapsed:
-          area?.kind === "project" ? [...uncollapsed, area.id] : uncollapsed,
-      })
-    : [];
+  // While an area is open its layout is held: facts update in place, and the
+  // tiles move only once it closes or its membership changes.
+  const heatAreas = useHeatModel(
+    heatRoots,
+    now,
+    area?.kind === "project" ? [...uncollapsed, area.id] : uncollapsed,
+    heatAreaId,
+  );
   const heat = heatOn ? heatStats(heatAreas, now) : null;
   const inspecting = !!area && !!selected && previewMode === "inline";
   const expandedZone = inspecting
@@ -1011,9 +1036,10 @@ function WorkMap() {
     setInspectionLayout(null);
     void refresh(true);
   };
-  // One act on one piece of work. Done and Snooze reuse the settlement service
-  // that the expanded details already use, so they land in Settled today with
-  // the same Undo. Delegate is its own path: it hands the task to an agent.
+  // One act on one piece of work. Done reuses the settlement service that the
+  // expanded details already use, so it lands in Settled today with the same
+  // Undo. Snooze writes only this plugin's own preference and never touches
+  // Tasks; its row sits in the same list. Delegate hands the task to an agent.
   const runAction = async (
     action: QuickAction,
     item: WorkItem,
@@ -1031,6 +1057,36 @@ function WorkMap() {
       });
       setHandedOver((current) => ({ ...current, [taskId]: Date.now() }));
       return `${result.taskKey} handed to an agent on ${result.preset}${result.movedFrom ? ", out of review" : ""}.`;
+    }
+    if (action === "snooze") {
+      const id = item.id;
+      const taskKey = item.task.key;
+      const at = Date.now();
+      const until = at + SNOOZE_DAYS * 86400000;
+      const preference = await rpc.call("setPreference", {
+        id,
+        snoozedUntil: until,
+      });
+      if (!quiet) captureLayout();
+      setPreferences((previous) => ({ ...previous, [id]: preference }));
+      setSnoozes((rows) => [
+        {
+          id: `snooze:${id}:${at}`,
+          action: "snooze",
+          at,
+          title: item.title,
+          itemId: id,
+          taskKey,
+          until: localDay(until),
+        },
+        ...rows.filter((row) => row.itemId !== id),
+      ]);
+      setSettledError("");
+      if (!quiet) {
+        close();
+        setInspectionLayout(null);
+      }
+      return null;
     }
     const result = await rpc.call("settle", {
       id: `${Date.now()}-${crypto.randomUUID()}`,
@@ -1186,7 +1242,22 @@ function WorkMap() {
     undoLock.current = true;
     setUndoing(id);
     setSettledError("");
+    const snooze = snoozes.find((row) => row.id === id);
     try {
+      if (snooze) {
+        const preference = await rpc.call("setPreference", {
+          id: snooze.itemId,
+          snoozedUntil: null,
+        });
+        captureLayout();
+        setPreferences((previous) => ({
+          ...previous,
+          [snooze.itemId]: preference,
+        }));
+        setSnoozes((rows) => rows.filter((row) => row.id !== id));
+        setNotice("Undone. Snooze cleared.");
+        return;
+      }
       const result = await rpc.call("undoSettlement", { id });
       captureLayout();
       setSettled((rows) => rows.filter((row) => row.id !== id));
@@ -1306,7 +1377,11 @@ function WorkMap() {
           previews[item.threads[0]?.id]?.excerpt ||
           ""
         : item.nextAction || item.summary;
-    const due = item.task ? dueLabel(item.task, now) : "";
+    const due = item.snoozedUntil
+      ? snoozeLabel(item, now)
+      : item.task
+        ? dueLabel(item.task, now)
+        : "";
     const zoomDetail =
       item.kind !== "thread" && item.summary !== excerpt ? item.summary : "";
     const relatedCount =
@@ -2222,7 +2297,7 @@ function WorkMap() {
           event.stopPropagation();
           return;
         }
-        captureLayout();
+        if (keyMovesLayout(event)) captureLayout();
       }}
       onKeyDown={(event) => {
         if (
@@ -2769,7 +2844,7 @@ function WorkMap() {
             </div>
           )}
           <SettledToday
-            rows={settled}
+            rows={[...snoozes, ...settled].sort((a, b) => b.at - a.at)}
             onUndo={(id) => void undoSettlement(id)}
             pending={undoing}
             error={settledError}

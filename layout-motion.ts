@@ -1,6 +1,25 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 
 const duration = 320;
+const EDITABLE =
+  'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+
+/**
+ * Whether a keydown can move the map, so measuring every tile first is worth
+ * it: Escape steps back, Enter and Space activate a map control. Typing never
+ * can, and a reply in the chat editor must not measure the map per keystroke.
+ */
+export function keyMovesLayout(event: {
+  key: string;
+  target: EventTarget | null;
+}) {
+  const target = event.target instanceof Element ? event.target : null;
+  if (target?.closest(EDITABLE)) return false;
+  if (event.key === "Escape" || event.key === "Enter") return true;
+  return (
+    event.key === " " && !!target?.closest("button, [role='button'], summary")
+  );
+}
 
 // Measure around the React update so grid reflow is visible, including collapse.
 export function useMapMotion(

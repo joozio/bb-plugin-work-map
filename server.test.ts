@@ -201,6 +201,49 @@ describe("backend coverage and preferences", () => {
     });
     await harness.lifecycle.dispose();
   });
+  it("snoozes tasks only, beside focus in the same record, and clears on null or 0", async () => {
+    const { harness } = await host();
+    await harness.behavior.callRpc("setPreference", {
+      id: "task:task1",
+      focus: true,
+    });
+    expect(
+      await harness.behavior.callRpc("setPreference", {
+        id: "task:task1",
+        snoozedUntil: 5_000,
+      }),
+    ).toEqual({ focus: true, snoozedUntil: 5_000 });
+    await expect(
+      harness.behavior.callRpc("setPreference", {
+        id: "project:project1",
+        snoozedUntil: 5_000,
+      }),
+    ).rejects.toThrow("Only tasks can be snoozed.");
+    await expect(
+      harness.behavior.callRpc("setPreference", {
+        id: "thread:thr_test",
+        snoozedUntil: 5_000,
+      }),
+    ).rejects.toThrow("Only tasks can be snoozed.");
+    expect(
+      await harness.behavior.callRpc("setPreference", {
+        id: "task:task1",
+        snoozedUntil: null,
+      }),
+    ).toEqual({ focus: true });
+    await harness.behavior.callRpc("setPreference", {
+      id: "task:task1",
+      snoozedUntil: 9_000,
+    });
+    await harness.behavior.callRpc("setPreference", {
+      id: "task:task1",
+      snoozedUntil: 0,
+    });
+    expect(await harness.behavior.callRpc("preferences", null)).toEqual({
+      "task:task1": { focus: true },
+    });
+    await harness.lifecycle.dispose();
+  });
   it("bypasses the excerpt cache before acknowledging a new response", async () => {
     const fixture = await host();
     await fixture.harness.behavior.callRpc("previews", {

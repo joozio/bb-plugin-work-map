@@ -59,7 +59,8 @@ export function TileActions({
         why: blockedReason(item, action, context),
       }))
     : [];
-  const stopped = offered.find((row) => row.why)?.why;
+  // Only the handover explains itself here; a snoozed task's own label says why.
+  const stopped = offered.find((row) => row.action === "delegate")?.why;
   return (
     <div className="wm-tile-acts">
       {error ? (

@@ -10,6 +10,7 @@ import {
   isWorking,
   preferredSession,
   selectVisible,
+  snoozeLabel,
   threadSignal,
 } from "./model";
 import { now, data, task, thread } from "./fixtures";
@@ -946,5 +947,103 @@ describe("the orchestrator on an area", () => {
     const snapshot = { ...data([task({ projectId: "p1" })]), ...record };
     const project = buildMap(snapshot, [orchestrator(), child("c1"), child("c2"), child("c3"), child("c4")], {}, now).find((item) => item.id === "project:p1");
     expect(project?.orchestrator).toMatchObject({ running: 4, limit: 3 });
+  });
+});
+
+describe("a snoozed task", () => {
+  const WEEK = 7 * 86400000;
+  const snoozed = { "task:task1": { snoozedUntil: now + WEEK } };
+  const overdueReview = task({
+    status: "in_review",
+    priority: "urgent",
+    dueDate: "2026-09-01",
+    dateKind: "deadline",
+  });
+  it("loses its attention, score and review count until the date", () => {
+    const [awake] = buildMap(data([overdueReview]), [], {}, now);
+    const [asleep] = buildMap(data([overdueReview]), [], snoozed, now);
+    const child = asleep.children[0];
+    expect(child).toMatchObject({
+      attention: null,
+      signal: "inactive",
+      reason: "Snoozed until 2026-09-24",
+      snoozedUntil: now + WEEK,
+    });
+    expect(child.score).toBeLessThan(awake.children[0].score);
+    // Nothing but recency: the same as a quiet, already-seen todo.
+    expect(child.score).toBe(
+      buildMap(
+        data([task({ status: "todo" })]),
+        [],
+        { "task:task1": { seenAt: now } },
+        now,
+      )[0].children[0].score,
+    );
+    expect(awake.reason).toBe("1 needs review");
+    expect(asleep).toMatchObject({ attention: null, signal: "inactive" });
+    expect(asleep.reason).toBe("1 inactive tasks");
+    expect(snoozeLabel(child, now)).toBe("Snoozed 7d");
+    expect(snoozeLabel(child, now + WEEK - 3600000)).toBe("Snoozed 1d");
+  });
+  it("still surfaces input and failed runs, and shows a running agent", () => {
+    const withThread = (
+      id: string,
+      indicator:
+        "waiting-for-input" | "unread-error" | "runtime" | "unread-success",
+    ) =>
+      buildMap(
+        data([{ ...overdueReview, threadIds: [id] }]),
+        [thread({ id, indicator })],
+        snoozed,
+        now,
+      ).find((item) => item.id === "project:p1")!;
+    expect(withThread("in", "waiting-for-input").children[0]).toMatchObject({
+      attention: "input",
+      signal: "waiting",
+      reason: "Needs your input",
+    });
+    expect(withThread("err", "unread-error").children[0]).toMatchObject({
+      attention: "error",
+      reason: "Run failed",
+    });
+    expect(withThread("err", "unread-error").reason).toBe("1 with an error");
+    expect(withThread("run", "runtime").children[0]).toMatchObject({
+      attention: null,
+      signal: "working",
+      reason: "Snoozed until 2026-09-24",
+    });
+    const unread = withThread("res", "unread-success");
+    expect(unread.children[0]).toMatchObject({
+      attention: null,
+      signal: "inactive",
+      unreadResults: 0,
+    });
+    expect(unread).toMatchObject({ signal: "inactive", unreadResults: 0 });
+  });
+  it("wakes on its own once now passes the date, with no write", () => {
+    const [later] = buildMap(data([overdueReview]), [], snoozed, now + WEEK);
+    expect(later.children[0]).toMatchObject({
+      attention: "review",
+      signal: "waiting",
+    });
+    expect(later.children[0].snoozedUntil).toBeUndefined();
+    expect(snoozeLabel(later.children[0], now + WEEK)).toBe("");
+  });
+  it("leaves the other tasks in its area counted", () => {
+    const [project] = buildMap(
+      data([
+        overdueReview,
+        task({ id: "task2", key: "TEST-2", status: "in_review" }),
+      ]),
+      [],
+      snoozed,
+      now,
+    );
+    expect(project.reason).toBe("1 needs review");
+    expect(project.attention).toBe("review");
+    expect(project.children.map((c) => c.id)).toEqual([
+      "task:task2",
+      "task:task1",
+    ]);
   });
 });

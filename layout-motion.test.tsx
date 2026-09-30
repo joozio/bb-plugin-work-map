@@ -2,7 +2,7 @@
 import { useRef } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
-import { useMapMotion } from "./layout-motion";
+import { keyMovesLayout, useMapMotion } from "./layout-motion";
 
 afterEach(() => {
   cleanup();
@@ -81,4 +81,26 @@ it("animates background reordering without stretching text or treating scrolling
   if (original)
     Object.defineProperty(HTMLElement.prototype, "animate", original);
   else delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+});
+
+it("measures on keys that can move the map, never on typing in an editor", () => {
+  const editor = document.createElement("div");
+  editor.setAttribute("contenteditable", "true");
+  const inner = document.createElement("span");
+  editor.append(inner);
+  const button = document.createElement("button");
+  const textarea = document.createElement("textarea");
+  const plain = document.createElement("div");
+  document.body.append(editor, button, textarea, plain);
+  for (const key of ["a", " ", "Enter", "Escape"]) {
+    expect(keyMovesLayout({ key, target: inner })).toBe(false);
+    expect(keyMovesLayout({ key, target: textarea })).toBe(false);
+  }
+  expect(keyMovesLayout({ key: "a", target: button })).toBe(false);
+  expect(keyMovesLayout({ key: "Escape", target: button })).toBe(true);
+  expect(keyMovesLayout({ key: "Enter", target: button })).toBe(true);
+  expect(keyMovesLayout({ key: " ", target: button })).toBe(true);
+  expect(keyMovesLayout({ key: " ", target: plain })).toBe(false);
+  expect(keyMovesLayout({ key: "Escape", target: plain })).toBe(true);
+  document.body.replaceChildren();
 });

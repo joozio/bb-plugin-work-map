@@ -92,6 +92,8 @@ const preferenceSchema = z.object({
   focus: z.boolean().optional(),
   seenAt: z.number().optional(),
   hidden: z.boolean().optional(),
+  /** Epoch ms a task stays quiet until; the map un-snoozes it by the clock. */
+  snoozedUntil: z.number().optional(),
 });
 export type Preference = z.infer<typeof preferenceSchema>;
 const preferencesSchema = z.record(z.string(), preferenceSchema);
@@ -130,6 +132,8 @@ export const rpcContract = defineRpcContract({
       focus: z.boolean().optional(),
       seenAt: z.number().optional(),
       hidden: z.boolean().optional(),
+      /** null or 0 clears the snooze. */
+      snoozedUntil: z.number().nonnegative().nullable().optional(),
     }),
     output: preferenceSchema,
   },
@@ -357,12 +361,25 @@ export default async function plugin(bb: BbPluginApi) {
     );
     return preferencesSchema.parse(Object.fromEntries(rows));
   }
-  function setPreference({ id, ...patch }: { id: string } & Preference) {
+  function setPreference({
+    id,
+    snoozedUntil,
+    ...patch
+  }: { id: string; snoozedUntil?: number | null } & Omit<
+    Preference,
+    "snoozedUntil"
+  >) {
     const write = preferenceWrite.then(async () => {
       if (patch.hidden !== undefined && !id.startsWith("project:"))
         throw new Error("Only project areas can be hidden from Overview.");
+      if (snoozedUntil !== undefined && !id.startsWith("task:"))
+        throw new Error("Only tasks can be snoozed.");
       const current = (await bb.storage.kv.get<Preference>(`item:${id}`)) ?? {};
-      const next = preferenceSchema.parse({ ...current, ...patch });
+      const merged: Preference = { ...current, ...patch };
+      // A snooze lives only here, never in Tasks; clearing drops the field.
+      if (snoozedUntil) merged.snoozedUntil = snoozedUntil;
+      else if (snoozedUntil !== undefined) delete merged.snoozedUntil;
+      const next = preferenceSchema.parse(merged);
       await bb.storage.kv.set(`item:${id}`, next);
       bb.realtime.publish("preferences-changed", { id });
       return next;

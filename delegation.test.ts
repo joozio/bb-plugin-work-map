@@ -15,6 +15,7 @@ import {
   orchestratorComment,
   orchestratorTitle,
   NEEDS_YOU,
+  SNOOZE_DAYS,
   reportTitle,
   isOrchestratorReport,
 } from "./delegation";
@@ -58,6 +59,18 @@ describe("what each action may touch", () => {
     const closed = item({ task: task({ id: "t1", status: "done" }) });
     expect(blockedReason(closed, "done")).toBe("already closed");
     expect(blockedReason(closed, "delegate")).toBe("already closed");
+  });
+  it("refuses to snooze a task twice, and nothing else", () => {
+    const snoozed = item({ snoozedUntil: 1_000 });
+    expect(blockedReason(snoozed, "snooze")).toBe("already snoozed");
+    expect(blockedReason(snoozed, "done")).toBeNull();
+    expect(blockedReason(snoozed, "delegate")).toBeNull();
+    expect(
+      bulkPlan([item({ id: "a" }), { ...snoozed, id: "b" }], "snooze"),
+    ).toMatchObject({
+      take: [{ id: "a" }],
+      skip: [{ item: { id: "b" }, why: "already snoozed" }],
+    });
   });
   it("settles only tasks, since a session has nothing to close here", () => {
     const session = item({ kind: "thread", task: undefined });
@@ -122,7 +135,10 @@ describe("a bulk act names exactly what it will touch", () => {
       "cannot unstart an agent that has already begun",
     );
     expect(confirmNote("done")).toContain("follow-ups wired outside Work Map");
-    expect(confirmNote("snooze")).toContain("Undo restores it");
+    expect(SNOOZE_DAYS).toBe(7);
+    expect(confirmNote("snooze")).toBe(
+      "Snoozing hides the task from what needs you for 7 days and changes nothing in Tasks. Undo restores it.",
+    );
   });
 });
 

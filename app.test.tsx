@@ -459,12 +459,15 @@ async function mount(
     layout?: "overview" | "heat";
     delegateRequests?: { requestId: string; taskId: string }[];
     delegateError?: string;
+    /** Answers a snapshot call in place of the fixture, by call number. */
+    snapshot?: (call: number, tasks: MapTask[]) => Promise<MapTask[]> | null;
   } = {},
 ) {
   const app = await loadPluginApp(() => import("./app"));
   const storedPreferences = { ...options.preferences };
   const storedLayout = { layout: options.layout ?? ("overview" as const) };
   const settled: Settlement[] = [];
+  let snapshotCalls = 0;
   const projects = [
     managedProjectSchema.parse({
       id: "p1",
@@ -627,10 +630,11 @@ async function mount(
           taskId: "task1",
           attachmentError: null,
         }),
-        snapshot: () => {
+        snapshot: async () => {
           if (options.rejectSnapshot)
             throw new Error("Task source disconnected");
-          return { ...data(tasks), projects };
+          const gated = options.snapshot?.(++snapshotCalls, tasks);
+          return { ...data(gated ? await gated : tasks), projects };
         },
         layout: () => ({ layout: storedLayout.layout }),
         setLayout: ({ layout }) => {
@@ -645,6 +649,10 @@ async function mount(
             ...(input.seenAt === undefined ? {} : { seenAt: input.seenAt }),
             ...(input.hidden === undefined ? {} : { hidden: input.hidden }),
           };
+          if (input.snoozedUntil)
+            storedPreferences[input.id].snoozedUntil = input.snoozedUntil;
+          else if (input.snoozedUntil !== undefined)
+            delete storedPreferences[input.id].snoozedUntil;
           return storedPreferences[input.id];
         },
         previews: () => {
@@ -2821,6 +2829,98 @@ describe("heat layout", () => {
     slot.lifecycle.unmount();
   });
 
+  it("snoozes one task for 7 days in this plugin only, with no confirmation, and Undo clears it", async () => {
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({ ...heatFixture(), settleRequests });
+    await expandProject(slot);
+    const snoozes = () =>
+      slot.inspection.rpcCalls
+        .filter((call) => call.method === "setPreference")
+        .map(
+          (call) => call.input as { id: string; snoozedUntil?: number | null },
+        )
+        .filter((input) => input.snoozedUntil !== undefined);
+    const before = Date.now();
+    fireEvent.click(
+      slot.getByRole("button", { name: "Snooze · Read the result" }),
+    );
+    await waitFor(() => expect(snoozes()).toHaveLength(1));
+    const after = Date.now();
+    // Reversible and outside Tasks, so a single card asks nothing first.
+    expect(slot.queryByRole("dialog")).toBeNull();
+    expect(snoozes()[0].id).toBe("task:t2");
+    const week = 7 * 86400000;
+    expect(snoozes()[0].snoozedUntil).toBeGreaterThanOrEqual(before + week);
+    expect(snoozes()[0].snoozedUntil).toBeLessThanOrEqual(after + week);
+    expect(settleRequests).toHaveLength(0);
+    const strip = await slot.findByRole("region", { name: "Settled today" });
+    expect(strip.textContent).toContain("Read the result");
+    expect(strip.textContent).toMatch(
+      /Snoozed until \d{4}-\d{2}-\d{2} · Tasks unchanged/,
+    );
+    fireEvent.click(within(strip).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(snoozes()).toHaveLength(2));
+    expect(snoozes()[1]).toEqual({ id: "task:t2", snoozedUntil: null });
+    await slot.findByText("Undone. Snooze cleared.");
+    expect(slot.queryByRole("region", { name: "Settled today" })).toBeNull();
+    expect(settleRequests).toHaveLength(0);
+    slot.lifecycle.unmount();
+  });
+
+  it("confirms a bulk snooze with honest copy and snoozes each task in turn", async () => {
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({ ...heatFixture(), settleRequests });
+    await expandProject(slot);
+    fireEvent.click(slot.getByRole("button", { name: /^Snooze all/ }));
+    const confirm = await slot.findByRole("dialog");
+    expect(confirm.textContent).toContain(
+      "Snoozing hides the task from what needs you for 7 days and changes nothing in Tasks. Undo restores it.",
+    );
+    expect(confirm.textContent).not.toContain("clears it from what needs you");
+    fireEvent.click(
+      within(confirm).getByRole("button", { name: "Snooze 3 tasks" }),
+    );
+    await slot.findByText("Snooze · 3 of 3 tasks.");
+    const ids = slot.inspection.rpcCalls
+      .filter((call) => call.method === "setPreference")
+      .map((call) => (call.input as { id: string }).id);
+    expect([...ids].sort()).toEqual(["task:t1", "task:t2", "task:t3"]);
+    expect(settleRequests).toHaveLength(0);
+    slot.lifecycle.unmount();
+  });
+
+  it("holds an open area's tiles in place through a refresh that re-ranks them, updating only their facts", async () => {
+    const fixture = heatFixture();
+    const slot = await mount(fixture);
+    await expandProject(slot);
+    const open = () =>
+      slot.container.querySelector<HTMLElement>(".wm-heat-area-open")!;
+    const places = () =>
+      Object.fromEntries(
+        Array.from(
+          open().querySelectorAll<HTMLElement>(".wm-heat-slot[data-layout-id]"),
+        ).map((node) => [node.dataset.layoutId, rect(node)]),
+      );
+    const before = places();
+    expect(Object.keys(before)).toEqual(
+      expect.arrayContaining(["task:t1", "task:t2", "task:t3"]),
+    );
+    // The quiet backlog task turns urgent and due today: it outranks the rest.
+    Object.assign(fixture.tasks[2], {
+      priority: "urgent",
+      dueDate: localDay(Date.now()),
+      dateKind: "deadline",
+    });
+    fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
+    await waitFor(() =>
+      expect(
+        open().querySelector('[data-layout-id="task:t3"]')!.textContent,
+      ).toContain("today"),
+    );
+    expect(places()).toEqual(before);
+    slot.lifecycle.unmount();
+  });
+
   it("keeps the area open through a bulk settle and refreshes once at the end", async () => {
     const settleRequests: SettleInput[] = [];
     const slot = await mount({ ...heatFixture(), settleRequests });
@@ -3253,6 +3353,54 @@ describe("heat layout", () => {
     expect(
       slot.queryByRole("button", { name: /agents finished in Sessions/ }),
     ).toBeNull();
+    slot.lifecycle.unmount();
+  });
+});
+
+describe("map bookkeeping under load", () => {
+  it("never measures the map for keys typed into an editor inside it", async () => {
+    const slot = await mount();
+    const card = await slot.findByRole("button", {
+      name: /^Open project Test project/,
+    });
+    const root = slot.container.querySelector(".wm-root")!;
+    const editor = document.createElement("div");
+    editor.setAttribute("contenteditable", "true");
+    root.append(editor);
+    const measure = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    for (const key of ["a", " ", "Enter", "Escape"])
+      fireEvent.keyDown(editor, { key });
+    expect(measure).not.toHaveBeenCalled();
+    fireEvent.keyDown(card, { key: "Enter" });
+    expect(measure).toHaveBeenCalled();
+    measure.mockRestore();
+    editor.remove();
+    slot.lifecycle.unmount();
+  });
+
+  it("keeps the newer snapshot when an older refresh resolves after it", async () => {
+    let releaseOld: (tasks: MapTask[]) => void = () => undefined;
+    let base = Infinity;
+    const slot = await mount({
+      tasks: [task({ nextAction: "Loaded first" })],
+      snapshot: (call) =>
+        call === base + 1
+          ? new Promise<MapTask[]>((resolve) => (releaseOld = resolve))
+          : call === base + 2
+            ? Promise.resolve([task({ nextAction: "Newest step" })])
+            : null,
+    });
+    await slot.findByText(/Loaded first/);
+    base = slot.inspection.rpcCalls.filter(
+      (call) => call.method === "snapshot",
+    ).length;
+    fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
+    fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
+    await slot.findByText(/Newest step/);
+    releaseOld([task({ nextAction: "Stale step" })]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(slot.container.textContent).toContain("Newest step");
+    expect(slot.container.textContent).not.toContain("Stale step");
     slot.lifecycle.unmount();
   });
 });
