@@ -1,6 +1,7 @@
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { describeTask } from "./model";
+import { currentStatusSince } from "./attention-age";
 import { sessionPreview, type SessionPreview } from "./preview";
 import { settlementContract } from "./settlement-contract";
 import { settlementService } from "./settlement";
@@ -50,6 +51,7 @@ const taskSchema = z.object({
   waitingOn: z.string(),
   lifecycle: z.string().optional(),
   checkAfter: z.string().optional(),
+  statusSince: z.string().optional(),
   threadIds: z.array(z.string()),
   sessionLinks: z
     .array(
@@ -168,6 +170,7 @@ export default async function plugin(bb: BbPluginApi) {
       at: number;
       updatedAt: string;
       sessions: NonNullable<MapTask["commentSessions"]>;
+      statusSince?: string;
     }
   >();
   const previews = new Map<string, SessionPreview & { at: number }>();
@@ -206,6 +209,7 @@ export default async function plugin(bb: BbPluginApi) {
           let threadIds: string[] = [];
           let sessionLinks: NonNullable<MapTask["sessionLinks"]> = [];
           let commentSessions: NonNullable<MapTask["commentSessions"]> = [];
+          let statusSince: string | undefined;
           try {
             const result = await call(
               "listTaskThreads",
@@ -241,6 +245,7 @@ export default async function plugin(bb: BbPluginApi) {
             Date.now() - previousComments.at < 300_000
           ) {
             commentSessions = previousComments.sessions;
+            statusSince = previousComments.statusSince;
           } else
             try {
               const result = await call(
@@ -251,6 +256,7 @@ export default async function plugin(bb: BbPluginApi) {
                     z.looseObject({
                       threadId: z.string().nullable(),
                       kind: z.string(),
+                      body: z.string().optional(),
                       threadTitle: z.string().nullable(),
                       createdAt: z.string(),
                     }),
@@ -261,6 +267,7 @@ export default async function plugin(bb: BbPluginApi) {
                 string,
                 NonNullable<MapTask["commentSessions"]>[number]
               >();
+              statusSince = currentStatusSince(task.status, result.comments);
               for (const comment of result.comments) {
                 if (!comment.threadId || comment.kind !== "agent") continue;
                 const previous = latest.get(comment.threadId);
@@ -278,11 +285,10 @@ export default async function plugin(bb: BbPluginApi) {
                 at: Date.now(),
                 updatedAt: task.updatedAt,
                 sessions: commentSessions,
+                statusSince,
               });
             } catch {
-              warnings.push(
-                `Session contribution history unavailable for ${task.key}.`,
-              );
+              warnings.push(`Task history unavailable for ${task.key}.`);
             }
           const { description, ...fields } = task;
           tasks.push(
@@ -292,6 +298,7 @@ export default async function plugin(bb: BbPluginApi) {
               threadIds,
               sessionLinks,
               commentSessions,
+              ...(statusSince ? { statusSince } : {}),
             }),
           );
         }

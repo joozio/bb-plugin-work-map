@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { now, task, thread } from "./fixtures";
 import type { WorkItem } from "./model";
+import { buildMap } from "./model";
+import { data } from "./fixtures";
 import {
   SESSIONS_AREA,
   buildHeat,
@@ -53,7 +55,13 @@ function item(overrides: Partial<WorkItem> = {}): WorkItem {
   };
 }
 const project = (id: string, children: WorkItem[]): WorkItem =>
-  item({ id: `project:${id}`, kind: "project", title: id, children, scope: id });
+  item({
+    id: `project:${id}`,
+    kind: "project",
+    title: id,
+    children,
+    scope: id,
+  });
 const running = () => [thread({ id: "thr_run", indicator: "runtime" })];
 const area = (rect: Rect) => rect.w * rect.h;
 function overlap(a: Rect, b: Rect) {
@@ -183,11 +191,14 @@ describe("readable minimums", () => {
     for (let index = 1; index < rects.length; index++) {
       const before = rects[index - 1];
       const here = rects[index];
-      expect(here.y > before.y || (here.y === before.y && here.x > before.x)).toBe(true);
+      expect(
+        here.y > before.y || (here.y === before.y && here.x > before.x),
+      ).toBe(true);
     }
     // Every row spans the full width, the last one included.
     const rows = new Map<number, Rect[]>();
-    for (const rect of rects) rows.set(rect.y, [...(rows.get(rect.y) ?? []), rect]);
+    for (const rect of rects)
+      rows.set(rect.y, [...(rows.get(rect.y) ?? []), rect]);
     for (const row of rows.values()) {
       const span = row.reduce((sum, rect) => sum + rect.w, 0);
       expect(span).toBeCloseTo(100, 1);
@@ -215,7 +226,9 @@ describe("readable minimums", () => {
     // The input is left alone, and an empty or weightless list stays as it is.
     expect(items[2].weight).toBe(0.8);
     expect(evenOut([], 0.6)).toEqual([]);
-    expect(evenOut([{ id: "a", weight: 0 }], 0.6)).toEqual([{ id: "a", weight: 0 }]);
+    expect(evenOut([{ id: "a", weight: 0 }], 0.6)).toEqual([
+      { id: "a", weight: 0 },
+    ]);
   });
 });
 
@@ -278,22 +291,28 @@ describe("attention to colour", () => {
   });
   it("marks work stale only after 30 days of actually waiting on you", () => {
     const old = now - 45 * DAY;
-    expect(staleDays(item({ attention: "input", activityAt: old }), now)).toBe(
-      45,
-    );
+    const request = item({
+      attention: "input",
+      activityAt: old,
+      threads: [
+        thread({ indicator: "waiting-for-input", latestAttentionAt: old }),
+      ],
+    });
+    expect(staleDays(request, now)).toBe(45);
     expect(staleDays(item({ attention: "input" }), now)).toBe(0);
     // A quiet or already-read item is old, not waiting.
     expect(staleDays(item({ activityAt: old }), now)).toBe(0);
     expect(staleDays(item({ attention: "unread", activityAt: old }), now)).toBe(
       0,
     );
-    expect(
-      heatPull(item({ attention: "input", activityAt: old }), now),
-    ).toBeGreaterThan(heatPull(item({ attention: "input" }), now));
+    expect(heatPull(request, now)).toBeGreaterThan(
+      heatPull(item({ attention: "input" }), now),
+    );
   });
   it("measures the wait from when the task started needing you, not from agent activity", () => {
     const iso = (days: number) => new Date(now - days * DAY).toISOString();
-    const day = (days: number) => new Date(now - days * DAY).toISOString().slice(0, 10);
+    const day = (days: number) =>
+      new Date(now - days * DAY).toISOString().slice(0, 10);
     const review = (overrides: Partial<ReturnType<typeof task>>) =>
       item({
         attention: "review",
@@ -301,21 +320,32 @@ describe("attention to colour", () => {
         updatedAt: now,
         task: task({ status: "in_review", dateKind: "due", ...overrides }),
       });
-    // Touched today, created 20 days ago: 20 days waiting.
-    expect(waitDays(review({ createdAt: iso(20), dueDate: null }), now)).toBe(20);
-    // A migrated task is created on migration day but was due long before: the due date wins.
+    // An old recurring record entered review today: the old creation and due dates do not age this cycle.
     expect(
-      waitDays(review({ createdAt: iso(20), dueDate: day(81) }), now),
-    ).toBe(81);
-    // A date still ahead does not start the wait early.
+      waitDays(
+        review({ createdAt: iso(40), statusSince: iso(0), dueDate: day(7) }),
+        now,
+      ),
+    ).toBe(0);
+    // Ordinary agent edits cannot reset a proven current review period.
     expect(
-      waitDays(review({ createdAt: iso(3), dueDate: day(-4) }), now),
+      waitDays(
+        review({ createdAt: iso(40), statusSince: iso(20), dueDate: day(81) }),
+        now,
+      ),
+    ).toBe(20);
+    // A future or planning date does not change when an existing review began.
+    expect(
+      waitDays(review({ statusSince: iso(3), dueDate: day(-4) }), now),
     ).toBe(3);
     // A planning date is a plan, not a request.
     expect(
-      waitDays(review({ createdAt: iso(3), dueDate: day(50), dateKind: "plan" }), now),
+      waitDays(
+        review({ statusSince: iso(3), dueDate: day(50), dateKind: "plan" }),
+        now,
+      ),
     ).toBe(3);
-    // No dates at all: the last update is the only honest anchor.
+    // Missing review history stays unknown, never guessed from creation or a maintenance edit.
     expect(
       waitDays(
         item({
@@ -325,14 +355,125 @@ describe("attention to colour", () => {
         }),
         now,
       ),
-    ).toBe(9);
+    ).toBe(0);
     // A session waits since it asked; quiet work waits for nothing.
-    expect(waitingSince(item({ attention: "input", activityAt: now - 2 * DAY }), now)).toBe(
-      now - 2 * DAY,
+    expect(
+      waitingSince(
+        item({
+          attention: "input",
+          activityAt: now - 2 * DAY,
+          threads: [
+            thread({
+              indicator: "waiting-for-input",
+              latestAttentionAt: now - 2 * DAY,
+            }),
+          ],
+        }),
+        now,
+      ),
+    ).toBe(now - 2 * DAY);
+    expect(
+      waitingSince(item({ task: task({ createdAt: iso(40) }) }), now),
+    ).toBe(0);
+    expect(
+      staleDays(review({ statusSince: iso(31), dueDate: null }), now),
+    ).toBe(31);
+    expect(
+      staleDays(review({ statusSince: iso(30), dueDate: null }), now),
+    ).toBe(0);
+    expect(waitingSince(review({ statusSince: iso(-1) }), now)).toBe(0);
+    const [area] = buildHeat(
+      [project("unknown", [review({ createdAt: iso(40) })])],
+      now,
     );
-    expect(waitingSince(item({ task: task({ createdAt: iso(40) }) }), now)).toBe(0);
-    expect(staleDays(review({ createdAt: iso(31), dueDate: null }), now)).toBe(31);
-    expect(staleDays(review({ createdAt: iso(30), dueDate: null }), now)).toBe(0);
+    expect(area.tiles[0].waited).toBeNull();
+  });
+  it("keeps deferred follow-ups quiet and starts aging only on the current check date", () => {
+    const check = (days: number) =>
+      new Date(now - days * DAY).toISOString().slice(0, 10);
+    const followup = (days: number) =>
+      buildMap(
+        data([
+          task({
+            lifecycle: "waiting",
+            waitingOn: "A partner",
+            checkAfter: check(days),
+            createdAt: new Date(now - 40 * DAY).toISOString(),
+            dueDate: check(40),
+          }),
+        ]),
+        [],
+        {},
+        now,
+      )[0].children[0];
+    expect(heatTone(followup(-7))).toBe("quiet");
+    expect(waitDays(followup(-7), now)).toBe(0);
+    expect(heatTone(followup(1))).toBe("followup");
+    expect(waitDays(followup(1), now)).toBe(1);
+    expect(staleDays(followup(1), now)).toBe(0);
+  });
+  it("ages a task's input request from its requesting session, not the task or another session", () => {
+    const request = item({
+      attention: "input",
+      task: task({
+        status: "in_review",
+        statusSince: new Date(now - 40 * DAY).toISOString(),
+      }),
+      threads: [
+        thread({
+          indicator: "waiting-for-input",
+          latestAttentionAt: now - DAY,
+        }),
+        thread({ indicator: "unread-success", latestAttentionAt: now }),
+      ],
+    });
+    expect(waitDays(request, now)).toBe(1);
+    expect(waitDays({ ...request, threads: [] }, now)).toBe(0);
+  });
+  it("leaves impossible follow-up calendar dates unknown instead of normalizing them", () => {
+    const current = new Date("2026-03-02T12:00:00").getTime();
+    const invalid = buildMap(
+      data([
+        task({
+          lifecycle: "waiting",
+          waitingOn: "Partner",
+          checkAfter: "2026-02-30",
+        }),
+      ]),
+      [],
+      {},
+      current,
+    )[0].children[0];
+    expect(waitingSince(invalid, current)).toBe(0);
+    expect(
+      buildHeat([project("bad-date", [invalid])], current)[0].tiles[0].waited,
+    ).toBeNull();
+  });
+  it("does not mistake a standalone session's creation for a missing attention timestamp", () => {
+    for (const indicator of ["waiting-for-input", "unread-error"] as const) {
+      const session = thread({
+        createdAt: now - 40 * DAY,
+        latestAttentionAt: 0,
+        indicator,
+      });
+      const root = buildMap(data([]), [session], {}, now)[0];
+      expect(waitingSince(root, now)).toBe(0);
+      expect(staleDays(root, now)).toBe(0);
+      expect(buildHeat([root], now)[0].tiles[0].waited).toBeNull();
+    }
+  });
+  it("does not boost a task just because it has a distant future date", () => {
+    const dated = (days: number) =>
+      item({
+        task: task({
+          dateKind: "due",
+          dueDate: new Date(now + days * DAY).toISOString().slice(0, 10),
+        }),
+      });
+    expect(heatPull(dated(30), now)).toBe(
+      heatPull(item({ task: task() }), now),
+    );
+    expect(heatPull(dated(0), now)).toBeGreaterThan(heatPull(dated(30), now));
   });
   it("deepens colour with priority, a long wait and focus, never past 4", () => {
     const iso = (days: number) => new Date(now - days * DAY).toISOString();
@@ -340,7 +481,12 @@ describe("attention to colour", () => {
       item({
         attention: "review",
         focus,
-        task: task({ status: "in_review", priority, createdAt: iso(days), dueDate: null }),
+        task: task({
+          status: "in_review",
+          priority,
+          statusSince: iso(days),
+          dueDate: null,
+        }),
       });
     expect(heatLevel(review("none"), now)).toBe(1);
     expect(heatLevel(review("low"), now)).toBe(1);
@@ -353,7 +499,9 @@ describe("attention to colour", () => {
     expect(heatLevel(review("low", 0, true), now)).toBe(2);
     expect(heatLevel(item({ attention: "input" }), now)).toBe(3);
     expect(heatLevel(item({ attention: "error" }), now)).toBe(3);
-    expect(heatLevel(item({ attention: "unread", unreadResults: 1 }), now)).toBe(1);
+    expect(
+      heatLevel(item({ attention: "unread", unreadResults: 1 }), now),
+    ).toBe(1);
     expect(heatLevel(item(), now)).toBe(1);
   });
   it("moves a known leading verb out of the title and leaves everything else alone", () => {
@@ -391,7 +539,7 @@ describe("attention to colour", () => {
     const [withoutPins] = buildHeat(plain, now);
     expect(withPins.id).toBe(SESSIONS_AREA);
     expect(withPins.weight).toBeGreaterThan(withoutPins.weight * 2);
-});
+  });
 });
 
 describe("areas", () => {
@@ -445,7 +593,17 @@ describe("areas", () => {
   it("reports the header stats over every item, collapsed ones included", () => {
     const roots = [
       project("p1", [
-        item({ id: "task:1", attention: "input", activityAt: now - 40 * DAY }),
+        item({
+          id: "task:1",
+          attention: "input",
+          activityAt: now - 40 * DAY,
+          threads: [
+            thread({
+              indicator: "waiting-for-input",
+              latestAttentionAt: now - 40 * DAY,
+            }),
+          ],
+        }),
         item({ id: "task:2", attention: "unread", unreadResults: 1 }),
       ]),
       item({ id: "thread:a", kind: "thread", threads: running() }),

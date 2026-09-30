@@ -1,18 +1,12 @@
 import type { WorkItem } from "./model";
-import { isWorking, needsReview } from "./model";
+import { isWorking, needsReview, localDay } from "./model";
 
 const DAY = 86400000;
 export const STALE_DAYS = 30;
 export const SESSIONS_AREA = "heat:sessions";
 /** Tones are the map's existing attention channels, not a second vocabulary. */
 export type HeatTone =
-  | "input"
-  | "error"
-  | "review"
-  | "followup"
-  | "unread"
-  | "working"
-  | "quiet";
+  "input" | "error" | "review" | "followup" | "unread" | "working" | "quiet";
 const ACTION: HeatTone[] = ["input", "error", "review", "followup"];
 export const HEAT_LABEL: Record<HeatTone, string> = {
   input: "Needs your input",
@@ -34,26 +28,39 @@ export function heatTone(item: WorkItem): HeatTone {
   return "quiet";
 }
 /**
- * When this work started waiting on you. Agent touches move a task's
- * activity, so activity cannot measure it. A task has waited at least since
- * its due date passed, and since it was created if that is earlier; a session
- * has waited since it asked. Migrated tasks carry a creation date from the
- * migration day, which is why the due date wins when it is older.
+ * Age of the current request, never the task's creation or migration date.
+ * Reviews use the current status transition; follow-ups use CHECK AFTER.
+ * Unknown history has no age rather than an invented start date.
  */
 export function waitingSince(item: WorkItem, now: number) {
-  if (!needsYou(heatTone(item))) return 0;
+  const tone = heatTone(item);
+  if (!needsYou(tone)) return 0;
+  const valid = (at: number) => Number.isFinite(at) && at > 0 && at <= now;
   const task = item.task;
-  if (!task) return item.activityAt || 0;
-  const candidates: number[] = [];
-  const created = Date.parse(task.createdAt ?? "");
-  if (Number.isFinite(created) && created <= now) candidates.push(created);
-  if (task.dueDate && task.dateKind !== "plan") {
-    const due = Date.parse(`${task.dueDate}T00:00:00`);
-    if (Number.isFinite(due) && due <= now) candidates.push(due);
+  if (tone === "input" || tone === "error") {
+    const requests = item.threads
+      .filter((thread) =>
+        tone === "input"
+          ? thread.hasPendingInteraction ||
+            thread.indicator === "waiting-for-input"
+          : thread.indicator === "unread-error",
+      )
+      .map((thread) => thread.latestAttentionAt)
+      .filter(valid);
+    return requests.length ? Math.min(...requests) : 0;
   }
-  if (!candidates.length && item.updatedAt && item.updatedAt <= now)
-    candidates.push(item.updatedAt);
-  return candidates.length ? Math.min(...candidates) : 0;
+  if (!task) return 0;
+  const since =
+    tone === "followup"
+      ? Date.parse(`${task.checkAfter}T00:00:00`)
+      : Date.parse(task.statusSince ?? "");
+  // Date.parse normalizes impossible dates such as February 30.
+  if (
+    tone === "followup" &&
+    (!valid(since) || localDay(since) !== task.checkAfter)
+  )
+    return 0;
+  return valid(since) ? since : 0;
 }
 /** Whole days this work has waited on you; 0 when it does not need you. */
 export function waitDays(item: WorkItem, now: number) {
@@ -130,8 +137,13 @@ export function heatPull(item: WorkItem, now: number) {
   if (item.focus) pull += 2;
   const task = item.task;
   if (task && !["done", "canceled", "backlog"].includes(task.status)) {
-    pull += task.priority === "urgent" ? 1.6 : task.priority === "high" ? 0.8 : 0;
-    if (task.dueDate && (!task.waitingOn || task.waitingOn.toLowerCase() === "none"))
+    pull +=
+      task.priority === "urgent" ? 1.6 : task.priority === "high" ? 0.8 : 0;
+    if (
+      task.dueDate &&
+      task.dueDate <= localDay(now + DAY) &&
+      (!task.waitingOn || task.waitingOn.toLowerCase() === "none")
+    )
       pull += task.dateKind === "plan" ? 0.3 : 0.7;
   }
   // A long wait pulls harder, up to the weight of a high priority and a bit.
@@ -218,7 +230,13 @@ export function place(
     const used = rowWeight(row);
     const last = index === rows.length - 1;
     const share = left > 0 ? used / left : 0;
-    const strip = row.alongHeight ? (last ? w : w * share) : last ? h : h * share;
+    const strip = row.alongHeight
+      ? last
+        ? w
+        : w * share
+      : last
+        ? h
+        : h * share;
     const span = row.alongHeight ? h : w;
     let cursor = row.alongHeight ? y : x;
     const end = cursor + span;
@@ -362,8 +380,8 @@ export interface HeatTile {
   item: WorkItem | null;
   members: WorkItem[];
   stale: number;
-  /** Days waiting on you, 0 when nothing waits. */
-  waited: number;
+  /** Days in the current wait, null when its start is unknown. */
+  waited: number | null;
   level: 1 | 2 | 3 | 4;
 }
 export interface HeatArea {
@@ -410,11 +428,13 @@ function areaFrom(
       item,
       members: [] as WorkItem[],
       stale: staleDays(item, now),
-      waited: waitDays(item, now),
+      waited: waitingSince(item, now) ? waitDays(item, now) : null,
       level: heatLevel(item, now),
     })),
   );
-  const loud = tiles.filter((tile) => tile.tone !== "quiet" || tile.item!.focus);
+  const loud = tiles.filter(
+    (tile) => tile.tone !== "quiet" || tile.item!.focus,
+  );
   const quiet = tiles.filter((tile) => !loud.includes(tile));
   const shown =
     quiet.length - keepQuiet >= 2
@@ -428,7 +448,9 @@ function areaFrom(
         ]
       : [...loud, ...quiet];
   // Focus is loud even when quiet; a pinned session must not vanish into the quiet cap.
-  const active = shown.filter((tile) => tile.tone !== "quiet" || tile.item?.focus);
+  const active = shown.filter(
+    (tile) => tile.tone !== "quiet" || tile.item?.focus,
+  );
   return {
     id,
     title,
@@ -437,7 +459,8 @@ function areaFrom(
     items,
     tiles: withFloor(heatOrder(shown), TILE_FLOOR),
     weight: round(
-      total(active) + Math.min(QUIET_CAP, total(shown.filter((t) => !active.includes(t)))),
+      total(active) +
+        Math.min(QUIET_CAP, total(shown.filter((t) => !active.includes(t)))),
     ),
     waiting: items.filter((item) => needsYou(heatTone(item))).length,
     running: items.filter(isWorking).length,

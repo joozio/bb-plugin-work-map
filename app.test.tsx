@@ -2423,6 +2423,44 @@ describe("preview and native navigation", () => {
 });
 
 describe("heat layout", () => {
+  it("shows the current review wait and omits unknown age without inventing today", async () => {
+    const current = Date.now();
+    const slot = await mount({
+      layout: "heat",
+      tasks: [
+        task({
+          id: "known",
+          title: "Weekly review",
+          status: "in_review",
+          createdAt: new Date(current - 40 * 86400000).toISOString(),
+          statusSince: new Date(current - 3600000).toISOString(),
+        }),
+        task({
+          id: "unknown",
+          title: "Imported review",
+          status: "in_review",
+          createdAt: new Date(current - 40 * 86400000).toISOString(),
+        }),
+      ],
+      threads: [],
+    });
+    const known = await slot.findByRole("button", {
+      name: /Preview Weekly review/,
+    });
+    const unknown = slot.getByRole("button", {
+      name: /Preview Imported review/,
+    });
+    expect(known.getAttribute("aria-label")).toContain(
+      "Waiting less than a day",
+    );
+    expect(known.textContent).toContain("<1d");
+    expect(unknown.getAttribute("aria-label")).not.toContain("Waiting");
+    expect(unknown.textContent).not.toContain("today");
+    expect(
+      slot.container.querySelector(".wm-heat-tile.wm-heat-stale"),
+    ).toBeNull();
+    slot.lifecycle.unmount();
+  });
   const heatFixture = () => ({
     tasks: [
       task({
@@ -2497,9 +2535,12 @@ describe("heat layout", () => {
   it("gives every tile of an expanded area a card with one act-row shape and no repeated state", async () => {
     const slot = await mount({ ...heatFixture(), layout: "heat" });
     await expandProject(slot);
-    const open = slot.container.querySelector<HTMLElement>(".wm-heat-area-open")!;
+    const open =
+      slot.container.querySelector<HTMLElement>(".wm-heat-area-open")!;
     const slots = Array.from(
-      open.querySelectorAll<HTMLElement>(".wm-heat-slot:not(.wm-heat-slot-open)"),
+      open.querySelectorAll<HTMLElement>(
+        ".wm-heat-slot:not(.wm-heat-slot-open)",
+      ),
     ).filter((node) => node.querySelector(".wm-heat-tile:not(.wm-heat-group)"));
     expect(slots.length).toBe(3);
     // Sizes are evened out: the quiet backlog task is still a card you can act on.
@@ -2585,13 +2626,17 @@ describe("heat layout", () => {
     for (const key of ["TEST-1", "TEST-2", "TEST-3"])
       expect(within(confirm).getByText(key)).toBeTruthy();
     expect(
-      within(confirm).getByText(/cannot unstart an agent that has already begun/),
+      within(confirm).getByText(
+        /cannot unstart an agent that has already begun/,
+      ),
     ).toBeTruthy();
     expect(within(confirm).getByText(/wiz/)).toBeTruthy();
     // Nothing is dispatched by opening the confirmation.
     expect(delegateRequests).toHaveLength(0);
     fireEvent.click(
-      within(confirm).getByRole("button", { name: "Let agents decide 3 tasks" }),
+      within(confirm).getByRole("button", {
+        name: "Let agents decide 3 tasks",
+      }),
     );
     await waitFor(() => expect(delegateRequests).toHaveLength(3));
     expect(delegateRequests.map((call) => call.taskId)).toEqual([
@@ -2600,7 +2645,9 @@ describe("heat layout", () => {
       "t3",
     ]);
     // One request id per task: a bulk run is never one dispatch repeated.
-    expect(new Set(delegateRequests.map((call) => call.requestId)).size).toBe(3);
+    expect(new Set(delegateRequests.map((call) => call.requestId)).size).toBe(
+      3,
+    );
     slot.lifecycle.unmount();
   });
 
@@ -2616,7 +2663,9 @@ describe("heat layout", () => {
     fireEvent.click(slot.getByRole("button", { name: /^Let agents decide 1/ }));
     const confirm = await slot.findByRole("dialog");
     expect(
-      within(confirm).getByRole("heading", { name: "Let agents decide 1 task?" }),
+      within(confirm).getByRole("heading", {
+        name: "Let agents decide 1 task?",
+      }),
     ).toBeTruthy();
     expect(within(confirm).queryByText("TEST-1")).toBeNull();
     fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
@@ -2700,7 +2749,9 @@ describe("heat layout", () => {
     await slot.findByRole("button", { name: /^Open project Test project/ });
     expect(slot.container.querySelector(".wm-heat")).toBeNull();
     expect(
-      slot.getByRole("button", { name: "Overview layout" }).getAttribute("aria-pressed"),
+      slot
+        .getByRole("button", { name: "Overview layout" })
+        .getAttribute("aria-pressed"),
     ).toBe("true");
     fireEvent.click(slot.getByRole("button", { name: "Heat layout" }));
     await waitFor(() =>
@@ -2761,9 +2812,9 @@ describe("heat layout", () => {
     );
     expect(tile.getAttribute("data-level")).toBe("4");
     expect(
-      Array.from(
-        slot.container.querySelectorAll(".wm-heat-counts > div"),
-      ).map((entry) => entry.textContent),
+      Array.from(slot.container.querySelectorAll(".wm-heat-counts > div")).map(
+        (entry) => entry.textContent,
+      ),
     ).toEqual([
       "1waiting for you",
       "1ready to read",
@@ -2800,9 +2851,10 @@ describe("heat layout", () => {
     const was = before.find((area) => area.id === "project:p1")!;
     expect(grown.w * grown.h).toBeGreaterThanOrEqual(6600);
     expect(grown.w * grown.h).toBeGreaterThanOrEqual(was.w * was.h);
-    expect(
-      after.reduce((sum, area) => sum + area.w * area.h, 0),
-    ).toBeCloseTo(10000, 4);
+    expect(after.reduce((sum, area) => sum + area.w * area.h, 0)).toBeCloseTo(
+      10000,
+      4,
+    );
     expect(tile.getAttribute("aria-expanded")).toBe("true");
     const detail = slot.getByRole("region", {
       name: "Expanded: Pick a direction",
@@ -2822,7 +2874,9 @@ describe("heat layout", () => {
 
   it("gives a lighter area its room back and grows only the tile you opened", async () => {
     const slot = await mount({ ...heatFixture(), layout: "heat" });
-    const tile = await slot.findByRole("button", { name: /^Preview Live agent/ });
+    const tile = await slot.findByRole("button", {
+      name: /^Preview Live agent/,
+    });
     const slots = () =>
       Array.from(
         tile
@@ -2855,7 +2909,9 @@ describe("heat layout", () => {
     fireEvent.click(slot.getByRole("button", { name: "Heat layout" }));
     await waitFor(() => expect(areas(slot).length).toBeGreaterThan(0));
     expect(
-      slot.getByRole("button", { name: "All work" }).getAttribute("aria-pressed"),
+      slot
+        .getByRole("button", { name: "All work" })
+        .getAttribute("aria-pressed"),
     ).toBe("true");
     slot.lifecycle.unmount();
   });
@@ -2865,7 +2921,9 @@ describe("heat layout", () => {
     const group = await slot.findByRole("button", {
       name: "Show 5 agents finished in Sessions",
     });
-    expect(slot.queryByRole("button", { name: /^Preview Finished 0/ })).toBeNull();
+    expect(
+      slot.queryByRole("button", { name: /^Preview Finished 0/ }),
+    ).toBeNull();
     fireEvent.click(group);
     await slot.findByRole("button", { name: /^Preview Finished 0/ });
     expect(

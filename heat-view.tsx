@@ -315,9 +315,11 @@ function Tile({
   // A session has no key: running says so, otherwise its age takes the line.
   const left = item.task?.key ?? (working ? "running" : shortAge);
   const right = waiting
-    ? tile.waited
-      ? `${tile.waited}d`
-      : "today"
+    ? tile.waited === null
+      ? ""
+      : tile.waited
+        ? `${tile.waited}d`
+        : "<1d"
     : due && !due.endsWith("passed")
       ? due.replace(/^(Due|Planned) /, (word) => word.toLowerCase())
       : item.task && detail > 0
@@ -431,9 +433,11 @@ function Tile({
           HEAT_LABEL[tile.tone],
           item.focus ? "In focus" : "",
           waiting
-            ? tile.waited
-              ? `Waiting ${tile.waited} days`
-              : "Waiting since today"
+            ? tile.waited === null
+              ? ""
+              : tile.waited
+                ? `Waiting ${tile.waited} ${tile.waited === 1 ? "day" : "days"}`
+                : "Waiting less than a day"
             : age,
           item.task ? `${item.task.priority} priority` : "",
           due,

@@ -10,6 +10,7 @@ async function host(
     missingLinks?: boolean;
     missingComments?: boolean;
     closed?: boolean;
+    review?: boolean;
   } = {},
 ) {
   let output = "First response";
@@ -23,7 +24,11 @@ async function host(
         callRpc: async ({ method, outputSchema }) => {
           const source = {
             ...task(),
-            status: options.closed ? "done" : "todo",
+            status: options.closed
+              ? "done"
+              : options.review
+                ? "in_review"
+                : "todo",
             description:
               "**STATE 2026-09-17 12:00 CEST · Ready for review.**\nNEXT ACTION: Choose a direction.",
           };
@@ -50,6 +55,13 @@ async function host(
               throw new Error("Comments unavailable");
             value = {
               comments: [
+                {
+                  kind: "system",
+                  body: "Status changed to In Review by cli",
+                  threadId: null,
+                  threadTitle: null,
+                  createdAt: "2026-09-17T10:00:00Z",
+                },
                 {
                   kind: "agent",
                   threadId: "thr_comment",
@@ -89,6 +101,15 @@ async function host(
   };
 }
 describe("backend coverage and preferences", () => {
+  it("returns review age from status history without turning system events into session links", async () => {
+    const { harness } = await host({ review: true });
+    const result = (await harness.behavior.callRpc("snapshot", null)) as {
+      tasks: { statusSince?: string; commentSessions: unknown[] }[];
+    };
+    expect(result.tasks[0].statusSince).toBe("2026-09-17T10:00:00.000Z");
+    expect(result.tasks[0].commentSessions).toHaveLength(1);
+    await harness.lifecycle.dispose();
+  });
   it("reuses closed-task history between polls and refreshes it on demand", async () => {
     const fixture = await host({ closed: true });
     await fixture.harness.behavior.callRpc("snapshot", null);
@@ -118,9 +139,7 @@ describe("backend coverage and preferences", () => {
       warnings: string[];
     };
     expect(result.tasks[0].threadIds).toEqual(["thr_test"]);
-    expect(result.warnings).toEqual([
-      "Session contribution history unavailable for TEST-1.",
-    ]);
+    expect(result.warnings).toEqual(["Task history unavailable for TEST-1."]);
     await harness.lifecycle.dispose();
   });
   it("reads canonical task fields and links", async () => {
