@@ -744,6 +744,20 @@ function WorkMap() {
     // not depend on whether the host treats an initial prop as a request.
     if (chatOpen) setChatFocusRequest((request) => request + 1);
   }, [chatOpen, previewMode]);
+  // The native reply editor may take Escape for itself: closing its own menu
+  // keeps focus there, but leaving the editor drops focus on the page body,
+  // where the next Escape never reaches Work Map. Once the editor has had its
+  // turn, focus lost to nowhere goes to Back to summary, so Escape steps back.
+  const rescueChatEscape = () => {
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (
+        (!active || active === document.body) &&
+        chatToggleRef.current?.isConnected
+      )
+        chatToggleRef.current.focus({ preventScroll: true });
+    }, 0);
+  };
   const closeChat = () => {
     setChatTarget(null);
     requestAnimationFrame(() =>
@@ -2222,6 +2236,11 @@ function WorkMap() {
           event.stopPropagation();
           return;
         }
+        if (
+          event.key === "Escape" &&
+          (event.target as HTMLElement).closest?.(".wm-live-session")
+        )
+          rescueChatEscape();
         captureLayout();
       }}
       onKeyDown={(event) => {

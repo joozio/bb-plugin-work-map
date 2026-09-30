@@ -2567,6 +2567,34 @@ i.wm-heat-key.wm-heat-late {
   border-radius: 8px;
   background: var(--card);
 }
+/* An open card's cover is only as tall as what it says; the details take the
+   rest. With chat open the details become a column and the live session fills
+   what is left, so the reply editor sits inside the card instead of under a
+   fixed 65vh timeline. Too little room: the details scroll, never the chat away. */
+.wm-heat-slot-open .wm-inline-detail:has(> .wm-session-view .wm-live-session) {
+  display: flex;
+  flex-direction: column;
+}
+.wm-heat-slot-open
+  .wm-inline-detail:has(> .wm-session-view .wm-live-session)
+  > * {
+  flex: none;
+}
+/* Sized from the remainder (basis 0), never from the timeline's own length,
+   with a floor of the session controls plus a readable chat. */
+.wm-heat-slot-open
+  .wm-inline-detail
+  > .wm-session-view:has(> .wm-live-session) {
+  flex: 1 1 0;
+  min-height: 290px;
+  display: flex;
+  flex-direction: column;
+}
+.wm-heat-slot-open .wm-session-view > .wm-live-session {
+  flex: 1 1 0;
+  min-height: 220px;
+  height: auto;
+}
 @media (prefers-reduced-motion: reduce) {
   .wm-heat-running {
     animation: none;
@@ -2663,13 +2691,14 @@ i.wm-heat-key.wm-heat-late {
   outline: 2px solid var(--wm-ink);
   outline-offset: -2px;
 }
-/* The act row is the card's footer: one shape, inside the same slot. */
+/* The act row is the card's footer: one shape, inside the same slot. A closed
+   card's cover grows over the slot; an open card's does not (see below). */
 .wm-heat-slot:has(.wm-tile-actions) {
   display: flex;
   flex-direction: column;
   gap: 0;
 }
-.wm-heat-slot:has(.wm-tile-actions) > .wm-heat-tile {
+.wm-heat-slot:not(.wm-heat-slot-open):has(.wm-tile-actions) > .wm-heat-tile {
   flex: 1 1 auto;
   height: auto;
   min-height: 0;

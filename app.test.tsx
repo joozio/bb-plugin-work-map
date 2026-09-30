@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   act,
@@ -824,6 +826,50 @@ describe("existing session chat", () => {
     ).toBeNull();
     expect(
       slot.getByRole("region", { name: "Expanded: Test project" }),
+    ).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+  it("hands focus to Back to summary when the native editor takes Escape and drops focus, after its own menu gets the first Escape", async () => {
+    const slot = await mount({
+      tasks: [task({ threadIds: ["thr_test"] })],
+      threads: [thread({ title: "First agent", indicator: "runtime" })],
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    // The SDK stub has no editor; stand its root in for the Reply editor.
+    const editor = slot.getByTestId("bb-thread-chat");
+    editor.tabIndex = -1;
+    editor.focus();
+    const escape = () => {
+      const event = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      });
+      // The editor handles Escape itself, as the native one does.
+      editor.addEventListener("keydown", (e) => e.preventDefault(), {
+        once: true,
+      });
+      fireEvent(editor, event);
+    };
+    // First Escape closes the editor's own menu: focus stays in the editor.
+    escape();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(document.activeElement).toBe(editor);
+    expect(slot.getByTestId("bb-thread-chat")).toBe(editor);
+    // Second Escape leaves the editor, which drops focus on the body.
+    escape();
+    editor.blur();
+    const back = slot.getByRole("button", { name: "Back to summary" });
+    await waitFor(() => expect(document.activeElement).toBe(back));
+    expect(slot.getByTestId("bb-thread-chat")).toBeTruthy();
+    // From there Escape steps back as the hint promises: chat closes first.
+    fireEvent.keyDown(back, { key: "Escape" });
+    expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
+    expect(
+      slot.getByRole("region", { name: "Expanded: Review proposal" }),
     ).toBeTruthy();
     slot.lifecycle.unmount();
   });
@@ -3147,6 +3193,45 @@ describe("heat layout", () => {
     ).toBeTruthy();
     // Heat already holds every area, so the overview's Show all has nothing to add.
     expect(slot.container.querySelector(".wm-more")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
+  it("keeps an open card's cover at content height and gives the chat the rest of the card", async () => {
+    const slot = await mount({
+      layout: "heat",
+      tasks: [task({ threadIds: ["thr_test"], status: "in_review" })],
+      threads: [thread({ title: "First agent", indicator: "runtime" })],
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    fireEvent.click(await slot.findByRole("button", { name: "Chat here" }));
+    const chat = slot.getByTestId("bb-thread-chat");
+    // The stylesheet relies on exactly this nesting (app.css, open Heat card).
+    const live = chat.closest(".wm-live-session")!;
+    const view = live.parentElement!;
+    const detail = view.parentElement!;
+    const card = detail.parentElement!;
+    expect(view.classList).toContain("wm-session-view");
+    expect(detail.classList).toContain("wm-inline-detail");
+    expect(card.classList).toContain("wm-heat-slot");
+    expect(card.classList).toContain("wm-heat-slot-open");
+    const cover = card.querySelector(":scope > .wm-heat-tile")!;
+    expect(cover.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      card.querySelector(":scope > .wm-tile-acts .wm-tile-actions"),
+    ).toBeTruthy();
+    // The closed-card rule that grows the cover must not match an open card.
+    const css = readFileSync(join(__dirname, "app.css"), "utf8");
+    expect(css).toContain(
+      ".wm-heat-slot:not(.wm-heat-slot-open):has(.wm-tile-actions) > .wm-heat-tile {\n  flex: 1 1 auto;",
+    );
+    expect(css).not.toMatch(
+      /\n\.wm-heat-slot:has\(\.wm-tile-actions\) > \.wm-heat-tile \{/,
+    );
+    expect(css).toMatch(
+      /\.wm-heat-slot-open \.wm-session-view > \.wm-live-session \{\n  flex: 1 1 0;/,
+    );
     slot.lifecycle.unmount();
   });
 
