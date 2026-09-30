@@ -88,6 +88,8 @@ export const delegationContract = {
   delegatePreset: { input: z.null(), output: z.object({ preset: z.string() }) },
 };
 
+/** Columns an orchestrator's dispatch moves into in_progress, as Tasks does. */
+const TAKEN_FROM = ["in_review", "backlog", "todo"];
 /** Thread states that mean an orchestrator is still on the work. */
 const RUNNING_THREAD = new Set(["pending", "starting", "active", "stopping"]);
 
@@ -135,17 +137,25 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
       return false;
     }
   };
-  // Tasks moves backlog and todo to in_progress itself. Review is the column
-  // this action exists to empty, so move that one here.
-  const leaveReview = async (task: z.infer<typeof taskState>) => {
-    if (task.status !== "in_review") return null;
+  /**
+   * Tasks moves backlog and todo to in_progress when it dispatches, so the
+   * single-task path only has to empty Review, the column the act exists for.
+   * An orchestrator is spawned here rather than dispatched by Tasks, so its
+   * own work needs the same move, or a task reads backlog while an agent has it.
+   */
+  const startWork = async (
+    task: z.infer<typeof taskState>,
+    from: readonly string[],
+  ) => {
+    if (!from.includes(task.status)) return null;
+    const was = task.status;
     try {
       await call(
         "updateTask",
         { taskId: task.id, status: "in_progress", authorName: "You" },
         z.looseObject({}),
       );
-      return "in_review";
+      return was;
     } catch {
       /* The agent is running; its own first comment shows the task moved. */
       return null;
@@ -182,7 +192,7 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
       },
       z.object({ threadId: z.string() }),
     );
-    const movedFrom = await leaveReview(task);
+    const movedFrom = await startWork(task, ["in_review"]);
     const result: Delegation = {
       taskId: task.id,
       taskKey: task.key,
@@ -350,7 +360,7 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
       result.covered.push({
         taskId: task.id,
         taskKey: task.key,
-        movedFrom: await leaveReview(task),
+        movedFrom: await startWork(task, TAKEN_FROM),
         commented,
         attached,
       });

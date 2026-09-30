@@ -180,14 +180,30 @@ describe("handing a whole area to one orchestrator", () => {
     // Attached to every task it owns: that is what makes the work read as
     // taken on the map before any child thread exists.
     expect(ids(calls, "taskThreadsAttach")).toEqual(["t1", "t2", "t3"]);
-    // Only the two in Review needed moving; Tasks moves todo itself.
-    expect(ids(calls, "updateTask")).toEqual(["t1", "t3"]);
+    // Every column the work was parked in moves, because Tasks only does that
+    // for its own dispatches and this one is not one of them.
+    expect(ids(calls, "updateTask")).toEqual(["t1", "t2", "t3"]);
     expect(result.covered.map((row) => row.movedFrom)).toEqual([
       "in_review",
-      null,
+      "todo",
       "in_review",
     ]);
     expect(result.covered.every((row) => row.attached)).toBe(true);
+    await harness.lifecycle.dispose();
+  });
+  it("moves a backlog task it took out of backlog, and leaves in_progress alone", async () => {
+    const { dispatch, calls, harness } = await area({
+      statuses: { t1: "backlog", t2: "in_progress", t3: "todo" },
+    });
+    const result = (await dispatch()) as {
+      covered: { movedFrom: string | null }[];
+    };
+    expect(result.covered.map((row) => row.movedFrom)).toEqual([
+      "backlog",
+      null,
+      "todo",
+    ]);
+    expect(ids(calls, "updateTask")).toEqual(["t1", "t3"]);
     await harness.lifecycle.dispose();
   });
   it("still owns the work when attaching fails, and says so", async () => {
