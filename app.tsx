@@ -1045,6 +1045,15 @@ function WorkMap() {
     else afterSettlement(result);
     return null;
   };
+  /**
+   * The words of a failure, without the transport's own prefix: "HTTP 500:"
+   * says nothing to the person who clicked, and the sentence after it does.
+   */
+  const failureText = (cause: unknown) =>
+    (cause instanceof Error ? cause.message : String(cause)).replace(
+      /^HTTP \d{3}:\s*/,
+      "",
+    );
   const act = async (action: QuickAction, item: WorkItem) => {
     if (acting || bulk || settling) return;
     setActing({ id: item.id, action });
@@ -1059,7 +1068,7 @@ function WorkMap() {
       setActError({
         scope: "item",
         id: item.id,
-        message: cause instanceof Error ? cause.message : String(cause),
+        message: failureText(cause),
       });
     } finally {
       setActing(null);
@@ -1094,7 +1103,7 @@ function WorkMap() {
       setNotice(
         result.reused
           ? `${result.title} is already running this area. Opened it instead of starting another.`
-          : `${result.title} started on ${result.preset} for ${covered}, at most ${ORCHESTRATOR_LIMIT} at a time.${result.dropped.length ? ` Left out ${result.dropped.length}.` : ""}`,
+          : `${result.title} started on ${result.preset} for ${covered}, at most ${ORCHESTRATOR_LIMIT} at a time. It leaves you one review task when it ends.${result.dropped.length ? ` Left out ${result.dropped.length}.` : ""}`,
       );
       if (result.reused) actions.open(result.threadId);
     } catch (cause) {
@@ -1107,7 +1116,7 @@ function WorkMap() {
       setActError({
         scope: "bulk",
         id: area.id,
-        message: `${cause instanceof Error ? cause.message : String(cause)} No agent was started; all ${taskIds.length} tasks are unchanged.`,
+        message: `${failureText(cause)} No agent was started; all ${taskIds.length} tasks are unchanged.`,
       });
     } finally {
       // Refresh first, then release the bar: the act stays disabled until the
@@ -1151,7 +1160,7 @@ function WorkMap() {
       setActError({
         scope: "bulk",
         id: area?.id ?? "bulk",
-        message: `${cause instanceof Error ? cause.message : String(cause)} Stopped after ${done} of ${items.length}; the rest are unchanged.`,
+        message: `${failureText(cause)} Stopped after ${done} of ${items.length}; the rest are unchanged.`,
       });
     } finally {
       await refresh(true);
@@ -2606,6 +2615,13 @@ function WorkMap() {
                   tileActions={(item) => (
                     <TileActions
                       item={item}
+                      orchestrated={
+                        !!item.task &&
+                        !!items.find(
+                          (root) =>
+                            root.id === `project:${item.task?.projectId}`,
+                        )?.orchestrator
+                      }
                       disabled={settling || launcher.busy || !!bulk}
                       busy={acting?.id === item.id ? acting.action : null}
                       context={actionContext}

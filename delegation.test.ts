@@ -14,6 +14,8 @@ import {
   orchestratorBrief,
   orchestratorComment,
   orchestratorTitle,
+  NEEDS_YOU,
+  reportTitle,
 } from "./delegation";
 import type { WorkItem } from "./model";
 import { task, thread } from "./fixtures";
@@ -257,19 +259,44 @@ describe("the brief handed to an area's orchestrator", () => {
     expect(ORCHESTRATOR_PROMPT).toContain(
       `at most ${ORCHESTRATOR_LIMIT} children running at once`,
     );
+    // A cap that is only a number gets read as a target: the brief says how
+    // to count before every spawn, and what to do at the cap.
+    expect(ORCHESTRATOR_PROMPT).toContain("hard cap, not a target");
     expect(ORCHESTRATOR_PROMPT).toContain(
-      "Start the next one when a running one finishes",
+      "bb thread list --parent-thread <your thread id> --json",
     );
+    expect(ORCHESTRATOR_PROMPT).toContain("bb thread wait <id>");
   });
   it("pushes a short result once, then ends every task done or in Review", () => {
     expect(ORCHESTRATOR_PROMPT).toContain("not its whole transcript");
     expect(ORCHESTRATOR_PROMPT).toContain("re-brief that child once");
     expect(ORCHESTRATOR_PROMPT).toContain("never between them");
-    expect(ORCHESTRATOR_PROMPT).toContain("one line naming the limit");
-    expect(ORCHESTRATOR_PROMPT).toContain("Stop your finished children");
+    // The words the owner scans for are fixed, on the task and in the brief.
+    expect(NEEDS_YOU).toBe("Needs you:");
+    expect(ORCHESTRATOR_PROMPT).toContain(`starts with the words "${NEEDS_YOU}"`);
+    expect(ORCHESTRATOR_PROMPT).toContain("never re-brief or re-run it");
+  });
+  it("closes every thread it started and leaves exactly one review task", () => {
+    expect(ORCHESTRATOR_PROMPT).toContain("archive it (`bb thread archive <id>`)");
+    expect(ORCHESTRATOR_PROMPT).toContain("create exactly one task in this area");
+    expect(ORCHESTRATOR_PROMPT).toContain("Closed without you (N)");
+    expect(ORCHESTRATOR_PROMPT).toContain(
+      "update its description instead of creating a second",
+    );
+    expect(ORCHESTRATOR_PROMPT).toContain("archive yourself (`bb thread archive --self`)");
+    expect(ORCHESTRATOR_PROMPT).toContain("Nothing you started stays open");
+    expect(reportTitle("Test project", 4, 2)).toBe(
+      "Test project orchestrator: 4 done, 2 need you",
+    );
   });
   it("lists the work it owns by key, id and title", () => {
     expect(brief).toContain("Your 2 tasks in Test project:");
+    expect(brief).toContain(
+      "Your review task's title, with the real counts: `Test project orchestrator: N done, M need you`",
+    );
+    expect(
+      orchestratorBrief("Test project", [], "TEST"),
+    ).toContain("Your 0 tasks in Test project (tracker project TEST):");
     expect(brief).toContain("- TEST-1 (t1): Review the draft");
     expect(brief).toContain("- TEST-2 (t2): Decide the price");
     expect(brief.startsWith(ORCHESTRATOR_PROMPT)).toBe(true);
@@ -307,7 +334,7 @@ describe("the confirmation before a whole area is handed over", () => {
   it("names the orchestrator, the count and the limit", () => {
     const note = confirmNote("delegate", "Digital Thoughts", 12);
     expect(note).toBe(
-      "Starts Digital Thoughts orchestrator for 12 tasks. It runs at most 3 at a time and brings every task to done or back to you with a reason. Undo cannot unstart an agent that has already begun.",
+      "Starts Digital Thoughts orchestrator for 12 tasks. It runs at most 3 at a time, brings every task to done or back to you with a reason, and leaves you one review task with the summary. Undo cannot unstart an agent that has already begun.",
     );
     expect(confirmNote("delegate", "Test project", 1)).toContain("for 1 task.");
   });

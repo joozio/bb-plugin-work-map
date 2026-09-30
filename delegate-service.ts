@@ -33,8 +33,16 @@ type Preset = z.infer<typeof presetSchema>;
 const trackerProjectSchema = z.object({
   id: z.string(),
   name: z.string(),
+  prefix: z.string().optional(),
   linkedBbProjectId: z.string().nullable().optional(),
 });
+/** An orchestrator the map should show on its area while its thread lives. */
+export const liveOrchestratorSchema = z.object({
+  projectId: z.string(),
+  threadId: z.string(),
+  title: z.string(),
+});
+export type LiveOrchestrator = z.infer<typeof liveOrchestratorSchema>;
 const taskState = z.object({
   id: z.string(),
   key: z.string(),
@@ -247,6 +255,7 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
     title: string,
     area: string,
     tasks: z.infer<typeof taskState>[],
+    prefix: string,
   ) => {
     const { providerId, modelId, reasoningLevel, permissionMode } = preset;
     if (!providerId || !modelId || !reasoningLevel || !permissionMode)
@@ -267,7 +276,7 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
       permissionMode: permissionMode as never,
       visibility: "visible",
       title,
-      prompt: orchestratorBrief(area, tasks),
+      prompt: orchestratorBrief(area, tasks, prefix),
     });
     return thread.id;
   };
@@ -332,6 +341,7 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
       title,
       project.name,
       covered,
+      project.prefix ?? "",
     );
     const result: AreaDelegation = {
       threadId,
@@ -377,7 +387,36 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
     changed();
     return result;
   };
+  /**
+   * Every orchestrator this plugin has started, by area. Whether each still
+   * lives is the map's call: it holds the thread list and can see a thread
+   * end, so a stale record here costs nothing and a fresh one shows at once.
+   */
+  const liveOrchestrators = async (): Promise<LiveOrchestrator[]> => {
+    let keys: string[] = [];
+    try {
+      keys = await bb.storage.kv.list("orchestrator:");
+    } catch {
+      return [];
+    }
+    const rows = await Promise.all(
+      keys.map(async (key) => {
+        const parsed = areaDelegationSchema.safeParse(
+          await bb.storage.kv.get<unknown>(key),
+        );
+        return parsed.success
+          ? {
+              projectId: key.slice("orchestrator:".length),
+              threadId: parsed.data.threadId,
+              title: parsed.data.title,
+            }
+          : null;
+      }),
+    );
+    return rows.filter((row): row is LiveOrchestrator => row !== null);
+  };
   return {
+    liveOrchestrators,
     delegatePreset: async () => ({ preset: (await resolvePreset()).name }),
     delegate: (input: z.infer<typeof delegateInput>) => {
       const existing = runs.get(input.requestId);

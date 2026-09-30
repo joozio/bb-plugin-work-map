@@ -2484,6 +2484,14 @@ i.wm-heat-key.wm-heat-aged {
   border: 1px dashed var(--wm-orange);
   background: color-mix(in srgb, var(--wm-orange) 32%, var(--card));
 }
+/* One orchestrator on an area reads in the running green; past its cap, in the warning orange. */
+.wm-heat-head em.wm-heat-orchestrated {
+  color: var(--wm-green);
+}
+.wm-heat-head em.wm-heat-over-cap {
+  color: var(--wm-orange);
+  font-weight: 700;
+}
 /* Running is an outline, so it can sit on any attention colour at once. */
 .wm-heat-running,
 i.wm-heat-key.wm-heat-working {

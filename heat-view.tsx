@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent, ReactNode } from "react";
-import type { WorkItem } from "./model";
+import type { WorkItem, AreaOrchestrator } from "./model";
 import { activityLabel, dueLabel, isWorking } from "./model";
 import {
   HEAT_LABEL,
@@ -175,7 +175,7 @@ export function HeatMap({
             data-layout-id={area.id}
             className={`wm-heat-area ${open ? "wm-heat-area-open" : ""} ${width < 200 ? "wm-heat-area-tight" : ""}`}
             style={box(rect)}
-            aria-label={`${area.title} · ${area.waiting} need you · ${area.running} running`}
+            aria-label={`${area.title} · ${areaState(area)}`}
           >
             <header className="wm-heat-head">
               <button
@@ -184,16 +184,17 @@ export function HeatMap({
                 data-work-id={area.root?.id}
                 aria-expanded={open}
                 onClick={() => onOpenArea(area)}
-                aria-label={`${area.root ? "Open project" : "Show every session in"} ${area.title}. ${area.waiting} need you. ${area.running} running.`}
+                aria-label={`${area.root ? "Open project" : "Show every session in"} ${area.title}. ${areaState(area)}.`}
               >
                 <strong>{area.title}</strong>
-                <em>
-                  {[
-                    area.waiting ? `${area.waiting} need you` : "",
-                    area.running ? `${area.running} running` : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" · ") || `${area.items.length} quiet`}
+                <em
+                  className={
+                    area.orchestrator
+                      ? `wm-heat-orchestrated ${overCap(area.orchestrator) ? "wm-heat-over-cap" : ""}`
+                      : undefined
+                  }
+                >
+                  {areaState(area)}
                 </em>
               </button>
             </header>
@@ -232,6 +233,30 @@ export function HeatMap({
         );
       })}
     </div>
+  );
+}
+function overCap(orchestrator: AreaOrchestrator) {
+  return orchestrator.running > orchestrator.limit;
+}
+/**
+ * What one line under the area name says. An orchestrator replaces the
+ * running count: the reader needs "one agent has this area", not the number
+ * of threads it spawned, until that number breaks the cap it was given.
+ */
+export function areaState(area: HeatArea) {
+  const { orchestrator } = area;
+  const orchestrated = orchestrator
+    ? overCap(orchestrator)
+      ? `orchestrator · ${orchestrator.running} running, over the cap of ${orchestrator.limit}`
+      : `orchestrator · ${orchestrator.running} of ${orchestrator.limit} running`
+    : "";
+  return (
+    [
+      area.waiting ? `${area.waiting} need you` : "",
+      orchestrated || (area.running ? `${area.running} running` : ""),
+    ]
+      .filter(Boolean)
+      .join(" · ") || `${area.items.length} quiet`
   );
 }
 function Tile({

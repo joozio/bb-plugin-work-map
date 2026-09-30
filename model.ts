@@ -51,8 +51,20 @@ const ATTENTION_LABEL: Record<Attention, string> = {
 export function unreadLabel(count: number) {
   return count === 1 ? "Ready to read" : `${count} results ready to read`;
 }
+/**
+ * One agent handling a whole area, as the map can see it: its thread, and how
+ * many children it has running against the cap it was briefed with.
+ */
+export interface AreaOrchestrator {
+  threadId: string;
+  title: string;
+  running: number;
+  limit: number;
+}
 export interface WorkItem {
   id: string;
+  /** Set on a project item while an orchestrator is handling its area. */
+  orchestrator?: AreaOrchestrator | null;
   title: string;
   kind: "project" | "task" | "thread";
   summary: string;
@@ -373,6 +385,7 @@ export function buildMap(
     const activityAt = projectActivity.get(project.id) ?? 0;
     return {
       id,
+      orchestrator: areaOrchestrator(project.id, snapshot, active),
       title: project.name,
       kind: "project",
       summary: lead
@@ -454,6 +467,39 @@ export function sessionItem(
   };
   item.score = rank(item, now);
   return item;
+}
+/** How many tasks one orchestrator may have children running on at once. */
+export const ORCHESTRATOR_CAP = 3;
+/**
+ * The orchestrator on an area, while it lives. The plugin records the thread
+ * it started; the sidebar says whether that thread is still there and still
+ * busy, and its children are the threads spawned under it. An orchestrator
+ * that has ended, or been archived, stops showing without any record change.
+ */
+export function areaOrchestrator(
+  projectId: string,
+  snapshot: Pick<Snapshot, "orchestrators">,
+  threads: readonly PluginSidebarThread[],
+): AreaOrchestrator | null {
+  const record = snapshot.orchestrators?.find(
+    (row) => row.projectId === projectId,
+  );
+  if (!record) return null;
+  const thread = threads.find((t) => t.id === record.threadId);
+  if (!thread || thread.isArchived) return null;
+  const running = threads.filter(
+    (t) =>
+      t.parentThreadId === record.threadId &&
+      !t.isArchived &&
+      threadSignal(t) === "working",
+  ).length;
+  if (threadSignal(thread) === "inactive" && running === 0) return null;
+  return {
+    threadId: record.threadId,
+    title: thread.title ?? record.title,
+    running,
+    limit: ORCHESTRATOR_CAP,
+  };
 }
 export function isWorking(item: WorkItem) {
   return item.threads.some((t) => threadSignal(t) === "working");

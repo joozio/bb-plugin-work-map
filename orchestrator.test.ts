@@ -293,7 +293,9 @@ describe("what the dispatch refuses to do", () => {
       { taskId: "t3", why: "no longer exists" },
     ]);
     // The brief names only the work that is really its own.
-    expect(spawned[0].prompt).toContain("Your 1 task in Test project:");
+    expect(spawned[0].prompt).toContain(
+      "Your 1 task in Test project (tracker project TEST):",
+    );
     expect(ids(calls, "createComment")).toEqual(["t1"]);
     await harness.lifecycle.dispose();
   });

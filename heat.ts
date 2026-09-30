@@ -1,4 +1,4 @@
-import type { WorkItem } from "./model";
+import type { AreaOrchestrator, WorkItem } from "./model";
 import { isWorking, needsReview, localDay } from "./model";
 import { heatTiming, type HeatTiming } from "./heat-timing";
 
@@ -420,6 +420,8 @@ export interface HeatArea {
   weight: number;
   waiting: number;
   running: number;
+  /** The one agent handling this whole area, while it runs. */
+  orchestrator: AreaOrchestrator | null;
   items: WorkItem[];
   tiles: HeatTile[];
 }
@@ -495,6 +497,7 @@ function areaFrom(
     ),
     waiting: items.filter((item) => needsYou(heatTone(item))).length,
     running: items.filter(isWorking).length,
+    orchestrator: root?.orchestrator ?? null,
   };
 }
 /**

@@ -1,5 +1,5 @@
 import type { WorkItem } from "./model";
-import { hasAgent } from "./model";
+import { hasAgent, ORCHESTRATOR_CAP } from "./model";
 
 /** What an expanded area can do to a piece of work without opening it. */
 export type QuickAction = "delegate" | "done" | "snooze";
@@ -19,7 +19,16 @@ export function orchestratorComment(area: string) {
   return `Delegated to the ${orchestratorTitle(area)}: it decides on its own`;
 }
 /** How many tasks one orchestrator may have children running on at once. */
-export const ORCHESTRATOR_LIMIT = 3;
+export const ORCHESTRATOR_LIMIT = ORCHESTRATOR_CAP;
+/**
+ * The fixed opening of the one comment a task gets when it comes back: the
+ * owner scans the board for these words, so no agent gets to phrase them.
+ */
+export const NEEDS_YOU = "Needs you:";
+/** The one task an orchestrator leaves behind, counts and all. */
+export function reportTitle(area: string, done: number, needYou: number) {
+  return `${orchestratorTitle(area)}: ${done} done, ${needYou} need you`;
+}
 const CLOSED = ["done", "canceled"];
 
 /**
@@ -56,7 +65,7 @@ In any of those cases, do nothing irreversible, move the task back to Review, an
  * finds the duplicates and the order, and holding the children is what keeps
  * a twelve-task area from starting twelve agents at once.
  */
-export const ORCHESTRATOR_PROMPT = `You own an area of work now. It was delegated to you from Work Map: every task listed below is yours to bring to an end, nobody is waiting to approve your plan, and nobody will answer a question you ask here.
+export const ORCHESTRATOR_PROMPT = `You own an area of work now. It was delegated to you from Work Map: every task listed below is yours to bring to an end, nobody is waiting to approve your plan, and nobody will answer a question you ask here. The owner reads the board, not this thread: what you leave on the tasks and in your one review task is all they will see.
 
 You are the orchestrator. You do not do these tasks yourself. You read them, connect them, and run them as child agents.
 
@@ -64,16 +73,17 @@ You are the orchestrator. You do not do these tasks yourself. You read them, con
 2. Map the connections. Name which tasks are duplicates, which overlap, which depend on another finishing first, which share context worth working out once, and what order makes the later ones easier. Merge what is really one piece of work; sequence what has an order.
 3. Post that plan as your first message: the order you chose and why.
 4. Run each task as a child thread of yourself, attached to that task, so both the map and the task show who is working. Two steps, because a task dispatch cannot set a parent: spawn the child under yourself (\`bb thread spawn --parent-self\`), then attach that thread to its task (\`bb tasks attach <task> --thread <id>\`, or the Tasks API). Check both sides before you rely on it: the child appears under you, and it appears on its task.
-5. Brief each child in full: the task, the cross-task context you found, what done means for it, and the same limits you work under, below. A child left to guess its finish line stops early.
-6. Keep at most ${ORCHESTRATOR_LIMIT} children running at once. Start the next one when a running one finishes, and keep going until every task has an end.
-7. Read each child's reported result, not its whole transcript. Check that result against what the task actually asked for. Where it falls short, re-brief that child once with what is missing; if the second result still falls short, accept the limit and say so.
-8. End every task in one of exactly two states, never between them: done, with a comment recording the decision and its evidence; or back in Review, with one line naming the limit that stopped it.
-9. Stop your finished children. Then post one final message summarising what closed, what came back and why, and the connections you found. Then end.
+5. Brief each child in full: the task, the cross-task context you found, what done means for it, the two end states below and the exact words that mark one of them, and the same limits you work under. A child left to guess its finish line stops early. Tell it to reply with a short result, not a transcript.
+6. Keep at most ${ORCHESTRATOR_LIMIT} children running at once. That is a hard cap, not a target. Before every spawn, list your children (\`bb thread list --parent-thread <your thread id> --json\`) and count the ones whose status is not idle; if that count is already ${ORCHESTRATOR_LIMIT}, wait for one of them (\`bb thread wait <id>\`) and only then spawn. Keep going until every task has an end.
+7. Read each child's reported result, not its whole transcript. Check that result against what the task actually asked for. Where it falls short, re-brief that child once with what is missing; if the second result still falls short, accept the limit and say so. Once you have read a child's final result, archive it (\`bb thread archive <id>\`): a finished child left open is noise on the owner's screen.
+8. End every task in one of exactly two states, never between them: done, with a comment recording the decision and its evidence; or back in Review (\`bb tasks update <task> --status in_review\`), with one comment that starts with the words "${NEEDS_YOU}" and says in one line what the owner has to do and why you could not. A task back in Review is finished for you: never re-brief or re-run it.
+9. When every task has an end, create exactly one task in this area, in Review, with the title given below and the real counts filled in. Its description is the owner's whole summary: first "Closed without you (N)" with one line of evidence per task, then the tasks that need them, grouped by what they have to do (a quick call, a small fix before shipping, a rewrite or let go), each with its "${NEEDS_YOU}" line, then your own recommendation where you have one. Before creating it, list the area's open tasks; if one with that exact title already exists, update its description instead of creating a second.
+10. Then archive every child you have not archived yet, post a final message naming that review task's key, and archive yourself (\`bb thread archive --self\`) as your last act. Nothing you started stays open.
 
 You and every child stop and do NOT act if the work would:
 ${HARD_STOPS}
 
-On any of those, move that task back to Review with one line naming the limit. That is a complete and correct outcome, not a failure.`;
+On any of those, move that task back to Review with its "${NEEDS_YOU}" line naming the limit. That is a complete and correct outcome, not a failure.`;
 
 /** An orchestrator is named for its area, so the map reads as one owner. */
 export function orchestratorTitle(area: string) {
@@ -83,14 +93,18 @@ export function orchestratorTitle(area: string) {
 export function orchestratorBrief(
   area: string,
   tasks: readonly { id: string; key: string; title: string }[],
+  prefix = "",
 ) {
   const list = tasks
     .map((task) => `- ${task.key} (${task.id}): ${task.title}`)
     .join("\n");
+  const where = prefix ? ` (tracker project ${prefix})` : "";
   return `${ORCHESTRATOR_PROMPT}
 
-Your ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"} in ${area}:
-${list}`;
+Your ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"} in ${area}${where}:
+${list}
+
+Your review task's title, with the real counts: \`${orchestratorTitle(area)}: N done, M need you\``;
 }
 
 /**
@@ -167,7 +181,7 @@ export function confirmHeading(action: QuickAction, count: number) {
  */
 export function confirmNote(action: QuickAction, area = "", count = 0) {
   return action === "delegate"
-    ? `Starts ${orchestratorTitle(area)} for ${count} ${count === 1 ? "task" : "tasks"}. It runs at most ${ORCHESTRATOR_LIMIT} at a time and brings every task to done or back to you with a reason. Undo cannot unstart an agent that has already begun.`
+    ? `Starts ${orchestratorTitle(area)} for ${count} ${count === 1 ? "task" : "tasks"}. It runs at most ${ORCHESTRATOR_LIMIT} at a time, brings every task to done or back to you with a reason, and leaves you one review task with the summary. Undo cannot unstart an agent that has already begun.`
     : action === "done"
       ? "Closing a task can trigger follow-ups wired outside Work Map, which do not run on cancel. Undo reopens the task here; it cannot recall a follow-up that already fired."
       : "Snoozing keeps the task open and clears it from what needs you. Undo restores it.";

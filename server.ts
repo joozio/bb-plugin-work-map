@@ -8,7 +8,11 @@ import { settlementService } from "./settlement";
 import { managementContract } from "./management-contract";
 import { managementService } from "./management";
 import { managementUsage, runManagementCli } from "./management-cli";
-import { delegationContract, delegationService } from "./delegate-service";
+import {
+  delegationContract,
+  delegationService,
+  liveOrchestratorSchema,
+} from "./delegate-service";
 import {
   sessionRequestSchema,
   sessionResultSchema,
@@ -78,6 +82,8 @@ export type MapProject = z.infer<typeof projectSchema>;
 const snapshotSchema = z.object({
   tasks: z.array(taskSchema),
   projects: z.array(projectSchema),
+  /** Area orchestrators this plugin started; the map checks which still run. */
+  orchestrators: z.array(liveOrchestratorSchema).optional(),
   generatedAt: z.number(),
   warnings: z.array(z.string()),
 });
@@ -163,6 +169,11 @@ export default async function plugin(bb: BbPluginApi) {
     cache = null;
     revision++;
   };
+  const { liveOrchestrators, ...delegationRpc } = delegationService(
+    bb,
+    invalidate,
+  );
+  const delegation = { liveOrchestrators };
   let preferenceWrite: Promise<unknown> = Promise.resolve();
   const commentCache = new Map<
     string,
@@ -307,7 +318,14 @@ export default async function plugin(bb: BbPluginApi) {
     const taskIds = new Set(source.map((task) => task.id));
     for (const id of commentCache.keys())
       if (!taskIds.has(id)) commentCache.delete(id);
-    return { projects, tasks, generatedAt: Date.now(), warnings };
+    const orchestrators = await delegation.liveOrchestrators();
+    return {
+      projects,
+      tasks,
+      orchestrators,
+      generatedAt: Date.now(),
+      warnings,
+    };
   }
   async function snapshot(input?: { fresh?: boolean } | null) {
     if (!input?.fresh && cache && Date.now() - cache.generatedAt < 45_000)
@@ -397,7 +415,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(rpcContract, {
     ...management,
     ...settlementService(bb, invalidate),
-    ...delegationService(bb, invalidate),
+    ...delegationRpc,
     createSession: ({ requestId, request, taskId }) => {
       const existing = creations.get(requestId);
       if (existing)

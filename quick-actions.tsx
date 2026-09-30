@@ -29,6 +29,7 @@ export function TileActions({
   busy,
   context,
   error,
+  orchestrated,
   onAct,
   onDismissError,
 }: {
@@ -38,6 +39,11 @@ export function TileActions({
   context?: ActionContext;
   /** What went wrong on this card's own act, shown where it was clicked. */
   error?: string;
+  /**
+   * The area's own header already says one orchestrator holds this work, so
+   * the card does not repeat the reason; the disabled act still carries it.
+   */
+  orchestrated?: boolean;
   onAct: (action: QuickAction, item: WorkItem) => void;
   onDismissError?: () => void;
 }) {
@@ -73,7 +79,10 @@ export function TileActions({
           )}
         </p>
       ) : (
-        stopped && <p className="wm-tile-note">{`Cannot hand over: ${stopped}`}</p>
+        stopped &&
+        !orchestrated && (
+          <p className="wm-tile-note">{`Cannot hand over: ${stopped}`}</p>
+        )
       )}
       <div
         className="wm-tile-actions"

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  ORCHESTRATOR_CAP,
+  areaOrchestrator,
   buildMap,
   arrangeMap,
   activityLabel,
@@ -907,5 +909,42 @@ describe("activity proximity", () => {
     expect(
       activityLabel(invalid.find((i) => i.id === "thread:boundary")!, now),
     ).toBe("Active 1d ago");
+  });
+});
+
+describe("the orchestrator on an area", () => {
+  const record = { orchestrators: [{ projectId: "p1", threadId: "orch", title: "Test project orchestrator" }] };
+  const orchestrator = (indicator: "runtime" | "none" = "runtime") =>
+    thread({ id: "orch", title: "Test project orchestrator", indicator });
+  const child = (id: string, indicator: "runtime" | "none" | "unread-success" = "runtime") =>
+    thread({ id, parentThreadId: "orch", indicator });
+  it("shows while its thread lives, counting only its running children against the cap", () => {
+    const found = areaOrchestrator("p1", record, [
+      orchestrator(),
+      child("c1"),
+      child("c2", "unread-success"),
+      thread({ id: "other", indicator: "runtime" }),
+    ]);
+    expect(found).toEqual({
+      threadId: "orch",
+      title: "Test project orchestrator",
+      running: 1,
+      limit: ORCHESTRATOR_CAP,
+    });
+  });
+  it("stays while its children run even when the orchestrator itself is idle", () => {
+    expect(areaOrchestrator("p1", record, [orchestrator("none"), child("c1")])?.running).toBe(1);
+  });
+  it("is gone once its thread ended, was archived, or never existed", () => {
+    expect(areaOrchestrator("p1", record, [orchestrator("none")])).toBeNull();
+    expect(areaOrchestrator("p1", record, [orchestrator(), child("c1")].map((t) => ({ ...t, isArchived: t.id === "orch" })))).toBeNull();
+    expect(areaOrchestrator("p1", record, [])).toBeNull();
+    expect(areaOrchestrator("p2", record, [orchestrator()])).toBeNull();
+    expect(areaOrchestrator("p1", {}, [orchestrator()])).toBeNull();
+  });
+  it("lands on the project item the map builds", () => {
+    const snapshot = { ...data([task({ projectId: "p1" })]), ...record };
+    const project = buildMap(snapshot, [orchestrator(), child("c1"), child("c2"), child("c3"), child("c4")], {}, now).find((item) => item.id === "project:p1");
+    expect(project?.orchestrator).toMatchObject({ running: 4, limit: 3 });
   });
 });

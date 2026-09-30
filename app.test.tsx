@@ -2748,7 +2748,7 @@ describe("heat layout", () => {
       expect(within(confirm).getByText(key)).toBeTruthy();
     expect(
       within(confirm).getByText(
-        /Starts Test project orchestrator for 3 tasks\. It runs at most 3 at a time and brings every task to done or back to you with a reason\./,
+        /Starts Test project orchestrator for 3 tasks\. It runs at most 3 at a time, brings every task to done or back to you with a reason, and leaves you one review task with the summary\./,
       ),
     ).toBeTruthy();
     expect(within(confirm).getByText(/wiz/)).toBeTruthy();
@@ -3060,9 +3060,7 @@ describe("heat layout", () => {
       ).toEqual([{ method: "setLayout", input: { layout: "heat" } }]),
     );
     const [project, sessions] = areas(slot);
-    expect(project.getAttribute("aria-label")).toBe(
-      "Test project · 1 need you · 0 running",
-    );
+    expect(project.getAttribute("aria-label")).toBe("Test project · 1 need you");
     // The project holds the only work that needs him, so it takes more room.
     expect(rect(project).w * rect(project).h).toBeGreaterThan(
       rect(sessions).w * rect(sessions).h,

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { now, task, thread } from "./fixtures";
 import type { WorkItem } from "./model";
 import { buildMap } from "./model";
+import { areaState } from "./heat-view";
 import { data } from "./fixtures";
 import {
+  type HeatArea,
   SESSIONS_AREA,
   buildHeat,
   cardGrid,
@@ -649,5 +651,48 @@ describe("areas", () => {
         [...inner.values()].reduce((sum, rect) => sum + area(rect), 0),
       ).toBeCloseTo(area(rects.get(entry.id)!), 5);
     }
+  });
+});
+
+describe("what an area header says", () => {
+  const area = (overrides: Partial<HeatArea>): HeatArea => ({
+    id: "project:p1",
+    title: "Test project",
+    scope: "TEST",
+    root: null,
+    weight: 1,
+    waiting: 0,
+    running: 0,
+    orchestrator: null,
+    items: [],
+    tiles: [],
+    ...overrides,
+  });
+  it("counts what needs you and what runs, and never says zero", () => {
+    expect(areaState(area({ waiting: 2, running: 1 }))).toBe(
+      "2 need you · 1 running",
+    );
+    expect(areaState(area({ items: [{} as WorkItem] }))).toBe("1 quiet");
+  });
+  it("names one orchestrator instead of counting its threads, until it breaks its cap", () => {
+    const orchestrator = {
+      threadId: "orch",
+      title: "Test project orchestrator",
+      limit: 3,
+    };
+    expect(
+      areaState(
+        area({ running: 3, orchestrator: { ...orchestrator, running: 2 } }),
+      ),
+    ).toBe("orchestrator · 2 of 3 running");
+    expect(
+      areaState(
+        area({
+          waiting: 1,
+          running: 5,
+          orchestrator: { ...orchestrator, running: 4 },
+        }),
+      ),
+    ).toBe("1 need you · orchestrator · 4 running, over the cap of 3");
   });
 });
