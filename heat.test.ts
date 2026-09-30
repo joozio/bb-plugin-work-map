@@ -11,7 +11,10 @@ import {
   cardGrid,
   evenOut,
   expandedWeights,
+  fitsWord,
   heatOrder,
+  labelRow,
+  labelWidth,
   heatPull,
   heatStats,
   heatLevel,
@@ -694,5 +697,39 @@ describe("what an area header says", () => {
         }),
       ),
     ).toBe("1 need you · orchestrator · 4 running, over the cap of 3");
+  });
+});
+
+describe("tile label row", () => {
+  it("never cuts the key: the timing label shows whole or not at all", () => {
+    expect(labelRow(160, "DT-11", "35d overdue", false)).toEqual({
+      lead: "DT-11",
+      label: "35d overdue",
+    });
+    // Too narrow for "47d overdue" beside the key: the key stays whole.
+    expect(labelRow(90, "DT-11", "47d overdue", false)).toEqual({
+      lead: "DT-11",
+      label: "",
+    });
+    expect(labelRow(40, "WIZ-110", "2d overdue", false).lead).toBe("WIZ-110");
+    const threshold = 22 + labelWidth("DT-11") + 5 + labelWidth("47d overdue");
+    expect(labelRow(threshold, "DT-11", "47d overdue", false).label).toBe(
+      "47d overdue",
+    );
+    expect(labelRow(threshold - 1, "DT-11", "47d overdue", false).label).toBe(
+      "",
+    );
+  });
+
+  it("says running whole or leaves only the green dot, never a clipped word", () => {
+    expect(labelRow(120, "running", "", true).lead).toBe("running");
+    expect(labelRow(60, "running", "", true).lead).toBe("");
+    // The dot takes room too, so the label yields to a session's running word.
+    expect(labelRow(90, "running", "12d", true)).toEqual({
+      lead: "running",
+      label: "",
+    });
+    expect(fitsWord(120, "agent running")).toBe(true);
+    expect(fitsWord(80, "agent running")).toBe(false);
   });
 });

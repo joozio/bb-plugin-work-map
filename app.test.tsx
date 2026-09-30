@@ -3060,7 +3060,9 @@ describe("heat layout", () => {
       ).toEqual([{ method: "setLayout", input: { layout: "heat" } }]),
     );
     const [project, sessions] = areas(slot);
-    expect(project.getAttribute("aria-label")).toBe("Test project · 1 need you");
+    expect(project.getAttribute("aria-label")).toBe(
+      "Test project · 1 need you",
+    );
     // The project holds the only work that needs him, so it takes more room.
     expect(rect(project).w * rect(project).h).toBeGreaterThan(
       rect(sessions).w * rect(sessions).h,
@@ -3110,12 +3112,39 @@ describe("heat layout", () => {
         (entry) => entry.textContent,
       ),
     ).toEqual([
-      "1waiting for you",
+      "1need you",
       "1ready to read",
       "1agents running",
       "0past date",
       "1undated 30d+",
     ]);
+    // One legend: a single row above the map, no footer repeating it.
+    const legend = slot.container.querySelector(".wm-heat-legend")!;
+    expect(Array.from(legend.children, (entry) => entry.textContent)).toEqual([
+      "Needs your input",
+      "Run failed",
+      "Needs review or follow-up",
+      "Ready to read",
+      "Agent working",
+      "In focus",
+      "Past due",
+      "Stale",
+      "Undated 30d+",
+      "Size and depth = how hard it pulls · Hue = what it needs",
+    ]);
+    expect(legend.getAttribute("title")).toContain(
+      "Deeper = closer date / older undated task",
+    );
+    expect(legend.getAttribute("title")).toContain(
+      "Size = urgency · Due date first, otherwise creation age",
+    );
+    expect(slot.container.querySelector(".wm-footer")).toBeNull();
+    expect(slot.container.querySelector(".wm-heat-hint")?.textContent).toBe(
+      "Click to expand in place · Escape steps back",
+    );
+    expect(
+      slot.getByRole("button", { name: "Show work that needs you (1)" }),
+    ).toBeTruthy();
     // Heat already holds every area, so the overview's Show all has nothing to add.
     expect(slot.container.querySelector(".wm-more")).toBeNull();
     slot.lifecycle.unmount();

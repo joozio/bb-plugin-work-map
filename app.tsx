@@ -1652,6 +1652,8 @@ function WorkMap() {
         <Button
           size="sm"
           variant="outline"
+          // A phone has no side pane to open into; the stylesheet drops this there.
+          className="wm-heat-side-pane"
           onClick={() => {
             setSelection(root);
             setPreviewMode("pane");
@@ -2258,8 +2260,12 @@ function WorkMap() {
           >
             <button
               className="wm-filter wm-waiting"
-              aria-label={`Show work waiting for you (${counts.waiting})`}
-              title={`${counts.waiting} waiting for you`}
+              aria-label={
+                heatOn
+                  ? `Show work that needs you (${counts.waiting})`
+                  : `Show work waiting for you (${counts.waiting})`
+              }
+              title={`${counts.waiting} ${heatOn ? "need you" : "waiting for you"}`}
               aria-pressed={filter === "waiting"}
               disabled={launcher.busy}
               onClick={() => chooseFilter("waiting")}
@@ -2496,7 +2502,7 @@ function WorkMap() {
                   <div className="wm-heat-counts">
                     {(
                       [
-                        [heat.waiting, "waiting for you", "waiting"],
+                        [heat.waiting, "need you", "waiting"],
                         [heat.unread, "ready to read", "unread"],
                         [heat.running, "agents running", "working"],
                         [heat.overdue, "past date", "overdue"],
@@ -2509,7 +2515,18 @@ function WorkMap() {
                       </div>
                     ))}
                   </div>
-                  <div className="wm-heat-legend">
+                  <span className="wm-heat-hint">
+                    {heatFreeze
+                      ? "Layout held while expanded"
+                      : "Click to expand in place · Escape steps back"}
+                  </span>
+                  <div
+                    className="wm-heat-legend"
+                    title={
+                      "Deeper = closer date / older undated task\n" +
+                      "Size = urgency · Due date first, otherwise creation age"
+                    }
+                  >
                     {(
                       [
                         ["input", "Needs your input"],
@@ -2518,34 +2535,22 @@ function WorkMap() {
                         ["unread", "Ready to read"],
                         ["working", "Agent working"],
                         ["focused", "In focus"],
-                        ["overdue", "Past due / planned date"],
+                        ["overdue", "Past due"],
+                        [
+                          "stale",
+                          "Stale",
+                          "More than 14 days past due, or waiting 30+ days",
+                        ],
                         ["aged", "Undated 30d+"],
-                      ] as [string, string][]
-                    ).map(([tone, label]) => (
-                      <span key={tone}>
+                      ] as [string, string, string?][]
+                    ).map(([tone, label, hint]) => (
+                      <span key={tone} title={hint}>
                         <i className={`wm-heat-key wm-heat-${tone}`} />
                         {label}
                       </span>
                     ))}
-                    <span>
-                      <i className="wm-heat-ramp" aria-hidden="true">
-                        {[1, 2, 3, 4].map((level) => (
-                          <i
-                            key={level}
-                            className="wm-heat-review"
-                            data-level={level}
-                          />
-                        ))}
-                      </i>
-                      Deeper = closer date / older undated task
-                    </span>
-                    <span className="wm-heat-hint">
-                      Size = urgency · Due date first, otherwise creation age
-                    </span>
-                    <span className="wm-heat-hint">
-                      {heatFreeze
-                        ? `${heatAreas.length} areas · Layout held while expanded`
-                        : `${heatAreas.length} areas · Click to expand in place · Escape steps back`}
+                    <span className="wm-heat-sense">
+                      Size and depth = how hard it pulls · Hue = what it needs
                     </span>
                   </div>
                 </div>
@@ -2567,8 +2572,8 @@ function WorkMap() {
                 <span>
                   {heatOn
                     ? heatFreeze
-                      ? `${heatAreas.length} areas · Layout held while expanded`
-                      : `${heatAreas.length} areas · Click to expand in place · Escape steps back`
+                      ? "Layout held while expanded"
+                      : "Click to expand in place · Escape steps back"
                     : fitting
                       ? shown.length
                         ? `${shown.length} of ${candidates.length} areas and sessions · Fits this screen`
@@ -2769,34 +2774,36 @@ function WorkMap() {
             pending={undoing}
             error={settledError}
           />
-          <footer className="wm-footer">
-            <span>
-              <span className="wm-legend-focus">Coral ring · Focus</span>
-              {" · "}
-              <span className="wm-legend-working">
-                Green bar · Agent working
-              </span>
-              {" · "}
-              <span className="wm-legend-waiting">Amber · Action needed</span>
-              {" · "}
-              <span className="wm-legend-unread">Blue · Ready to read</span>
-              {" · "}
-              {heatOn
-                ? "Size and depth = pull on you. Hue = what it needs."
-                : spatial
+          {/* Heat carries its own legend above the map; a second one repeats it. */}
+          {!heatOn && (
+            <footer className="wm-footer">
+              <span>
+                <span className="wm-legend-focus">Coral ring · Focus</span>
+                {" · "}
+                <span className="wm-legend-working">
+                  Green bar · Agent working
+                </span>
+                {" · "}
+                <span className="wm-legend-waiting">Amber · Action needed</span>
+                {" · "}
+                <span className="wm-legend-unread">Blue · Ready to read</span>
+                {" · "}
+                {spatial
                   ? "Focus stays prominent. Older activity moves outward."
                   : "Ordered by importance and attention."}
-            </span>
-            <button aria-pressed={rotate} onClick={() => setRotate((r) => !r)}>
-              {rotate
-                ? heatOn
-                  ? "Rotation paused in Heat"
-                  : zoom !== 1
+              </span>
+              <button
+                aria-pressed={rotate}
+                onClick={() => setRotate((r) => !r)}
+              >
+                {rotate
+                  ? zoom !== 1
                     ? "Rotation paused while zoomed"
                     : "Rotation on"
-                : "Rotation paused"}
-            </button>
-          </footer>
+                  : "Rotation paused"}
+              </button>
+            </footer>
+          )}
         </main>
         {manager.pane || (selected && previewMode === "pane" && details(true))}
       </div>

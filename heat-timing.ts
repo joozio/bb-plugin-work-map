@@ -1,6 +1,8 @@
 import type { WorkItem } from "./model";
 
 const DAY = 86400000;
+/** Days past due after which a date reads as stale rather than urgent. */
+export const LATE_DAYS = 14;
 export interface HeatTiming {
   kind: "due" | "age";
   days: number;
@@ -9,6 +11,8 @@ export interface HeatTiming {
   label: string;
   description: string;
   overdue: boolean;
+  /** Past due by more than two weeks: stale rather than urgent. */
+  late: boolean;
   aged: boolean;
   prominent: boolean;
 }
@@ -40,6 +44,7 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
     const day = calendarDay(task.dueDate);
     if (day === null) return null;
     const days = day - localCalendarDay(now);
+    const past = -days;
     const plan = task.dateKind === "plan";
     const prefix = plan ? "Planned" : "Due";
     const label =
@@ -55,9 +60,15 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
       days,
       label,
       description: `${label} (${task.dueDate})`,
+      // Overdue pulls hardest in its first week, then decays: a date long
+      // past is stale, not urgent, and must not bury this week's.
       weight:
         days < 0
-          ? 10 + Math.min(3, -days / 7)
+          ? past <= 7
+            ? 10 + 2 * (past / 7)
+            : past <= 30
+              ? 12 - (4 * (past - 8)) / 22
+              : 7
           : days === 0
             ? 8
             : days === 1
@@ -69,8 +80,22 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
                   : days <= 14
                     ? 2
                     : 1.2,
-      level: days <= 0 ? 4 : days === 1 ? 3 : days <= 3 ? 2 : 1,
+      level:
+        days < 0
+          ? past <= LATE_DAYS
+            ? 4
+            : past <= 60
+              ? 3
+              : 2
+          : days === 0
+            ? 4
+            : days === 1
+              ? 3
+              : days <= 3
+                ? 2
+                : 1,
       overdue: days < 0,
+      late: past > LATE_DAYS,
       aged: false,
       prominent: days <= 3,
     };
@@ -100,6 +125,7 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
               : 1.2,
     level: days >= 90 ? 4 : days >= 60 ? 3 : days >= 30 ? 2 : 1,
     overdue: false,
+    late: false,
     aged: days >= 30,
     prominent: days >= 30,
   };

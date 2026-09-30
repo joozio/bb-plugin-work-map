@@ -125,6 +125,54 @@ export function tileText(title: string): { ask: string; title: string } {
   }
   return { ask: "", title: title.trim() };
 }
+/**
+ * Rough width of a label at the tile's 9.5px label size. It errs wide on
+ * purpose: a label judged too long is dropped whole rather than cut.
+ */
+export function labelWidth(text: string) {
+  let width = 0;
+  for (const char of text)
+    width += /[A-Z]/.test(char)
+      ? 6.8
+      : /[0-9]/.test(char)
+        ? 6
+        : /[a-z]/.test(char)
+          ? 5.4
+          : char === " "
+            ? 2.8
+            : 3.6;
+  return width;
+}
+/** Slot padding, tile padding and a 2px edge on both sides. */
+const LABEL_CHROME = 22;
+const LABEL_GAP = 5;
+/** The running dot and its gap. */
+const RUN_DOT = 11;
+/**
+ * What a tile's label row can say at this width. The key is identity and is
+ * never cut; "running" is a word or only the dot, never a clipped word; the
+ * timing label shows only when it fits whole beside the lead, otherwise the
+ * edge, hatch and accessible description carry it.
+ */
+export function labelRow(
+  width: number,
+  lead: string,
+  label: string,
+  running: boolean,
+): { lead: string; label: string } {
+  const room = width - LABEL_CHROME;
+  const word =
+    lead === "running" && RUN_DOT + labelWidth(lead) > room ? "" : lead;
+  const used = (running ? RUN_DOT : 0) + labelWidth(word);
+  return {
+    lead: word,
+    label: label && used + LABEL_GAP + labelWidth(label) <= room ? label : "",
+  };
+}
+/** Whether a card this wide holds the word "agent running" whole. */
+export function fitsWord(width: number, word: string) {
+  return labelWidth(word) <= width - LABEL_CHROME;
+}
 const TONE_PULL: Record<HeatTone, number> = {
   input: 6,
   error: 5.4,

@@ -7,7 +7,9 @@ import {
   cardGrid,
   evenOut,
   expandedWeights,
+  fitsWord,
   heatOrder,
+  labelRow,
   needsYou,
   partition,
   place,
@@ -33,6 +35,7 @@ const FACTS_ROW = 14.8;
 const ACTS_FULL = 240;
 const ACTS_LEAD = 166;
 const FALLBACK = { width: 1280, height: 720 };
+const RUNNING = "agent running";
 /** The area header and the body padding are not available to the tiles. */
 const HEADER = 31;
 const BODY_PAD = 6;
@@ -336,8 +339,8 @@ function Tile({
   const working = isWorking(item);
   const waiting = needsYou(tile.tone);
   // Tasks name their timing driver; session wait ages remain separate.
-  const left = item.task?.key ?? (working ? "running" : shortAge);
-  const right = tile.timing
+  const lead = item.task?.key ?? (working ? "running" : shortAge);
+  const label = tile.timing
     ? tile.timing.label
     : waiting
       ? tile.waited === null
@@ -350,6 +353,12 @@ function Tile({
         : item.task && detail > 0
           ? shortAge
           : "";
+  // The key never gives way; the label shows whole or not at all, and the
+  // accessible description keeps it either way.
+  const row = open ? { lead, label } : labelRow(width, lead, label, working);
+  // Past due up to two weeks is urgent; longer past due reads as stale.
+  const late = !!tile.timing?.overdue && tile.timing.late;
+  const overdue = !!tile.timing?.overdue && !late;
   // Inside an expanded area a tile is a small card: it spends its room on the
   // state of the work rather than on empty fill. Tiles too small to hold a
   // title cannot hold facts either, so they keep exactly what they had.
@@ -369,7 +378,7 @@ function Tile({
           ? `${item.task.priority} priority`
           : "",
         working
-          ? "agent running"
+          ? RUNNING
           : attached
             ? `${attached} session${attached === 1 ? "" : "s"}`
             : "",
@@ -449,11 +458,12 @@ function Tile({
         data-timing={tile.timing?.kind}
         aria-expanded={open}
         aria-controls={open ? `detail-${item.id}` : undefined}
-        className={`wm-heat-tile wm-heat-${tile.tone} ${working ? "wm-heat-running" : ""} ${item.focus ? "wm-heat-focused" : ""} ${tile.timing?.overdue ? "wm-heat-overdue" : ""} ${tile.timing?.aged ? "wm-heat-aged" : ""} ${!tile.timing && tile.stale ? "wm-heat-stale" : ""} ${tiny ? "wm-heat-tiny" : ""} ${sliver ? "wm-heat-sliver" : ""} ${!open && width < 118 ? "wm-heat-narrow" : ""} ${!open && width < 72 ? "wm-heat-keyonly" : ""} ${picked ? "wm-heat-picked" : ""} ${inside ? "wm-heat-inside" : ""}`}
+        className={`wm-heat-tile wm-heat-${tile.tone} ${working ? "wm-heat-running" : ""} ${item.focus ? "wm-heat-focused" : ""} ${overdue ? "wm-heat-overdue" : ""} ${late ? "wm-heat-late" : ""} ${tile.timing?.aged ? "wm-heat-aged" : ""} ${!tile.timing && tile.stale ? "wm-heat-stale" : ""} ${tiny ? "wm-heat-tiny" : ""} ${sliver ? "wm-heat-sliver" : ""} ${!open && width < 118 ? "wm-heat-narrow" : ""} ${!open && width < 72 ? "wm-heat-keyonly" : ""} ${picked ? "wm-heat-picked" : ""} ${inside ? "wm-heat-inside" : ""}`}
         draggable
         onDragStart={(event) => onDragStart(event, item)}
         onDragEnd={onDragEnd}
         onClick={() => onOpen(item)}
+        title={label && !row.label ? label : undefined}
         aria-label={[
           `Preview ${item.title}`,
           HEAT_LABEL[tile.tone],
@@ -474,10 +484,10 @@ function Tile({
       >
         <span className="wm-heat-meta">
           <span>
-            {left}
+            {row.lead && <span className="wm-heat-key-text">{row.lead}</span>}
             {ask && <em className="wm-heat-ask">{ask}</em>}
           </span>
-          <span>{right}</span>
+          {row.label && <span>{row.label}</span>}
         </span>
         {!tiny && <span className="wm-heat-title">{title}</span>}
         {roomy && !inside && (
@@ -485,9 +495,16 @@ function Tile({
         )}
         {showFacts && (
           <span className="wm-heat-facts">
-            {facts.map((fact) => (
-              <em key={fact}>{fact}</em>
-            ))}
+            {facts.map((fact) =>
+              fact === RUNNING ? (
+                // The word whole, or only the green dot: never a clipped word.
+                <em key={fact} className="wm-heat-run-fact">
+                  {fitsWord(width, fact) && fact}
+                </em>
+              ) : (
+                <em key={fact}>{fact}</em>
+              ),
+            )}
           </span>
         )}
         {lineRows > 0 && <span className="wm-heat-line">{line}</span>}

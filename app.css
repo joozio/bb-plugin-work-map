@@ -2070,9 +2070,6 @@
 .wm-heat-canvas .wm-map-caption {
   margin-bottom: 10px;
 }
-.wm-heat-canvas .wm-footer {
-  margin-top: 10px;
-}
 .wm-heat-canvas .wm-map-caption[hidden] {
   display: none;
 }
@@ -2149,15 +2146,18 @@
 .wm-heat-counts [data-tone="working"] b {
   color: var(--wm-green);
 }
+/* One legend row under the counts: hue chips, edge chips, one sentence. */
 .wm-heat-legend {
   display: flex;
+  flex: 1 1 100%;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
   gap: 4px 12px;
   font-size: 10px;
   color: var(--wm-dim);
-  max-width: 780px;
+}
+.wm-heat-sense {
+  opacity: 0.7;
 }
 .wm-heat-legend span {
   display: inline-flex;
@@ -2165,6 +2165,8 @@
   gap: 5px;
 }
 .wm-heat-hint {
+  font-size: 10px;
+  color: var(--wm-dim);
   opacity: 0.7;
 }
 i.wm-heat-key {
@@ -2305,17 +2307,21 @@ i.wm-heat-key {
   white-space: nowrap;
   overflow: hidden;
 }
-/* The key is the identity; the date is what gives way when space runs out. */
+/* The key is the identity and never gives way. The ask tag is squeezed out
+   first, then the label ellipses; the view drops a label that cannot fit whole. */
 .wm-heat-meta > span:first-child {
-  flex: 0 1 auto;
+  flex: 0 1000 auto;
   display: inline-flex;
   gap: 5px;
+}
+.wm-heat-key-text {
+  flex: none;
+}
+.wm-heat-meta > span + span {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-}
-/* Days waiting never give way; the ask tag is what gets clipped. */
-.wm-heat-meta > span + span {
-  flex: none;
+  text-overflow: ellipsis;
 }
 /* The verb the title opened with: what kind of act it asks for. */
 .wm-heat-ask {
@@ -2429,17 +2435,6 @@ i.wm-heat-key.wm-heat-unread {
   background: color-mix(in srgb, var(--wm-blue) 80%, var(--card));
   color: #0d1c2b;
 }
-/* Depth key: a small ramp beside the legend. */
-.wm-heat-ramp {
-  display: inline-flex;
-  gap: 2px;
-}
-.wm-heat-ramp i {
-  width: 8px;
-  height: 10px;
-  border-radius: 2px;
-  border: 1px solid var(--border);
-}
 .wm-heat-quiet {
   color: var(--wm-dim);
   background: color-mix(in srgb, var(--muted) 40%, var(--card));
@@ -2511,8 +2506,11 @@ i.wm-heat-key.wm-heat-focused {
   outline: 2px solid var(--wm-focus);
   outline-offset: -2px;
 }
-/* A thin hatch: the wait is already in the label, the stripes only flag it. */
-.wm-heat-stale {
+/* A thin hatch: the wait is already in the label, the stripes only flag it.
+   A date more than two weeks past wears the same hatch: stale, not urgent.
+   Its selector outranks the depth backgrounds, which would erase it. */
+.wm-heat-stale,
+.wm-heat-tile.wm-heat-late[data-level] {
   background-image: repeating-linear-gradient(
     135deg,
     transparent 0 7px,
@@ -2520,14 +2518,17 @@ i.wm-heat-key.wm-heat-focused {
   );
 }
 .wm-heat-stale[data-level="3"],
-.wm-heat-stale[data-level="4"] {
+.wm-heat-stale[data-level="4"],
+.wm-heat-tile.wm-heat-late[data-level="3"],
+.wm-heat-tile.wm-heat-late[data-level="4"] {
   background-image: repeating-linear-gradient(
     135deg,
     transparent 0 7px,
     rgb(42 26 6 / 0.16) 7px 8.5px
   );
 }
-i.wm-heat-key.wm-heat-stale {
+i.wm-heat-key.wm-heat-stale,
+i.wm-heat-key.wm-heat-late {
   background: repeating-linear-gradient(
     135deg,
     var(--card) 0 3px,
@@ -2595,6 +2596,25 @@ i.wm-heat-key.wm-heat-stale {
   .wm-heat-legend {
     justify-content: flex-start;
   }
+  .wm-heat-actions .wm-heat-side-pane {
+    display: none;
+  }
+  /* An open area on a phone is a list of cards sized to what they say, never
+     tall boxes of blank fill: at least the act row and two title lines. */
+  .wm-heat-area-open > .wm-heat-body {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .wm-heat-area-open .wm-heat-slot {
+    position: relative;
+    left: auto !important;
+    top: auto !important;
+    width: auto !important;
+    height: auto !important;
+    flex: none;
+    min-height: calc(4px + 27px + 12px + 14.35px + 2 * 14.03px);
+  }
 }
 
 /* ── An expanded area is a place to act ───────────────────────────────── */
@@ -2612,6 +2632,20 @@ i.wm-heat-key.wm-heat-stale {
 .wm-heat-facts em {
   font-style: normal;
   white-space: nowrap;
+}
+/* "agent running" reads whole, or collapses to the running dot alone. */
+.wm-heat-run-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.wm-heat-run-fact::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wm-green);
+  flex: none;
 }
 .wm-heat-line {
   flex: none;

@@ -38,6 +38,38 @@ describe("task timing drives Heat", () => {
     ]);
   });
 
+  it("peaks overdue in its first week, then decays: a date long past is stale, not urgent", () => {
+    const at = (days: number) =>
+      heatTiming(item({ dueDate: due(days), dateKind: "deadline" }), now)!;
+    expect(at(-1).weight).toBeCloseTo(10 + 2 / 7);
+    expect(at(-7).weight).toBe(12);
+    expect(at(-8).weight).toBe(12);
+    expect(at(-30).weight).toBe(8);
+    expect(at(-31).weight).toBe(7);
+    expect(at(-84).weight).toBe(7);
+    // Stale overdue still outweighs a 30-day undated task, never due today.
+    const undated30 = heatTiming(item({ createdAt: iso(30) }), now)!;
+    expect(at(-84).weight).toBeGreaterThan(undated30.weight);
+    expect(at(-84).weight).toBeLessThan(at(0).weight);
+    expect(heatPull(item({ dueDate: due(-3) }), now)).toBeGreaterThan(
+      heatPull(item({ dueDate: due(-84) }), now),
+    );
+    expect([-14, -15, -60, -61, -84].map((days) => at(days).level)).toEqual([
+      4, 3, 3, 2, 2,
+    ]);
+    expect([-1, -14, -15, -84].map((days) => at(days).late)).toEqual([
+      false,
+      false,
+      true,
+      true,
+    ]);
+    // Overdue keeps meaning past the date, and the label is unchanged.
+    expect(at(-84).overdue).toBe(true);
+    expect(at(-84).label).toBe("84d overdue");
+    expect(at(0).late).toBe(false);
+    expect(undated30.late).toBe(false);
+  });
+
   it("uses the current date for recurring work regardless of creation, edits or review history", () => {
     const fresh = item({
       dueDate: due(7),
