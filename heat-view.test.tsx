@@ -481,3 +481,58 @@ it("leaves no sliver, placeholder or stray glyph on a 390px phone map", () => {
       more.some((names) => names.split(", ").includes("WIZ-9")),
   ).toBe(true);
 });
+
+it("shows a closed task as done in an open area even while its orchestrator runs", () => {
+  frame(1200, 700);
+  const view = heat(
+    [
+      task({
+        id: "d",
+        key: "ORCHD-1",
+        title: "Closed one",
+        status: "done",
+        threadIds: ["thr_orch"],
+      }),
+      task({
+        id: "c",
+        key: "ORCHD-2",
+        title: "Dropped one",
+        status: "canceled",
+        threadIds: ["thr_orch"],
+      }),
+      task({
+        id: "o",
+        key: "ORCHD-3",
+        title: "Live one",
+        threadIds: ["thr_orch"],
+      }),
+    ],
+    [thread({ id: "thr_orch", indicator: "runtime" })],
+    { tileActions: () => <div className="wm-tile-actions" /> },
+    true,
+  );
+  for (const [title, word] of [
+    ["Closed one", "done"],
+    ["Dropped one", "canceled"],
+  ]) {
+    const card = tile(view, title);
+    expect(card.className).not.toContain("wm-heat-running");
+    expect(card.className).toContain("wm-heat-quiet");
+    expect(card.querySelector(".wm-heat-run-fact")).toBeNull();
+    expect(
+      Array.from(
+        card.querySelectorAll(".wm-heat-facts em"),
+        (e) => e.textContent,
+      ),
+    ).toContain(word);
+    expect(card.textContent).not.toContain("running");
+    expect(card.getAttribute("aria-label")).toContain(
+      word === "done" ? "Done" : "Canceled",
+    );
+  }
+  // Only the open task is live, and only it counts as running.
+  expect(tile(view, "Live one").className).toContain("wm-heat-running");
+  expect(
+    view.container.querySelector(".wm-heat-area")!.getAttribute("aria-label"),
+  ).toContain("1 running");
+});
