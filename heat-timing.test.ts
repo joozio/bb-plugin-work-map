@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { data, now, task } from "./fixtures";
 import { buildMap, localDay } from "./model";
 import type { MapTask } from "./server";
+import type { WorkItem } from "./model";
 import { buildHeat, heatLevel, heatPull, heatStats } from "./heat";
 import { heatTiming } from "./heat-timing";
 
@@ -225,5 +226,17 @@ describe("task timing drives Heat", () => {
     expect(
       heatTiming({ ...entry, task: undefined, kind: "thread" }, now),
     ).toBeNull();
+  });
+});
+
+describe("a snooze label", () => {
+  it("counts calendar days, so a fresh 7-day snooze reads 7d whatever the map's clock", () => {
+    const at = new Date("2026-10-01T01:48:00").getTime();
+    const until = at + 7 * 86400000;
+    const item = { task: task({ status: "in_review" }), snoozedUntil: until } as unknown as WorkItem;
+    // The map's clock lagging the click by three minutes used to round up to 8d.
+    expect(heatTiming(item, at - 180000)?.label).toBe("snoozed 7d");
+    expect(heatTiming(item, at)?.label).toBe("snoozed 7d");
+    expect(heatTiming(item, at + 6 * 86400000)?.label).toBe("snoozed 1d");
   });
 });

@@ -43,7 +43,12 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
     return null;
   // A snooze speaks for the task until it ends: quiet, and it says so.
   if (item.snoozedUntil && item.snoozedUntil > now) {
-    const days = Math.max(1, Math.ceil((item.snoozedUntil - now) / DAY));
+    // Calendar days, not elapsed milliseconds: the map's clock ticks behind
+    // the click, and a 7-day snooze must never read 8d for a minute.
+    const days = Math.max(
+      1,
+      localCalendarDay(item.snoozedUntil) - localCalendarDay(now),
+    );
     return {
       kind: "snooze",
       days,
