@@ -11,7 +11,13 @@ import {
   ThreadChat,
   Markdown,
 } from "@get-bb/plugin-sdk/app";
-import type { rpcContract, Preference, Snapshot, MapTask } from "./server";
+import type {
+  rpcContract,
+  MapLayout,
+  Preference,
+  Snapshot,
+  MapTask,
+} from "./server";
 import {
   buildMap,
   arrangeMap,
@@ -32,6 +38,8 @@ import { Icon } from "./components/ui/icon";
 import { useMapMotion } from "./layout-motion";
 import { useMapZoom, ZoomControls } from "./map-zoom";
 import { extendOrbit, zoomDensity, zoomVisible } from "./zoom";
+import { SESSIONS_AREA, buildHeat, heatStats, type HeatArea } from "./heat";
+import { HeatMap } from "./heat-view";
 import { useSessionLauncher } from "./session-launcher";
 import { SettlementActions, SettledToday } from "./settlement-actions";
 import type { Settlement } from "./settlement-contract";
@@ -45,7 +53,7 @@ import "./overview.css";
 
 type Filter = "all" | "focus" | "waiting" | "unread" | "working" | "inactive";
 const filters: [Filter, string][] = [
-  ["all", "Overview"],
+  ["all", "All work"],
   ["focus", "In focus"],
   ["waiting", "Waiting for you"],
   ["unread", "Ready to read"],
@@ -127,6 +135,9 @@ function WorkMap() {
   const [refreshError, setRefreshError] = useState("");
   const [notice, setNotice] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [layoutMode, setLayoutMode] = useState<MapLayout>("overview");
+  const [heatFreeze, setHeatFreeze] = useState<WorkItem[] | null>(null);
+  const [uncollapsed, setUncollapsed] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [selection, setSelection] = useState<WorkItem | null>(null);
@@ -206,6 +217,34 @@ function WorkMap() {
     },
     [rpc],
   );
+  useEffect(() => {
+    // A missing or failed choice keeps the default view; it is never an error.
+    rpc.call("layout").then(
+      (result) => {
+        if (live.current) setLayoutMode(result.layout);
+      },
+      () => undefined,
+    );
+  }, [rpc]);
+  const chooseLayout = (next: MapLayout) => {
+    // Heat also acts as "show me the whole map again" from a filter or a search.
+    if (next === layoutMode && (next === "overview" || heatOn)) return;
+    captureLayout();
+    setLayoutMode(next);
+    setHeatFreeze(null);
+    setUncollapsed([]);
+    setSelection(null);
+    setExpandedArea(null);
+    setInspectionLayout(null);
+    setBrowseLayout(null);
+    if (next === "heat") {
+      // Heat arranges the whole map, so it returns from a filter or a search.
+      setFilter("all");
+      setQuery("");
+      setExpanded(false);
+    }
+    rpc.call("setLayout", { layout: next }).catch(report);
+  };
   const launcher = useSessionLauncher(() => void refresh(true));
   const loadSettled = useCallback(async () => {
     try {
@@ -377,8 +416,18 @@ function WorkMap() {
   const { zoom } = zoomControl;
   const density = zoomDensity(zoom, mapWidth);
   const spatial = !expanded && !needle && filter === "all";
+  // A treemap shows everything: the root budget that keeps the overview
+  // readable would hide areas that Heat has room for.
+  const heatOn =
+    layoutMode === "heat" && filter === "all" && !needle && !expanded;
+  // Fitting the collapsed Overview to the viewport is that layout's own sizing.
+  // Heat fills the map itself and stacks into scrolling bands when narrow.
   const fitRequested =
-    spatial && !selection && !launcher.context && !manager.inlineProjectId;
+    spatial &&
+    !heatOn &&
+    !selection &&
+    !launcher.context &&
+    !manager.inlineProjectId;
   const viewport = useOverviewSize(overviewRef, fitRequested && !!snapshot);
   const fitting = fitRequested && viewport.width > 0;
   useEffect(() => {
@@ -437,7 +486,7 @@ function WorkMap() {
       ? items.filter(matches).length
       : candidates.length;
   const visible =
-    expanded || needle || filter !== "all"
+    expanded || needle || filter !== "all" || heatOn
       ? candidates
       : zoomVisible(
           candidates,
@@ -493,16 +542,35 @@ function WorkMap() {
       : fitting
         ? fit.orbit
         : extendOrbit(arrangeMap(baseline), visible);
-  const shown = spatial
-    ? [
-        orbit.anchor,
-        ...orbit.near,
-        ...orbit.west,
-        ...orbit.east,
-        ...orbit.north,
-        ...orbit.south,
-      ].filter((item): item is WorkItem => !!item)
-    : (browseLayout?.map(currentItem) ?? visible);
+  const heatRoots = heatOn ? (heatFreeze?.map(currentItem) ?? visible) : [];
+  const shown = heatOn
+    ? heatRoots
+    : spatial
+      ? [
+          orbit.anchor,
+          ...orbit.near,
+          ...orbit.west,
+          ...orbit.east,
+          ...orbit.north,
+          ...orbit.south,
+        ].filter((item): item is WorkItem => !!item)
+      : (browseLayout?.map(currentItem) ?? visible);
+  const heatAreaId = area
+    ? area.kind === "project"
+      ? area.id
+      : SESSIONS_AREA
+    : undefined;
+  // An expanded project reveals its quiet tasks, as the overview does. Opening
+  // one session is not a request to unpack every finished agent beside it.
+  const heatAreas = heatOn
+    ? buildHeat(heatRoots, now, {
+        uncollapsed:
+          area?.kind === "project"
+            ? [...uncollapsed, area.id]
+            : uncollapsed,
+      })
+    : [];
+  const heat = heatOn ? heatStats(heatAreas, now) : null;
   const inspecting = !!area && !!selected && previewMode === "inline";
   const expandedZone = inspecting
     ? ((["west", "east", "north", "south"] as const).find((zone) =>
@@ -511,12 +579,14 @@ function WorkMap() {
     : "";
   const captureLayout = useMapMotion(
     canvasRef,
-    `${spatial}:${mapWidth}:${viewport.height}:${zoom}:${selected?.id ?? ""}:${previewMode}:${chatTarget?.threadId ?? ""}:${launcher.context?.id ?? ""}:${launcher.threadId ?? ""}:${shown.map((item) => `${item.id}:${item.signal}:${item.attention}:${item.unreadResults}:${item.focus}`).join("|")}`,
+    `${spatial}:${layoutMode}:${uncollapsed.join(",")}:${mapWidth}:${viewport.height}:${zoom}:${selected?.id ?? ""}:${previewMode}:${chatTarget?.threadId ?? ""}:${launcher.context?.id ?? ""}:${launcher.threadId ?? ""}:${shown.map((item) => `${item.id}:${item.signal}:${item.attention}:${item.unreadResults}:${item.focus}`).join("|")}`,
     zoom,
   );
   useEffect(() => {
     setInspectionLayout(null);
     setBrowseLayout(null);
+    setHeatFreeze(null);
+    setUncollapsed([]);
   }, [filter, query, expanded, rotation]);
   const counts = {
     focus: items.filter((i) => i.focus).length,
@@ -531,7 +601,7 @@ function WorkMap() {
       (i.focus || i.signal !== "inactive") &&
       !shown.some((s) => s.id === i.id),
   ).length;
-  const visibleThreads = shown
+  const visibleThreads = (heatOn ? (selected ? [selected] : []) : shown)
     .flatMap((i) => (i.kind === "thread" ? i.threads : []))
     .map((t) => t.id)
     .sort()
@@ -580,6 +650,7 @@ function WorkMap() {
   useEffect(() => {
     if (
       !rotate ||
+      heatOn ||
       zoom !== 1 ||
       launcher.context ||
       manager.active ||
@@ -597,6 +668,7 @@ function WorkMap() {
     return () => clearInterval(timer);
   }, [
     rotate,
+    heatOn,
     manager.active,
     zoom,
     hovered,
@@ -761,7 +833,14 @@ function WorkMap() {
             candidate.kind === "project" &&
             candidate.children.some((child) => child.id === item.id),
         );
-    if (spatial) {
+    if (heatOn) {
+      const base = heatFreeze ?? shown;
+      setHeatFreeze(
+        base.some((shownItem) => shownItem.id === (parent ?? item).id)
+          ? base
+          : [...base, parent ?? item],
+      );
+    } else if (spatial) {
       const layout = inspectionLayout ?? orbit;
       const root = parent ?? item;
       // A connected task outside the overview joins the outer row without moving existing areas.
@@ -839,6 +918,7 @@ function WorkMap() {
     setActiveSession(null);
     setChatTarget(null);
     setBrowseLayout(null);
+    setHeatFreeze(null);
     requestAnimationFrame(() => {
       const trigger = returnItemId.current
         ? canvasRef.current?.querySelector<HTMLElement>(
@@ -1334,6 +1414,56 @@ function WorkMap() {
           </>
         )}
       </article>
+    );
+  }
+  function heatAreaActions(heatArea: HeatArea) {
+    const root = heatArea.root;
+    if (!root) return null;
+    return (
+      <div
+        className="wm-area-actions wm-heat-actions"
+        ref={
+          selected?.id === root.id
+            ? (panelRef as React.RefObject<HTMLDivElement>)
+            : undefined
+        }
+        tabIndex={-1}
+      >
+        <Button
+          size="sm"
+          onClick={() => startSession(root)}
+          disabled={launcher.busy}
+        >
+          <Icon name="MessageCirclePlus" /> New session
+        </Button>
+        <Button size="sm" variant="outline" onClick={close}>
+          Collapse area
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setSelection(root);
+            setPreviewMode("pane");
+          }}
+        >
+          Open in side pane
+        </Button>
+        <AreaTools
+          title={root.title}
+          disabled={launcher.busy || manager.busy || settling}
+          focused={root.focus}
+          hidden={!!preferences[root.id]?.hidden}
+          onAction={(action) => manageArea(root, action)}
+        />
+        {manager.inlineProjectId === root.id.slice(8) && manager.inline}
+        {launcher.context?.id === root.id && (
+          <>
+            {launcher.view}
+            {launcher.threadId && settleControls(undefined, launcher.threadId)}
+          </>
+        )}
+      </div>
     );
   }
   function mapArea(item: WorkItem) {
@@ -1950,6 +2080,28 @@ function WorkMap() {
           </Button>
         </div>
         <div className="wm-view-tools">
+          <div className="wm-layouts" role="group" aria-label="Map layout">
+            {(
+              [
+                ["overview", "Overview", "Layers"],
+                ["heat", "Heat", "GridView"],
+              ] as [MapLayout, string, string][]
+            ).map(([value, label, icon]) => (
+              <button
+                key={value}
+                type="button"
+                className="wm-layout"
+                aria-label={`${label} layout`}
+                title={`${label} layout`}
+                aria-pressed={layoutMode === value}
+                disabled={launcher.busy || manager.busy}
+                onClick={() => chooseLayout(value)}
+              >
+                <Icon name={icon} />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
           <ZoomControls {...zoomControl} disabled={zoomDisabled} />
           <button
             type="button"
@@ -2026,7 +2178,7 @@ function WorkMap() {
         className={`wm-body ${manager.pane || (selected && previewMode === "pane") ? "wm-with-preview" : ""}`}
       >
         <main
-          className={`wm-canvas ${fitRequested ? "wm-fit-canvas" : ""}`}
+          className={`wm-canvas ${fitRequested ? "wm-fit-canvas" : ""} ${heatOn ? "wm-heat-canvas" : ""}`}
           ref={canvasRef}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
@@ -2095,20 +2247,131 @@ function WorkMap() {
                 } as CSSProperties
               }
             >
-              <div className="wm-map-caption">
+              {heat && (
+                <div className="wm-heat-stats">
+                  <div className="wm-heat-counts">
+                    {(
+                      [
+                        [heat.waiting, "waiting for you", "waiting"],
+                        [heat.unread, "ready to read", "unread"],
+                        [heat.running, "agents running", "working"],
+                        [heat.stale, "waiting 30d+", "stale"],
+                      ] as [number, string, string][]
+                    ).map(([count, label, tone]) => (
+                      <div key={label} data-tone={tone}>
+                        <b>{count}</b>
+                        <span>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="wm-heat-legend">
+                    {(
+                      [
+                        ["input", "Needs your input"],
+                        ["error", "Run failed"],
+                        ["review", "Needs review or follow-up"],
+                        ["unread", "Ready to read"],
+                        ["working", "Agent working"],
+                        ["focused", "In focus"],
+                        ["stale", "Waiting over 30 days"],
+                      ] as [string, string][]
+                    ).map(([tone, label]) => (
+                      <span key={tone}>
+                        <i className={`wm-heat-key wm-heat-${tone}`} />
+                        {label}
+                      </span>
+                    ))}
+                    <span>
+                      <i className="wm-heat-ramp" aria-hidden="true">
+                        {[1, 2, 3, 4].map((level) => (
+                          <i
+                            key={level}
+                            className="wm-heat-review"
+                            data-level={level}
+                          />
+                        ))}
+                      </i>
+                      Deeper = pulls harder
+                    </span>
+                    <span className="wm-heat-hint">
+                      Size = pull · 81d = days waiting on you
+                    </span>
+                    <span className="wm-heat-hint">
+                      {heatFreeze
+                        ? `${heatAreas.length} areas · Layout held while expanded`
+                        : `${heatAreas.length} areas · Click to expand in place · Escape steps back`}
+                    </span>
+                  </div>
+                </div>
+              )}
+              <div className="wm-map-caption" hidden={heatOn}>
                 <span>
-                  {fitting
-                    ? shown.length
-                      ? `${shown.length} of ${candidates.length} areas and sessions · Fits this screen`
-                      : "More room needed · Use Show all below"
-                    : zoom !== 1 && spatial
-                      ? inspectionLayout
-                        ? `${shown.length} areas and sessions · Layout held while expanded`
-                        : `${shown.length === candidates.length ? `All ${shown.length}` : `${shown.length} of ${candidates.length}`} areas and sessions · ${zoom < 1 ? "Compact" : "Detail"}`
-                      : `${shown.length} of ${candidates.length} ${needle ? "search results" : "items"}`}
+                  {heatOn
+                    ? "EVERYTHING, SIZED BY PULL"
+                    : spatial
+                      ? "FOCUS & RECENT ACTIVITY"
+                      : filter === "focus"
+                        ? "IN FOCUS"
+                        : needle
+                          ? "SEARCH RESULTS"
+                          : filter === "all"
+                            ? "ALL WORK"
+                            : "MATCHING WORK"}
+                </span>
+                <span>
+                  {heatOn
+                    ? heatFreeze
+                      ? `${heatAreas.length} areas · Layout held while expanded`
+                      : `${heatAreas.length} areas · Click to expand in place · Escape steps back`
+                    : fitting
+                      ? shown.length
+                        ? `${shown.length} of ${candidates.length} areas and sessions · Fits this screen`
+                        : "More room needed · Use Show all below"
+                      : zoom !== 1 && spatial
+                        ? inspectionLayout
+                          ? `${shown.length} areas and sessions · Layout held while expanded`
+                          : `${shown.length === candidates.length ? `All ${shown.length}` : `${shown.length} of ${candidates.length}`} areas and sessions · ${zoom < 1 ? "Compact" : "Detail"}`
+                        : `${shown.length} of ${candidates.length} ${needle ? "search results" : "items"}`}
                 </span>
               </div>
-              {spatial ? (
+              {heatOn ? (
+                <HeatMap
+                  areas={heatAreas}
+                  expandedAreaId={inspecting ? heatAreaId : undefined}
+                  expandedItemId={
+                    inspecting && selected && selected.kind !== "project"
+                      ? selected.id
+                      : undefined
+                  }
+                  now={now}
+                  detail={density.detail}
+                  onOpen={openPreview}
+                  onOpenArea={(heatArea) => {
+                    if (heatArea.root) openPreview(heatArea.root);
+                    else
+                      setUncollapsed((open) =>
+                        open.includes(heatArea.id)
+                          ? open.filter((id) => id !== heatArea.id)
+                          : [...open, heatArea.id],
+                      );
+                  }}
+                  onDragStart={(event, item) => {
+                    event.dataTransfer.setData(
+                      "application/x-bb-work-map",
+                      item.id,
+                    );
+                    event.dataTransfer.effectAllowed = "move";
+                    setDragging(true);
+                  }}
+                  onDragEnd={() => setDragging(false)}
+                  areaActions={heatAreaActions}
+                  tileDetails={
+                    inspecting && selected && selected.kind !== "project"
+                      ? details()
+                      : null
+                  }
+                />
+              ) : spatial ? (
                 <section
                   ref={overviewRef}
                   className={`wm-spatial ${inspecting ? `wm-inspecting wm-expand-${expandedZone}` : ""} ${fitRequested ? "wm-fit-map" : ""}`}
@@ -2208,7 +2471,8 @@ function WorkMap() {
                   ))}
                 </section>
               )}
-              {browseCount > (fitting ? shown.length : visible.length) && (
+              {!heatOn &&
+                browseCount > (fitting ? shown.length : visible.length) && (
                 <button
                   className="wm-more"
                   onClick={() => {
@@ -2245,13 +2509,17 @@ function WorkMap() {
               {" · "}
               <span className="wm-legend-unread">Blue · Ready to read</span>
               {" · "}
-              {spatial
-                ? "Focus stays prominent. Older activity moves outward."
-                : "Ordered by importance and attention."}
+              {heatOn
+                ? "Size and depth = pull on you. Hue = what it needs."
+                : spatial
+                  ? "Focus stays prominent. Older activity moves outward."
+                  : "Ordered by importance and attention."}
             </span>
             <button aria-pressed={rotate} onClick={() => setRotate((r) => !r)}>
               {rotate
-                ? zoom !== 1
+                ? heatOn
+                  ? "Rotation paused in Heat"
+                  : zoom !== 1
                   ? "Rotation paused while zoomed"
                   : "Rotation on"
                 : "Rotation paused"}

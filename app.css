@@ -1682,6 +1682,12 @@
     gap: 2px;
     margin-left: auto;
   }
+  .wm-toolbar .wm-layout {
+    padding: 0 6px;
+  }
+  .wm-toolbar .wm-layout span {
+    display: none;
+  }
   .wm-toolbar .wm-view-tools > button {
     width: 26px;
   }
@@ -2046,4 +2052,485 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+}
+
+/* ---- Heat layout ------------------------------------------------------- */
+/* One screen, no scrolling: the canvas stops scrolling and the map fills it. */
+.wm-canvas.wm-heat-canvas {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.wm-heat-canvas > .wm-map-world {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.wm-heat-canvas .wm-map-caption {
+  margin-bottom: 10px;
+}
+.wm-heat-canvas .wm-footer {
+  margin-top: 10px;
+}
+.wm-heat-canvas .wm-map-caption[hidden] {
+  display: none;
+}
+.wm-layouts {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  margin-right: 2px;
+}
+.wm-layout {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  gap: 5px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 14px;
+  background: none;
+  color: var(--wm-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.wm-layout:not(:disabled):hover {
+  color: var(--wm-ink);
+}
+.wm-layout svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+.wm-layout[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--wm-ink);
+}
+.wm-heat-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 24px;
+  margin-bottom: 10px;
+}
+.wm-heat-counts {
+  display: flex;
+  gap: 22px;
+  flex: none;
+}
+.wm-heat-counts > div {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.wm-heat-counts b {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.6px;
+  line-height: 1.05;
+}
+.wm-heat-counts span {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--wm-dim);
+}
+.wm-heat-counts [data-tone="waiting"] b {
+  color: var(--wm-orange);
+}
+.wm-heat-counts [data-tone="unread"] b {
+  color: var(--wm-blue);
+}
+.wm-heat-counts [data-tone="working"] b {
+  color: var(--wm-green);
+}
+.wm-heat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 12px;
+  font-size: 10px;
+  color: var(--wm-dim);
+  max-width: 780px;
+}
+.wm-heat-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.wm-heat-hint {
+  opacity: 0.7;
+}
+i.wm-heat-key {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.wm-heat {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.wm-heat-area {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--muted) 28%, var(--background));
+  overflow: hidden;
+  transition: border-color 0.18s;
+}
+.wm-heat-area-open {
+  border-color: color-mix(in srgb, var(--foreground) 30%, var(--border));
+}
+.wm-heat-head {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 55%, var(--background));
+}
+.wm-heat-name {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  background: none;
+  color: var(--wm-ink);
+  text-align: left;
+  min-width: 0;
+}
+.wm-heat-name strong {
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: -0.1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wm-heat-name em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--wm-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: none;
+  max-width: 55%;
+}
+.wm-heat-area-tight .wm-heat-name em {
+  display: none;
+}
+.wm-heat-actions {
+  position: relative;
+  flex: none;
+  gap: 6px;
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--border);
+  max-height: 45%;
+  overflow: auto;
+}
+/* Anchor the area menu in the action row, not on the absolute area box. */
+.wm-heat-actions > .wm-area-tools {
+  position: relative;
+  top: auto;
+  right: auto;
+  zoom: 1;
+  margin-left: auto;
+}
+.wm-heat-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: 3px;
+}
+.wm-heat-slot {
+  position: absolute;
+  padding: 2px;
+}
+.wm-heat-slot-open {
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+}
+.wm-heat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  text-align: left;
+  overflow: hidden;
+  color: var(--wm-ink);
+  background: color-mix(in srgb, var(--muted) 45%, var(--card));
+}
+.wm-heat-slot-open .wm-heat-tile {
+  height: auto;
+  flex: none;
+}
+.wm-heat-meta {
+  display: flex;
+  flex: none;
+  justify-content: space-between;
+  gap: 5px;
+  font-size: 9.5px;
+  line-height: 1.3;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+}
+/* The key is the identity; the date is what gives way when space runs out. */
+.wm-heat-meta > span:first-child {
+  flex: 0 1 auto;
+  display: inline-flex;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+}
+/* Days waiting never give way; the ask tag is what gets clipped. */
+.wm-heat-meta > span + span {
+  flex: none;
+}
+/* The verb the title opened with: what kind of act it asks for. */
+.wm-heat-ask {
+  font-style: normal;
+  opacity: 0.78;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wm-heat-ask::before {
+  content: "· ";
+}
+.wm-heat-narrow .wm-heat-ask {
+  display: none;
+}
+/* Squeezed beside an expanded neighbour: a whole key beats a cut key and a number. */
+.wm-heat-keyonly .wm-heat-meta > span + span {
+  display: none;
+}
+
+.wm-heat-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--wm-heat-lines, 3);
+  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.22;
+  letter-spacing: -0.1px;
+  flex: none;
+}
+.wm-heat-slot-open .wm-heat-title {
+  -webkit-line-clamp: 3;
+  font-size: 13px;
+}
+.wm-heat-reason {
+  flex: none;
+  font-size: 9.5px;
+  line-height: 1.3;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wm-heat-tiny .wm-heat-meta {
+  font-size: 9px;
+}
+.wm-heat-running .wm-heat-meta > span:first-child::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wm-green);
+  align-self: center;
+  flex: none;
+}
+/* Too small for any label: the colour alone says it is still there. */
+.wm-heat-sliver .wm-heat-meta {
+  display: none;
+}
+/* Attention colours are the map's own channels; nothing new is invented here.
+   Hue is what the work needs. Depth (data-level 1 to 4) is how hard it pulls:
+   priority, a wait past 30 days, focus. Deep tiles switch to dark ink. */
+.wm-heat-input,
+i.wm-heat-key.wm-heat-input {
+  background: var(--wm-orange);
+  color: #2a1a06;
+}
+.wm-heat-input[data-level="4"] {
+  background: color-mix(in srgb, var(--wm-orange) 86%, #ff6a1a);
+}
+.wm-heat-error,
+i.wm-heat-key.wm-heat-error {
+  background: color-mix(in srgb, var(--destructive) 62%, var(--card));
+  border-color: var(--destructive);
+}
+.wm-heat-error[data-level="4"] {
+  background: color-mix(in srgb, var(--destructive) 82%, var(--card));
+  color: #fff4f2;
+}
+.wm-heat-review,
+.wm-heat-followup,
+i.wm-heat-key.wm-heat-review {
+  background: color-mix(in srgb, var(--wm-orange) 24%, var(--card));
+  border-color: color-mix(in srgb, var(--wm-orange) 50%, var(--border));
+}
+.wm-heat-review[data-level="2"],
+.wm-heat-followup[data-level="2"] {
+  background: color-mix(in srgb, var(--wm-orange) 44%, var(--card));
+  border-color: color-mix(in srgb, var(--wm-orange) 70%, var(--border));
+}
+.wm-heat-review[data-level="3"],
+.wm-heat-followup[data-level="3"] {
+  background: color-mix(in srgb, var(--wm-orange) 68%, var(--card));
+  border-color: color-mix(in srgb, var(--wm-orange) 85%, var(--border));
+  color: #2a1a06;
+}
+.wm-heat-review[data-level="4"],
+.wm-heat-followup[data-level="4"] {
+  background: color-mix(in srgb, var(--wm-orange) 92%, #ff6a1a);
+  border-color: var(--wm-orange);
+  color: #2a1a06;
+}
+.wm-heat-unread,
+i.wm-heat-key.wm-heat-unread {
+  background: color-mix(in srgb, var(--wm-blue) 55%, var(--card));
+  border-color: color-mix(in srgb, var(--wm-blue) 70%, var(--border));
+}
+.wm-heat-unread[data-level="3"],
+.wm-heat-unread[data-level="4"] {
+  background: color-mix(in srgb, var(--wm-blue) 80%, var(--card));
+  color: #0d1c2b;
+}
+/* Depth key: a small ramp beside the legend. */
+.wm-heat-ramp {
+  display: inline-flex;
+  gap: 2px;
+}
+.wm-heat-ramp i {
+  width: 8px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+}
+.wm-heat-quiet {
+  color: var(--wm-dim);
+  background: color-mix(in srgb, var(--muted) 40%, var(--card));
+}
+/* Running is an outline, so it can sit on any attention colour at once. */
+.wm-heat-running,
+i.wm-heat-key.wm-heat-working {
+  box-shadow: inset 0 0 0 2px var(--wm-green);
+}
+.wm-heat-running {
+  animation: wm-heat-pulse 1.9s ease-in-out infinite;
+}
+@keyframes wm-heat-pulse {
+  50% {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--wm-green) 35%, transparent);
+  }
+}
+.wm-heat-focused,
+i.wm-heat-key.wm-heat-focused {
+  outline: 2px solid var(--wm-focus);
+  outline-offset: -2px;
+}
+/* A thin hatch: the wait is already in the label, the stripes only flag it. */
+.wm-heat-stale {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 7px,
+    color-mix(in srgb, var(--foreground) 14%, transparent) 7px 8.5px
+  );
+}
+.wm-heat-stale[data-level="3"],
+.wm-heat-stale[data-level="4"] {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 7px,
+    rgb(42 26 6 / 0.16) 7px 8.5px
+  );
+}
+i.wm-heat-key.wm-heat-stale {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--card) 0 3px,
+    color-mix(in srgb, var(--foreground) 35%, transparent) 3px 5px
+  );
+}
+.wm-heat-tile:hover {
+  filter: brightness(1.08);
+}
+.wm-heat-tile:focus-visible {
+  outline: 2px solid var(--wm-blue);
+  outline-offset: -2px;
+}
+.wm-heat-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+  overflow: hidden;
+}
+.wm-heat-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+  flex: none;
+}
+.wm-heat-slot-open .wm-inline-detail {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+@media (prefers-reduced-motion: reduce) {
+  .wm-heat-running {
+    animation: none;
+  }
+}
+/* Narrow screens cannot squarify: areas become readable bands and the map scrolls. */
+@media (max-width: 720px) {
+  .wm-canvas.wm-heat-canvas {
+    overflow: auto;
+  }
+  .wm-heat {
+    min-height: calc(var(--wm-heat-areas, 4) * 132px);
+  }
+  .wm-heat-stats {
+    justify-content: flex-start;
+  }
+  .wm-heat-counts {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+  }
+  .wm-heat-counts b {
+    font-size: 17px;
+  }
+  .wm-heat-legend {
+    justify-content: flex-start;
+  }
 }

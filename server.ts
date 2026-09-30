@@ -23,6 +23,7 @@ const taskSource = z.looseObject({
   priority: z.string(),
   dueDate: z.string().nullable(),
   updatedAt: z.string(),
+  createdAt: z.string().optional(),
 });
 const projectSchema = z.object({
   id: z.string(),
@@ -41,6 +42,7 @@ const taskSchema = z.object({
   priority: z.string(),
   dueDate: z.string().nullable(),
   updatedAt: z.string(),
+  createdAt: z.string().optional(),
   summary: z.string(),
   nextAction: z.string(),
   dateKind: z.string(),
@@ -84,6 +86,8 @@ const preferenceSchema = z.object({
 });
 export type Preference = z.infer<typeof preferenceSchema>;
 const preferencesSchema = z.record(z.string(), preferenceSchema);
+const layoutSchema = z.object({ layout: z.enum(["overview", "heat"]) });
+export type MapLayout = z.infer<typeof layoutSchema>["layout"];
 const itemId = z
   .string()
   .regex(/^(task|project|thread):[A-Za-z0-9_-]+$/)
@@ -108,6 +112,8 @@ export const rpcContract = defineRpcContract({
     output: snapshotSchema,
   },
   preferences: { input: z.null(), output: preferencesSchema },
+  layout: { input: z.null(), output: layoutSchema },
+  setLayout: { input: layoutSchema, output: layoutSchema },
   setPreference: {
     input: z.object({
       id: itemId,
@@ -446,6 +452,16 @@ export default async function plugin(bb: BbPluginApi) {
     snapshot,
     preferences: getPreferences,
     setPreference,
+    layout: async () => {
+      // An unreadable or older stored choice keeps the default view working.
+      const stored = await bb.storage.kv.get<unknown>("view:layout");
+      const parsed = layoutSchema.safeParse(stored);
+      return parsed.success ? parsed.data : { layout: "overview" as const };
+    },
+    setLayout: async ({ layout }) => {
+      await bb.storage.kv.set("view:layout", { layout });
+      return { layout };
+    },
     previews: async ({ threadIds, fresh }) => {
       const entries = await Promise.all(
         threadIds.map(async (threadId) => {

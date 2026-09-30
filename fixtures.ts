@@ -46,6 +46,7 @@ export function task(overrides: Partial<MapTask> = {}): MapTask {
     priority: "medium",
     dueDate: null,
     updatedAt: new Date(now).toISOString(),
+    createdAt: new Date(now).toISOString(),
     summary: "Proposal drafted",
     nextAction: "Choose a direction",
     dateKind: "plan",

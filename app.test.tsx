@@ -117,6 +117,53 @@ it("fits collapsed Overview to height and width, keeps overflow reachable, and l
   ).toHaveLength(30);
   slot.lifecycle.unmount();
 });
+it("hands the map to Heat without the Overview fit, and takes it back", async () => {
+  const width = 1500,
+    height = 780;
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        this.callback(
+          [{ target, contentRect: { width, height } } as ResizeObserverEntry],
+          this as unknown as ResizeObserver,
+        );
+      }
+      disconnect() {}
+    },
+  );
+  const originalRect = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return this.classList.contains("wm-spatial")
+        ? new DOMRect(0, 0, width, height)
+        : originalRect.call(this);
+    },
+  );
+  const slot = await mount({
+    tasks: [],
+    threads: Array.from({ length: 30 }, (_, i) =>
+      thread({ id: `both${i}`, title: `Both session ${i}` }),
+    ),
+  });
+  await slot.findByText(/Fits this screen/);
+  expect(slot.container.querySelector(".wm-fit-canvas")).toBeTruthy();
+  // Heat fills the map itself, so the Overview's viewport fit stands down
+  // rather than measuring a layout that is no longer on screen.
+  fireEvent.click(slot.getByRole("button", { name: "Heat layout" }));
+  await waitFor(() =>
+    expect(slot.container.querySelector(".wm-heat")).toBeTruthy(),
+  );
+  expect(slot.container.querySelector(".wm-fit-canvas")).toBeNull();
+  expect(slot.container.querySelector(".wm-heat-canvas")).toBeTruthy();
+  expect(slot.queryByText(/Fits this screen/)).toBeNull();
+  expect(slot.queryByRole("button", { name: /Show all 30/ })).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Overview layout" }));
+  await slot.findByText(/Fits this screen/);
+  expect(slot.container.querySelector(".wm-heat-canvas")).toBeNull();
+  slot.lifecycle.unmount();
+});
 it("offers Explore when a short project card has no room for task tiles", async () => {
   vi.stubGlobal("ResizeObserver", undefined);
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
@@ -401,10 +448,12 @@ async function mount(
     settleRequests?: SettleInput[];
     settleError?: boolean;
     manageRequests?: ManagementInput[];
+    layout?: "overview" | "heat";
   } = {},
 ) {
   const app = await loadPluginApp(() => import("./app"));
   const storedPreferences = { ...options.preferences };
+  const storedLayout = { layout: options.layout ?? ("overview" as const) };
   const settled: Settlement[] = [];
   const projects = [
     managedProjectSchema.parse({
@@ -509,6 +558,11 @@ async function mount(
           if (options.rejectSnapshot)
             throw new Error("Task source disconnected");
           return { ...data(tasks), projects };
+        },
+        layout: () => ({ layout: storedLayout.layout }),
+        setLayout: ({ layout }) => {
+          storedLayout.layout = layout;
+          return { layout };
         },
         preferences: () => storedPreferences,
         setPreference: (input) => {
@@ -821,7 +875,7 @@ describe("area management", () => {
     expect(
       slot.getByRole("button", { name: /^Preview Review proposal/ }),
     ).toBeTruthy();
-    fireEvent.click(slot.getByRole("button", { name: "Overview" }));
+    fireEvent.click(slot.getByRole("button", { name: "All work" }));
     fireEvent.click(slot.getByRole("button", { name: "Manage areas" }));
     fireEvent.click(
       await slot.findByRole("button", { name: "Restore Test project" }),
@@ -2345,6 +2399,224 @@ describe("preview and native navigation", () => {
       ).toBe(true),
     );
     expect(slot.container.querySelector("button p")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+});
+
+describe("heat layout", () => {
+  const heatFixture = () => ({
+    tasks: [
+      task({
+        id: "t1",
+        key: "TEST-1",
+        title: "Pick a direction",
+        threadIds: ["thr_input"],
+      }),
+      task({
+        id: "t2",
+        key: "TEST-2",
+        title: "Read the result",
+        threadIds: ["thr_done"],
+      }),
+      task({ id: "t3", key: "TEST-3", title: "Quiet backlog item" }),
+    ],
+    threads: [
+      thread({ id: "thr_input", indicator: "waiting-for-input" }),
+      thread({ id: "thr_done", indicator: "unread-success", isUnread: true }),
+      thread({ id: "thr_live", title: "Live agent", indicator: "runtime" }),
+      ...Array.from({ length: 5 }, (_, index) =>
+        thread({ id: `thr_idle${index}`, title: `Finished ${index}` }),
+      ),
+    ],
+  });
+  const rect = (element: Element) => {
+    const style = (element as HTMLElement).style;
+    return {
+      x: parseFloat(style.left),
+      y: parseFloat(style.top),
+      w: parseFloat(style.width),
+      h: parseFloat(style.height),
+    };
+  };
+  const areas = (slot: { container: HTMLElement }) =>
+    Array.from(slot.container.querySelectorAll<HTMLElement>(".wm-heat-area"));
+
+  it("stays off until chosen, then remembers the choice and sizes areas by pull", async () => {
+    const slot = await mount(heatFixture());
+    await slot.findByRole("button", { name: /^Open project Test project/ });
+    expect(slot.container.querySelector(".wm-heat")).toBeNull();
+    expect(
+      slot.getByRole("button", { name: "Overview layout" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    fireEvent.click(slot.getByRole("button", { name: "Heat layout" }));
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat")).toBeTruthy(),
+    );
+    await waitFor(() =>
+      expect(
+        slot.inspection.rpcCalls.filter((call) => call.method === "setLayout"),
+      ).toEqual([{ method: "setLayout", input: { layout: "heat" } }]),
+    );
+    const [project, sessions] = areas(slot);
+    expect(project.getAttribute("aria-label")).toBe(
+      "Test project · 1 need you · 0 running",
+    );
+    // The project holds the only work that needs him, so it takes more room.
+    expect(rect(project).w * rect(project).h).toBeGreaterThan(
+      rect(sessions).w * rect(sessions).h,
+    );
+    const covered = areas(slot).reduce(
+      (sum, area) => sum + rect(area).w * rect(area).h,
+      0,
+    );
+    expect(covered).toBeCloseTo(10000, 4);
+    slot.lifecycle.unmount();
+  });
+
+  it("colours tiles from the existing attention channels and marks stale waiting", async () => {
+    const fixture = heatFixture();
+    fixture.threads[0].latestAttentionAt = Date.now() - 44 * 86400000;
+    // The task was created 44 days ago and an agent touched it yesterday:
+    // the wait is measured from when it started needing you, not from activity.
+    fixture.tasks[0].createdAt = new Date(
+      Date.now() - 44 * 86400000,
+    ).toISOString();
+    fixture.tasks[0].updatedAt = new Date(
+      Date.now() - 1 * 86400000,
+    ).toISOString();
+    fixture.tasks[0].title = "Decide: pick a direction";
+    const slot = await mount({ ...fixture, layout: "heat" });
+    const tile = await slot.findByRole("button", {
+      name: /^Preview Decide: pick a direction/,
+    });
+    expect(tile.className).toContain("wm-heat-input");
+    expect(tile.className).toContain("wm-heat-stale");
+    expect(tile.getAttribute("aria-label")).toContain("Needs your input");
+    expect(tile.getAttribute("aria-label")).toContain("Waiting 44 days");
+    expect(
+      slot.getByRole("button", { name: /^Preview Read the result/ }).className,
+    ).toContain("wm-heat-unread");
+    expect(
+      slot.getByRole("button", { name: /^Preview Live agent/ }).className,
+    ).toContain("wm-heat-running");
+    expect(slot.getByText("44d")).toBeTruthy();
+    // The verb moves to the label line; the title keeps its words.
+    expect(tile.querySelector(".wm-heat-ask")?.textContent).toBe("decide");
+    expect(tile.querySelector(".wm-heat-title")?.textContent).toBe(
+      "pick a direction",
+    );
+    expect(tile.getAttribute("data-level")).toBe("4");
+    expect(
+      Array.from(
+        slot.container.querySelectorAll(".wm-heat-counts > div"),
+      ).map((entry) => entry.textContent),
+    ).toEqual([
+      "1waiting for you",
+      "1ready to read",
+      "1agents running",
+      "1waiting 30d+",
+    ]);
+    // Heat already holds every area, so the overview's Show all has nothing to add.
+    expect(slot.container.querySelector(".wm-more")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
+  it("expands a tile in place, holds every neighbour's slot, and steps back out", async () => {
+    const slot = await mount({ ...heatFixture(), layout: "heat" });
+    const tile = await slot.findByRole("button", {
+      name: /^Preview Pick a direction/,
+    });
+    const before = areas(slot).map((area) => ({
+      id: area.dataset.layoutId,
+      ...rect(area),
+    }));
+    fireEvent.click(tile);
+    await slot.findByRole("region", { name: "Expanded: Pick a direction" });
+    const after = areas(slot).map((area) => ({
+      id: area.dataset.layoutId,
+      ...rect(area),
+    }));
+    // Same areas, same reading order, same relative arrangement: only sizes move.
+    expect(after.map((area) => area.id)).toEqual(before.map((area) => area.id));
+    expect(after.map((area) => area.x <= after[0].x + after[0].w)).toEqual(
+      after.map(() => true),
+    );
+    // The heaviest area keeps at least its share; expanding never shrinks it.
+    const grown = after.find((area) => area.id === "project:p1")!;
+    const was = before.find((area) => area.id === "project:p1")!;
+    expect(grown.w * grown.h).toBeGreaterThanOrEqual(6600);
+    expect(grown.w * grown.h).toBeGreaterThanOrEqual(was.w * was.h);
+    expect(
+      after.reduce((sum, area) => sum + area.w * area.h, 0),
+    ).toBeCloseTo(10000, 4);
+    expect(tile.getAttribute("aria-expanded")).toBe("true");
+    const detail = slot.getByRole("region", {
+      name: "Expanded: Pick a direction",
+    });
+    expect(detail.closest(".wm-heat-slot")).toBe(tile.closest(".wm-heat-slot"));
+    fireEvent.keyDown(detail, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        slot.queryByRole("region", { name: "Expanded: Pick a direction" }),
+      ).toBeNull(),
+    );
+    expect(
+      areas(slot).map((area) => ({ id: area.dataset.layoutId, ...rect(area) })),
+    ).toEqual(before);
+    slot.lifecycle.unmount();
+  });
+
+  it("gives a lighter area its room back and grows only the tile you opened", async () => {
+    const slot = await mount({ ...heatFixture(), layout: "heat" });
+    const tile = await slot.findByRole("button", { name: /^Preview Live agent/ });
+    const slots = () =>
+      Array.from(
+        tile
+          .closest(".wm-heat-area")!
+          .querySelectorAll<HTMLElement>(".wm-heat-slot"),
+      );
+    const order = slots().map((slotEl) => slotEl.dataset.layoutId);
+    fireEvent.click(tile);
+    await slot.findByRole("region", { name: "Expanded: Live agent" });
+    const sessions = areas(slot).find(
+      (area) => area.dataset.layoutId === "heat:sessions",
+    )!;
+    const project = areas(slot).find(
+      (area) => area.dataset.layoutId === "project:p1",
+    )!;
+    expect(rect(sessions).w * rect(sessions).h).toBeCloseTo(6600, 0);
+    expect(rect(project).w * rect(project).h).toBeCloseTo(3400, 0);
+    // Siblings keep their slots in the same order; only the open tile grows.
+    expect(slots().map((slotEl) => slotEl.dataset.layoutId)).toEqual(order);
+    const open = tile.closest(".wm-heat-slot") as HTMLElement;
+    expect(rect(open).w * rect(open).h).toBeCloseTo(7800, 0);
+    slot.lifecycle.unmount();
+  });
+
+  it("brings the whole map back when Heat is chosen from a filter", async () => {
+    const slot = await mount({ ...heatFixture(), layout: "heat" });
+    await slot.findByRole("button", { name: /^Preview Pick a direction/ });
+    fireEvent.click(slot.getByRole("button", { name: /^Working/ }));
+    await waitFor(() => expect(areas(slot)).toHaveLength(0));
+    fireEvent.click(slot.getByRole("button", { name: "Heat layout" }));
+    await waitFor(() => expect(areas(slot).length).toBeGreaterThan(0));
+    expect(
+      slot.getByRole("button", { name: "All work" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    slot.lifecycle.unmount();
+  });
+
+  it("keeps finished agents in one quiet tile until you ask for them", async () => {
+    const slot = await mount({ ...heatFixture(), layout: "heat" });
+    const group = await slot.findByRole("button", {
+      name: "Show 5 agents finished in Sessions",
+    });
+    expect(slot.queryByRole("button", { name: /^Preview Finished 0/ })).toBeNull();
+    fireEvent.click(group);
+    await slot.findByRole("button", { name: /^Preview Finished 0/ });
+    expect(
+      slot.queryByRole("button", { name: /agents finished in Sessions/ }),
+    ).toBeNull();
     slot.lifecycle.unmount();
   });
 });
