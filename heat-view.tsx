@@ -10,6 +10,8 @@ import {
   fitsWord,
   foldSmall,
   heatOrder,
+  openAreaShare,
+  openAreaWant,
   labelRow,
   needsYou,
   partition,
@@ -131,9 +133,24 @@ export function HeatMap({
   const openTiles =
     ordered.find((area) => area.id === expandedAreaId)?.tiles.length ?? 0;
   const layout = useMemo(() => {
+    const rows = partition(ordered, { ...UNIT, w: size.width, h: size.height });
+    const opened = ordered.find((area) => area.id === expandedAreaId);
+    // An open area grows for its cards (or fully for an open card), and never
+    // so far that a neighbour loses its name.
+    const share = opened
+      ? openAreaShare(
+          ordered,
+          opened.id,
+          rows,
+          { w: size.width, h: size.height },
+          expandedItemId
+            ? AREA_SHARE
+            : openAreaWant(opened.tiles.length, AREA_SHARE),
+        )
+      : 0;
     const rects = place(
-      partition(ordered, { ...UNIT, w: size.width, h: size.height }),
-      expandedWeights(ordered, expandedAreaId, AREA_SHARE),
+      rows,
+      expandedWeights(ordered, expandedAreaId, share),
       UNIT,
     );
     // Two title lines and the measured act row: the least a card can be.

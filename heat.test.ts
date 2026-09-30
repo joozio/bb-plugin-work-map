@@ -15,6 +15,8 @@ import {
   expandedWeights,
   fitsWord,
   foldSmall,
+  MIN_AREA,
+  openAreaShare,
   heatOrder,
   labelRow,
   labelWidth,
@@ -846,5 +848,125 @@ describe("folding tiles too small to read", () => {
     expect(cardLayout(ids, { w: 1400, h: 900 }, { w: 150, h: 90 }).height).toBe(
       900,
     );
+  });
+});
+
+describe("area shares", () => {
+  it("never lets one heavy single-task area take more than about a third of the map", () => {
+    const day = 86400000;
+    const projects = ["a", "b", "c", "d"].map((id) => ({
+      id,
+      prefix: id.toUpperCase(),
+      name: `Project ${id}`,
+    }));
+    const tasks = [
+      // One task, as heavy as a task gets: input, urgent, three days late.
+      task({
+        id: "heavy",
+        projectId: "a",
+        key: "A-1",
+        status: "in_review",
+        priority: "urgent",
+        dateKind: "deadline",
+        dueDate: new Date(now - 3 * day).toISOString().slice(0, 10),
+        threadIds: ["thr_ask"],
+      }),
+      ...["b", "c", "d"].flatMap((projectId) =>
+        [1, 2, 3].map((n) =>
+          task({
+            id: `${projectId}${n}`,
+            projectId,
+            key: `${projectId.toUpperCase()}-${n}`,
+            status: "in_review",
+          }),
+        ),
+      ),
+    ];
+    const roots = buildMap(
+      { ...data(tasks), projects },
+      [thread({ id: "thr_ask", hasPendingInteraction: true })],
+      {},
+      now,
+    );
+    const areas = buildHeat(roots, now);
+    const rects = treemap(areas, { x: 0, y: 0, w: 1200, h: 700 });
+    const heavy = areas.find((area) => area.tiles.length === 1)!;
+    const cell = rects.get(heavy.id)!;
+    expect((cell.w * cell.h) / (1200 * 700)).toBeLessThanOrEqual(0.35);
+    // Still the heaviest: the cap never reorders the map.
+    expect(areas[0].id).toBe(heavy.id);
+  });
+
+  it("stops an open area growing where a neighbour would lose its name", () => {
+    // Weights shaped like the real map: an open area among eight.
+    const areas = [
+      { id: "open", weight: 6 },
+      { id: "n1", weight: 14 },
+      { id: "n2", weight: 10 },
+      { id: "n3", weight: 9 },
+      { id: "n4", weight: 5 },
+      { id: "n5", weight: 3 },
+      { id: "n6", weight: 1.5 },
+      { id: "n7", weight: 1.2 },
+    ];
+    const neighbours = areas.slice(1).map((area) => area.id);
+    const size = { w: 1110, h: 620 };
+    const rows = partition(areas, { x: 0, y: 0, ...size });
+    const share = openAreaShare(areas, "open", rows, size, 0.66);
+    expect(share).toBeGreaterThan(0);
+    const rects = place(rows, expandedWeights(areas, "open", share), {
+      x: 0,
+      y: 0,
+      ...size,
+    });
+    // Every neighbour that could say its name before the area opened still can.
+    const base = place(rows, expandedWeights(areas, undefined, 0), {
+      x: 0,
+      y: 0,
+      ...size,
+    });
+    const named = neighbours.filter(
+      (id) => base.get(id)!.w >= MIN_AREA.w && base.get(id)!.h >= MIN_AREA.h,
+    );
+    expect(named.length).toBeGreaterThan(4);
+    for (const id of named) {
+      expect(rects.get(id)!.w).toBeGreaterThanOrEqual(MIN_AREA.w - 0.5);
+      expect(rects.get(id)!.h).toBeGreaterThanOrEqual(MIN_AREA.h - 0.5);
+    }
+    // Uncapped, 66% would have crushed one of them.
+    const greedy = place(rows, expandedWeights(areas, "open", 0.66), {
+      x: 0,
+      y: 0,
+      ...size,
+    });
+    expect(
+      named.some(
+        (id) =>
+          greedy.get(id)!.w < MIN_AREA.w || greedy.get(id)!.h < MIN_AREA.h,
+      ),
+    ).toBe(true);
+    expect(share).toBeLessThan(0.66);
+  });
+
+  it("balances card rows: 16 cards in equal rows, 13 with no card alone", () => {
+    const rowsOf = (n: number, size: { w: number; h: number }) => {
+      const ids = Array.from({ length: n }, (_, index) => `t${index}`);
+      const { rects } = cardLayout(ids, size, { w: 150, h: 90 });
+      const rows = new Map<number, number>();
+      for (const id of ids) {
+        const y = rects.get(id)!.y;
+        rows.set(y, (rows.get(y) ?? 0) + 1);
+      }
+      return [...rows.values()];
+    };
+    const sixteen = rowsOf(16, { w: 1160, h: 600 });
+    expect(new Set(sixteen).size).toBe(1);
+    expect(sixteen.length).toBeGreaterThan(1);
+    for (const size of [
+      { w: 1160, h: 600 },
+      { w: 900, h: 700 },
+      { w: 700, h: 500 },
+    ])
+      expect(rowsOf(13, size)).not.toContain(1);
   });
 });

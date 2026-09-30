@@ -383,6 +383,40 @@ export function withFloor<T extends Weighted>(
   return out;
 }
 /**
+ * The most of the map an area with `tiles` tiles can use: one readable tile
+ * needs only a small share, so a single heavy task cannot flood the map.
+ */
+export function areaCeiling(tiles: number) {
+  return Math.min(1, 0.15 + 0.07 * Math.max(1, tiles));
+}
+/**
+ * The floor's counterpart: lower any area above its ceiling share, but keep
+ * it a little ahead of the heaviest other area, so rank order survives.
+ */
+export function withCeiling<T extends Weighted>(
+  items: readonly T[],
+  ceiling: (item: T) => number,
+): T[] {
+  let out = items.map((entry) => ({ ...entry }));
+  for (let pass = 0; pass < 8; pass++) {
+    let lowered = false;
+    out = out.map((entry) => {
+      const rest = total(out) - entry.weight;
+      const share = Math.min(0.99, ceiling(entry));
+      const next = Math.max(
+        ...out.filter((o) => o !== entry).map((o) => o.weight),
+        0,
+      );
+      const cap = Math.max((share * rest) / (1 - share), next * 1.05);
+      if (!rest || entry.weight <= cap + 1e-9) return entry;
+      lowered = true;
+      return { ...entry, weight: round(cap) };
+    });
+    if (!lowered) break;
+  }
+  return out;
+}
+/**
  * Inside an expanded area every tile is a card you can read and act on, so
  * the pull range is compressed: nothing lighter than `ratio` of the heaviest.
  * Order still carries the rank; size stops deciding which tiles get an act row.
@@ -439,19 +473,24 @@ export function cardLayout(
       cols = candidate;
     }
   }
+  // Rows share the cards evenly, the fuller rows first: 16 in four rows is
+  // 4 by 4, 13 is 5, 4, 4, and no card is left alone under a full row.
   const rows = Math.ceil(n / cols);
+  const base = Math.floor(n / rows);
+  const fuller = n % rows;
   const h = 100 / rows;
-  ids.forEach((id, index) => {
-    const row = Math.floor(index / cols);
-    const inRow = row === rows - 1 ? n - row * cols : cols;
+  let index = 0;
+  for (let row = 0; row < rows; row++) {
+    const inRow = base + (row < fuller ? 1 : 0);
     const w = 100 / inRow;
-    rects.set(id, {
-      x: round((index - row * cols) * w),
-      y: round(row * h),
-      w: round(w),
-      h: round(h),
-    });
-  });
+    for (let column = 0; column < inRow; column++, index++)
+      rects.set(ids[index], {
+        x: round(column * w),
+        y: round(row * h),
+        w: round(w),
+        h: round(h),
+      });
+  }
   return { rects, height: Math.max(size.h, rows * rowHeight(rows)) };
 }
 export function treemap(items: readonly Weighted[], rect: Rect) {
@@ -624,6 +663,38 @@ export function foldSmall(
   }
   return shown;
 }
+/** The least an area can be and still say its name over a row of tiles. */
+export const MIN_AREA = { w: 120, h: 31 + 6 + MIN_TILE.h };
+/**
+ * How much of the map an open area takes. It wants room for its cards, more
+ * for more cards, up to `max`; but it stops growing at the share where a
+ * neighbour that was readable before it opened would drop below `MIN_AREA`.
+ * `rows` is the map's fixed strip partition, so only sizes are compared.
+ */
+export function openAreaShare(
+  areas: readonly Weighted[],
+  id: string,
+  rows: readonly HeatRow[],
+  size: { w: number; h: number },
+  want: number,
+): number {
+  const rect = { x: 0, y: 0, w: size.w, h: size.h };
+  const readable = (cell: Rect | undefined) =>
+    !!cell && cell.w >= MIN_AREA.w - 0.5 && cell.h >= MIN_AREA.h - 0.5;
+  const base = place(rows, expandedWeights(areas, undefined, 0), rect);
+  const guarded = areas
+    .filter((area) => area.id !== id && readable(base.get(area.id)))
+    .map((area) => area.id);
+  for (let share = want; share > 0; share -= 0.02) {
+    const rects = place(rows, expandedWeights(areas, id, share), rect);
+    if (guarded.every((other) => readable(rects.get(other)))) return share;
+  }
+  return 0;
+}
+/** An open area wants a quarter of the map plus a little per card. */
+export function openAreaWant(cards: number, max: number) {
+  return Math.min(max, 0.25 + 0.04 * cards);
+}
 /**
  * Areas are the map's own roots: a project area per project, and one Sessions
  * area for standalone sessions, which Work Map never attaches to a project.
@@ -661,7 +732,11 @@ export function buildHeat(
         open.has(SESSIONS_AREA) ? Infinity : 0,
       ),
     );
-  return withFloor(heatOrder(areas), AREA_FLOOR);
+  return heatOrder(
+    withCeiling(withFloor(heatOrder(areas), AREA_FLOOR), (area) =>
+      areaCeiling(area.tiles.length),
+    ),
+  );
 }
 export function heatStats(areas: readonly HeatArea[], now: number) {
   const items = areas.flatMap((area) => area.items);

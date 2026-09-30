@@ -3334,6 +3334,15 @@ describe("heat layout", () => {
         slot.queryByRole("region", { name: "Expanded: Pick a direction" }),
       ).toBeNull(),
     );
+    // Escape steps from the task to its area, then out to the map, which is
+    // exactly the map it was before.
+    const open = slot.container.querySelector(".wm-heat-area-open");
+    if (open) {
+      fireEvent.keyDown(open, { key: "Escape" });
+      await waitFor(() =>
+        expect(slot.container.querySelector(".wm-heat-area-open")).toBeNull(),
+      );
+    }
     expect(
       areas(slot).map((area) => ({ id: area.dataset.layoutId, ...rect(area) })),
     ).toEqual(before);
