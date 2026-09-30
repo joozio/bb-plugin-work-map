@@ -398,3 +398,86 @@ it("keeps every card's width and act tier when the picker opens, scrolling inste
   );
   expect(picking.scrolls).toBe(true);
 });
+
+it("leaves no sliver, placeholder or stray glyph on a 390px phone map", () => {
+  // The phone map: 390 wide less its padding, stacked bands, scrolling.
+  frame(358, 620);
+  const day = (days: number) => due(days);
+  const projects = [
+    { id: "dt", prefix: "DT", name: "Digital Thoughts", n: 12 },
+    { id: "wiz", prefix: "WIZ", name: "Wiz", n: 10 },
+    { id: "frg", prefix: "FRG", name: "Forge", n: 8 },
+    { id: "pm", prefix: "PM", name: "Project Money", n: 3 },
+  ];
+  const tasks = projects.flatMap((project) =>
+    Array.from({ length: project.n }, (_, index) =>
+      task({
+        id: `${project.id}${index}`,
+        projectId: project.id,
+        key: `${project.prefix}-${index + 1}`,
+        title: `${project.name} task ${index + 1}`,
+        status: "in_review",
+        dateKind: "deadline",
+        dueDate: day(-3 - index * 7),
+      }),
+    ),
+  );
+  // Wiz's undated 40-day task: the dashed placeholder on the phone.
+  tasks.push(
+    task({
+      id: "wiz-aged",
+      projectId: "wiz",
+      key: "WIZ-9",
+      title: "Context rightsizing proposal",
+      status: "in_review",
+      createdAt: new Date(now - 40 * 86400000).toISOString(),
+    }),
+  );
+  const roots = buildMap(
+    {
+      ...data(tasks),
+      projects: projects.map(({ id, prefix, name }) => ({ id, prefix, name })),
+    },
+    [],
+    {},
+    now,
+  );
+  const view = render(
+    <HeatMap
+      areas={buildHeat(roots, now)}
+      now={now}
+      onOpenArea={() => {}}
+      onOpen={() => {}}
+      onDragStart={() => {}}
+      onDragEnd={() => {}}
+    />,
+  );
+  const tiles = Array.from(
+    view.container.querySelectorAll<HTMLElement>(".wm-heat-tile"),
+  );
+  expect(tiles.length).toBeGreaterThan(0);
+  // Nothing drawn too small for its words: no tiny, no sliver.
+  expect(
+    view.container.querySelectorAll(".wm-heat-tiny, .wm-heat-sliver"),
+  ).toHaveLength(0);
+  for (const tile of tiles.filter(
+    (entry) => !entry.classList.contains("wm-heat-group"),
+  )) {
+    expect(tile.querySelector(".wm-heat-title")).not.toBeNull();
+    expect(tile.querySelector(".wm-heat-key-text")?.textContent).toMatch(
+      /^[A-Z]+-\d+$/,
+    );
+  }
+  // The aged task is either a titled tile or named in its area's +N more.
+  const aged = view.queryByRole("button", {
+    name: /^Preview Context rightsizing proposal\./,
+  });
+  const more = Array.from(
+    view.container.querySelectorAll(".wm-heat-more"),
+    (entry) => entry.getAttribute("title") ?? "",
+  );
+  expect(
+    !!aged?.querySelector(".wm-heat-title") ||
+      more.some((names) => names.split(", ").includes("WIZ-9")),
+  ).toBe(true);
+});
