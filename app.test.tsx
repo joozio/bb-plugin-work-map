@@ -2889,6 +2889,38 @@ describe("heat layout", () => {
     slot.lifecycle.unmount();
   });
 
+  it("holds an open area's tiles in place through a refresh that re-ranks them, updating only their facts", async () => {
+    const fixture = heatFixture();
+    const slot = await mount(fixture);
+    await expandProject(slot);
+    const open = () =>
+      slot.container.querySelector<HTMLElement>(".wm-heat-area-open")!;
+    const places = () =>
+      Object.fromEntries(
+        Array.from(
+          open().querySelectorAll<HTMLElement>(".wm-heat-slot[data-layout-id]"),
+        ).map((node) => [node.dataset.layoutId, rect(node)]),
+      );
+    const before = places();
+    expect(Object.keys(before)).toEqual(
+      expect.arrayContaining(["task:t1", "task:t2", "task:t3"]),
+    );
+    // The quiet backlog task turns urgent and due today: it outranks the rest.
+    Object.assign(fixture.tasks[2], {
+      priority: "urgent",
+      dueDate: localDay(Date.now()),
+      dateKind: "deadline",
+    });
+    fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
+    await waitFor(() =>
+      expect(
+        open().querySelector('[data-layout-id="task:t3"]')!.textContent,
+      ).toContain("today"),
+    );
+    expect(places()).toEqual(before);
+    slot.lifecycle.unmount();
+  });
+
   it("keeps the area open through a bulk settle and refreshes once at the end", async () => {
     const settleRequests: SettleInput[] = [];
     const slot = await mount({ ...heatFixture(), settleRequests });

@@ -609,10 +609,13 @@ function WorkMap() {
     : undefined;
   // An expanded project reveals its quiet tasks, as the overview does. Opening
   // one session is not a request to unpack every finished agent beside it.
+  // While an area is open its layout is held: facts update in place, and the
+  // tiles move only once it closes or its membership changes.
   const heatAreas = useHeatModel(
     heatRoots,
     now,
     area?.kind === "project" ? [...uncollapsed, area.id] : uncollapsed,
+    heatAreaId,
   );
   const heat = heatOn ? heatStats(heatAreas, now) : null;
   const inspecting = !!area && !!selected && previewMode === "inline";

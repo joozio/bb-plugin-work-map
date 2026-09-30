@@ -42,3 +42,55 @@ describe("the memoised Heat model", () => {
     expect(view.result.current).not.toBe(opened);
   });
 });
+
+describe("the layout held while an area is open", () => {
+  const snapshot = (priority: "medium" | "urgent", extra = false) =>
+    buildMap(
+      data([
+        task({ id: "a", key: "TEST-1", title: "First" }),
+        task({
+          id: "b",
+          key: "TEST-2",
+          title: "Second",
+          priority,
+          dueDate: priority === "urgent" ? "2026-09-17" : null,
+          dateKind: "deadline",
+        }),
+        ...(extra ? [task({ id: "c", key: "TEST-3", title: "Third" })] : []),
+      ]),
+      [],
+      {},
+      now,
+    );
+  const weights = (areas: ReturnType<typeof useHeatModel>) =>
+    areas.flatMap((area) => [
+      [area.id, area.weight],
+      ...area.tiles.map((tile) => [tile.id, tile.weight]),
+    ]);
+  it("keeps weights and order while facts change, and lets go on close or a new member", () => {
+    const calm = snapshot("medium");
+    const open = calm[0].id;
+    const view = renderHook(
+      ({ list, hold }) => useHeatModel(list, now, [open], hold),
+      { initialProps: { list: calm, hold: open as string | undefined } },
+    );
+    const before = weights(view.result.current);
+    const hot = snapshot("urgent");
+    view.rerender({ list: hot, hold: open });
+    const held = view.result.current;
+    expect(weights(held)).toEqual(before);
+    const second = held[0].tiles.find((tile) => tile.id === "task:b")!;
+    // The facts are today's: the tile knows it is urgent and due today.
+    expect(second.item?.task?.priority).toBe("urgent");
+    expect(second.timing?.label).toBe("Due today");
+    // Closing lets the new ranking take effect.
+    view.rerender({ list: hot, hold: undefined });
+    expect(weights(view.result.current)).not.toEqual(before);
+    // Reopened, a new task joining the area cannot be held.
+    view.rerender({ list: hot, hold: open });
+    const reheld = weights(view.result.current);
+    view.rerender({ list: snapshot("urgent", true), hold: open });
+    expect(view.result.current[0].tiles).toHaveLength(3);
+    expect(weights(view.result.current)).not.toEqual(reheld);
+  });
+});
