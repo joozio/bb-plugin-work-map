@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   act,
@@ -457,6 +459,10 @@ async function mount(
     settleError?: boolean;
     manageRequests?: ManagementInput[];
     layout?: "overview" | "heat";
+    noProjects?: boolean;
+    /** Hold the layout and snapshot answers until these settle. */
+    layoutGate?: Promise<void>;
+    snapshotGate?: Promise<void>;
     delegateRequests?: { requestId: string; taskId: string }[];
     delegateError?: string;
     /** Answers a snapshot call in place of the fixture, by call number. */
@@ -468,17 +474,19 @@ async function mount(
   const storedLayout = { layout: options.layout ?? ("overview" as const) };
   const settled: Settlement[] = [];
   let snapshotCalls = 0;
-  const projects = [
-    managedProjectSchema.parse({
-      id: "p1",
-      name: "Test project",
-      prefix: "TEST",
-      linkedBbProjectId:
-        options.linkedBbProjectId === undefined
-          ? "proj_bb"
-          : options.linkedBbProjectId,
-    }),
-  ];
+  const projects = options.noProjects
+    ? []
+    : [
+        managedProjectSchema.parse({
+          id: "p1",
+          name: "Test project",
+          prefix: "TEST",
+          linkedBbProjectId:
+            options.linkedBbProjectId === undefined
+              ? "proj_bb"
+              : options.linkedBbProjectId,
+        }),
+      ];
   const tasks = options.tasks ?? [
     task({ threadIds: ["thr_test"], status: options.done ? "done" : "todo" }),
   ];
@@ -631,12 +639,16 @@ async function mount(
           attachmentError: null,
         }),
         snapshot: async () => {
+          await options.snapshotGate;
           if (options.rejectSnapshot)
             throw new Error("Task source disconnected");
           const gated = options.snapshot?.(++snapshotCalls, tasks);
           return { ...data(gated ? await gated : tasks), projects };
         },
-        layout: () => ({ layout: storedLayout.layout }),
+        layout: async () => {
+          await options.layoutGate;
+          return { layout: storedLayout.layout };
+        },
         setLayout: ({ layout }) => {
           storedLayout.layout = layout;
           return { layout };
@@ -832,6 +844,50 @@ describe("existing session chat", () => {
     ).toBeNull();
     expect(
       slot.getByRole("region", { name: "Expanded: Test project" }),
+    ).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+  it("hands focus to Back to summary when the native editor takes Escape and drops focus, after its own menu gets the first Escape", async () => {
+    const slot = await mount({
+      tasks: [task({ threadIds: ["thr_test"] })],
+      threads: [thread({ title: "First agent", indicator: "runtime" })],
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
+    // The SDK stub has no editor; stand its root in for the Reply editor.
+    const editor = slot.getByTestId("bb-thread-chat");
+    editor.tabIndex = -1;
+    editor.focus();
+    const escape = () => {
+      const event = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      });
+      // The editor handles Escape itself, as the native one does.
+      editor.addEventListener("keydown", (e) => e.preventDefault(), {
+        once: true,
+      });
+      fireEvent(editor, event);
+    };
+    // First Escape closes the editor's own menu: focus stays in the editor.
+    escape();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(document.activeElement).toBe(editor);
+    expect(slot.getByTestId("bb-thread-chat")).toBe(editor);
+    // Second Escape leaves the editor, which drops focus on the body.
+    escape();
+    editor.blur();
+    const back = slot.getByRole("button", { name: "Back to summary" });
+    await waitFor(() => expect(document.activeElement).toBe(back));
+    expect(slot.getByTestId("bb-thread-chat")).toBeTruthy();
+    // From there Escape steps back as the hint promises: chat closes first.
+    fireEvent.keyDown(back, { key: "Escape" });
+    expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
+    expect(
+      slot.getByRole("region", { name: "Expanded: Review proposal" }),
     ).toBeTruthy();
     slot.lifecycle.unmount();
   });
@@ -2778,6 +2834,37 @@ describe("heat layout", () => {
     slot.lifecycle.unmount();
   });
 
+  it("shows the pick list in whole rows and fades its last row while more wait below", async () => {
+    const slot = await mount({ ...heatFixture() });
+    await expandProject(slot);
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("wm-bulk-picks") ? 200 : 0;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("wm-bulk-picks") ? 76 : 0;
+      },
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Pick tasks" }));
+    const list = slot.getByRole("list", { name: /^Pick work in/ });
+    await waitFor(() => expect(list.classList).toContain("wm-bulk-picks-more"));
+    // Scrolled to the end, nothing waits below: the fade goes.
+    Object.defineProperty(list, "scrollTop", {
+      value: 124,
+      configurable: true,
+    });
+    fireEvent.scroll(list);
+    await waitFor(() =>
+      expect(list.classList).not.toContain("wm-bulk-picks-more"),
+    );
+    const css = readFileSync(join(__dirname, "app.css"), "utf8");
+    expect(css).toContain("max-height: calc(3 * 24px + 2 * 2px);");
+    expect(css).toContain("max-height: calc(3 * 36px + 2 * 2px);");
+    slot.lifecycle.unmount();
+  });
+
   it("acts on the picked subset only, and cancelling changes nothing", async () => {
     const delegateAreaRequests: {
       requestId: string;
@@ -3141,6 +3228,111 @@ describe("heat layout", () => {
     slot.lifecycle.unmount();
   });
 
+  it("tells a truly empty account how to start instead of pointing at Overview", async () => {
+    for (const layout of ["heat", "overview"] as const) {
+      const slot = await mount({
+        tasks: [],
+        threads: [],
+        noProjects: true,
+        layout,
+      });
+      expect(
+        await slot.findByText(
+          "No open work yet. Create a project or start a session.",
+        ),
+      ).toBeTruthy();
+      expect(slot.queryByText(/Choose Overview/)).toBeNull();
+      slot.lifecycle.unmount();
+    }
+  });
+
+  it("never paints Overview's chrome while a stored Heat layout loads, nor in a Heat search", async () => {
+    let openLayout = () => {};
+    let openSnapshot = () => {};
+    const layoutGate = new Promise<void>((resolve) => (openLayout = resolve));
+    const snapshotGate = new Promise<void>(
+      (resolve) => (openSnapshot = resolve),
+    );
+    let footerSeen = false;
+    const watch = new MutationObserver(() => {
+      if (document.querySelector(".wm-footer")) footerSeen = true;
+    });
+    watch.observe(document.body, { childList: true, subtree: true });
+    const slot = await mount({
+      ...heatFixture(),
+      layout: "heat",
+      layoutGate,
+      snapshotGate,
+    });
+    const pressed = () =>
+      ["Overview layout", "Heat layout"].map((name) =>
+        slot.getByRole("button", { name }).getAttribute("aria-pressed"),
+      );
+    await slot.findByText("Gathering your projects and sessions…");
+    expect(pressed()).toEqual(["false", "false"]);
+    expect(slot.queryByRole("group", { name: "Attention counts" })).toBeNull();
+    // The tasks arrive first: still no layout, so still nothing but the wait.
+    openSnapshot();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      slot.getByText("Gathering your projects and sessions…"),
+    ).toBeTruthy();
+    expect(slot.container.querySelector(".wm-spatial")).toBeNull();
+    openLayout();
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat")).toBeTruthy(),
+    );
+    expect(pressed()).toEqual(["false", "true"]);
+    expect(slot.getByRole("group", { name: "Attention counts" })).toBeTruthy();
+    // A search from Heat that finds nothing is still Heat's: no Overview footer.
+    fireEvent.change(slot.getByRole("textbox"), {
+      target: { value: "zzz no such work" },
+    });
+    await slot.findByText("No matching work");
+    expect(slot.container.querySelector(".wm-footer")).toBeNull();
+    watch.disconnect();
+    expect(footerSeen).toBe(false);
+    slot.lifecycle.unmount();
+  });
+
+  it("rests the zoom controls in Heat, whose geometry ignores zoom, and hands them back in Overview", async () => {
+    const slot = await mount({ ...heatFixture(), layout: "heat" });
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat")).toBeTruthy(),
+    );
+    const controls = () => [
+      slot.getByRole("button", { name: "Zoom in" }),
+      slot.getByRole("button", { name: "Zoom out" }),
+      slot.getByRole("slider", { name: "Map zoom level" }),
+    ];
+    for (const control of controls()) {
+      expect((control as HTMLButtonElement).disabled).toBe(true);
+      expect(control.getAttribute("title")).toBe("Zoom applies to Overview");
+    }
+    expect(
+      slot.getByRole("group", { name: "Map zoom" }).getAttribute("title"),
+    ).toBe("Zoom applies to Overview");
+    expect(slot.getByLabelText("Current map zoom").textContent).toBe("100%");
+    fireEvent.click(slot.getByRole("button", { name: "Overview layout" }));
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat")).toBeNull(),
+    );
+    for (const control of controls()) {
+      expect(control.getAttribute("title")).not.toBe(
+        "Zoom applies to Overview",
+      );
+    }
+    expect(
+      (slot.getByRole("button", { name: "Zoom in" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(
+      (slot.getByRole("slider", { name: "Map zoom level" }) as HTMLInputElement)
+        .disabled,
+    ).toBe(false);
+    slot.lifecycle.unmount();
+  });
+
   it("stays off until chosen, then remembers the choice and sizes areas by pull", async () => {
     const slot = await mount(heatFixture());
     await slot.findByRole("button", { name: /^Open project Test project/ });
@@ -3250,6 +3442,45 @@ describe("heat layout", () => {
     slot.lifecycle.unmount();
   });
 
+  it("keeps an open card's cover at content height and gives the chat the rest of the card", async () => {
+    const slot = await mount({
+      layout: "heat",
+      tasks: [task({ threadIds: ["thr_test"], status: "in_review" })],
+      threads: [thread({ title: "First agent", indicator: "runtime" })],
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    fireEvent.click(await slot.findByRole("button", { name: "Chat here" }));
+    const chat = slot.getByTestId("bb-thread-chat");
+    // The stylesheet relies on exactly this nesting (app.css, open Heat card).
+    const live = chat.closest(".wm-live-session")!;
+    const view = live.parentElement!;
+    const detail = view.parentElement!;
+    const card = detail.parentElement!;
+    expect(view.classList).toContain("wm-session-view");
+    expect(detail.classList).toContain("wm-inline-detail");
+    expect(card.classList).toContain("wm-heat-slot");
+    expect(card.classList).toContain("wm-heat-slot-open");
+    const cover = card.querySelector(":scope > .wm-heat-tile")!;
+    expect(cover.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      card.querySelector(":scope > .wm-tile-acts .wm-tile-actions"),
+    ).toBeTruthy();
+    // The closed-card rule that grows the cover must not match an open card.
+    const css = readFileSync(join(__dirname, "app.css"), "utf8");
+    expect(css).toContain(
+      ".wm-heat-slot:not(.wm-heat-slot-open):has(.wm-tile-actions) > .wm-heat-tile {\n  flex: 1 1 auto;",
+    );
+    expect(css).not.toMatch(
+      /\n\.wm-heat-slot:has\(\.wm-tile-actions\) > \.wm-heat-tile \{/,
+    );
+    expect(css).toMatch(
+      /\.wm-heat-slot-open \.wm-session-view > \.wm-live-session \{\n  flex: 1 1 0;/,
+    );
+    slot.lifecycle.unmount();
+  });
+
   it("expands a tile in place, holds every neighbour's slot, and steps back out", async () => {
     const slot = await mount({ ...heatFixture(), layout: "heat" });
     const tile = await slot.findByRole("button", {
@@ -3290,6 +3521,15 @@ describe("heat layout", () => {
         slot.queryByRole("region", { name: "Expanded: Pick a direction" }),
       ).toBeNull(),
     );
+    // Escape steps from the task to its area, then out to the map, which is
+    // exactly the map it was before.
+    const open = slot.container.querySelector(".wm-heat-area-open");
+    if (open) {
+      fireEvent.keyDown(open, { key: "Escape" });
+      await waitFor(() =>
+        expect(slot.container.querySelector(".wm-heat-area-open")).toBeNull(),
+      );
+    }
     expect(
       areas(slot).map((area) => ({ id: area.dataset.layoutId, ...rect(area) })),
     ).toEqual(before);

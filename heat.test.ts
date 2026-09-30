@@ -6,12 +6,17 @@ import { areaState } from "./heat-view";
 import { data } from "./fixtures";
 import {
   type HeatArea,
+  type HeatTile,
   SESSIONS_AREA,
   buildHeat,
   cardGrid,
+  cardLayout,
   evenOut,
   expandedWeights,
   fitsWord,
+  foldSmall,
+  MIN_AREA,
+  openAreaShare,
   heatOrder,
   labelRow,
   labelWidth,
@@ -784,5 +789,237 @@ describe("a snoozed task in Heat", () => {
       tone: "review",
       timing: { kind: "due", overdue: true },
     });
+  });
+});
+
+describe("folding tiles too small to read", () => {
+  const heatTile = (id: string, weight: number): HeatTile => ({
+    id,
+    weight,
+    tone: "review",
+    item: { id, title: id } as WorkItem,
+    members: [],
+    stale: 0,
+    waited: null,
+    level: 1,
+    timing: null,
+  });
+  const size = { w: 300, h: 200 };
+  const min = { w: 64, h: 42 };
+  const geometry = (tiles: HeatTile[], keep?: string) =>
+    place(
+      partition(tiles, { x: 0, y: 0, ...size }),
+      expandedWeights(tiles, keep, 0.78),
+      { x: 0, y: 0, ...size },
+    );
+
+  it("folds the unreadable tiles into one +N more with their summed weight and leaves no hole", () => {
+    const tiles = [
+      heatTile("a", 10),
+      heatTile("b", 8),
+      heatTile("c", 6),
+      heatTile("d", 0.4),
+      heatTile("e", 0.3),
+      heatTile("f", 0.2),
+    ];
+    // Unfolded, the light tiles are slivers.
+    const before = geometry(tiles);
+    expect(
+      ["d", "e", "f"].every((id) => {
+        const cell = before.get(id)!;
+        return cell.w < min.w || cell.h < min.h;
+      }),
+    ).toBe(true);
+    const shown = foldSmall(tiles, size, { id: "p1", min });
+    const more = shown.find((tile) => tile.overflow)!;
+    expect(more.id).toBe("more:p1");
+    expect(more.members.map((member) => member.id).sort()).toEqual([
+      "d",
+      "e",
+      "f",
+    ]);
+    expect(more.weight).toBeCloseTo(0.9);
+    expect(
+      shown.filter((tile) => !tile.overflow).map((tile) => tile.id),
+    ).toEqual(["a", "b", "c"]);
+    const after = geometry(shown);
+    for (const tile of shown.filter((entry) => !entry.overflow)) {
+      const cell = after.get(tile.id)!;
+      expect(cell.w).toBeGreaterThanOrEqual(min.w);
+      expect(cell.h).toBeGreaterThanOrEqual(min.h);
+    }
+    const covered = [...after.values()].reduce(
+      (sum, cell) => sum + cell.w * cell.h,
+      0,
+    );
+    expect(covered).toBeCloseTo(size.w * size.h, 4);
+  });
+
+  it("keeps readable areas untouched, and never folds the expanded tile", () => {
+    const roomy = [heatTile("a", 5), heatTile("b", 4)];
+    expect(foldSmall(roomy, size, { id: "p1", min })).toEqual(heatOrder(roomy));
+    const tiles = [heatTile("a", 10), heatTile("b", 9), heatTile("tiny", 0.2)];
+    const shown = foldSmall(tiles, size, { id: "p1", min, keep: "tiny" });
+    expect(shown.some((tile) => tile.id === "tiny")).toBe(true);
+    // An existing quiet group folds by its members, not as one item.
+    const group: HeatTile = {
+      ...heatTile("quiet:p1", 0.3),
+      tone: "quiet",
+      item: null,
+      members: [{ id: "q1" } as WorkItem, { id: "q2" } as WorkItem],
+    };
+    const folded = foldSmall([heatTile("a", 30), group], size, {
+      id: "p1",
+      min,
+    });
+    expect(
+      folded.find((tile) => tile.overflow)?.members.map((member) => member.id),
+    ).toEqual(["q1", "q2"]);
+  });
+
+  it("lays open-area cards out at a minimum size and grows taller instead of shrinking them", () => {
+    const ids = Array.from({ length: 12 }, (_, index) => `t${index}`);
+    const { rects, height } = cardLayout(
+      ids,
+      { w: 400, h: 300 },
+      {
+        w: 150,
+        h: 90,
+      },
+    );
+    const cols = Math.max(
+      ...ids.map((id) => Math.round(100 / rects.get(id)!.w)),
+    );
+    expect(cols).toBeLessThanOrEqual(2);
+    expect(height).toBeGreaterThan(300);
+    for (const id of ids) {
+      const cell = rects.get(id)!;
+      expect((cell.h / 100) * height).toBeGreaterThanOrEqual(90 - 0.01);
+      expect((cell.w / 100) * 400).toBeGreaterThanOrEqual(150);
+    }
+    // With room to spare it is the plain grid.
+    expect(cardLayout(ids, { w: 1400, h: 900 }, { w: 150, h: 90 }).height).toBe(
+      900,
+    );
+  });
+});
+
+describe("area shares", () => {
+  it("never lets one heavy single-task area take more than about a third of the map", () => {
+    const day = 86400000;
+    const projects = ["a", "b", "c", "d"].map((id) => ({
+      id,
+      prefix: id.toUpperCase(),
+      name: `Project ${id}`,
+    }));
+    const tasks = [
+      // One task, as heavy as a task gets: input, urgent, three days late.
+      task({
+        id: "heavy",
+        projectId: "a",
+        key: "A-1",
+        status: "in_review",
+        priority: "urgent",
+        dateKind: "deadline",
+        dueDate: new Date(now - 3 * day).toISOString().slice(0, 10),
+        threadIds: ["thr_ask"],
+      }),
+      ...["b", "c", "d"].flatMap((projectId) =>
+        [1, 2, 3].map((n) =>
+          task({
+            id: `${projectId}${n}`,
+            projectId,
+            key: `${projectId.toUpperCase()}-${n}`,
+            status: "in_review",
+          }),
+        ),
+      ),
+    ];
+    const roots = buildMap(
+      { ...data(tasks), projects },
+      [thread({ id: "thr_ask", hasPendingInteraction: true })],
+      {},
+      now,
+    );
+    const areas = buildHeat(roots, now);
+    const rects = treemap(areas, { x: 0, y: 0, w: 1200, h: 700 });
+    const heavy = areas.find((area) => area.tiles.length === 1)!;
+    const cell = rects.get(heavy.id)!;
+    expect((cell.w * cell.h) / (1200 * 700)).toBeLessThanOrEqual(0.35);
+    // Still the heaviest: the cap never reorders the map.
+    expect(areas[0].id).toBe(heavy.id);
+  });
+
+  it("stops an open area growing where a neighbour would lose its name", () => {
+    // Weights shaped like the real map: an open area among eight.
+    const areas = [
+      { id: "open", weight: 6 },
+      { id: "n1", weight: 14 },
+      { id: "n2", weight: 10 },
+      { id: "n3", weight: 9 },
+      { id: "n4", weight: 5 },
+      { id: "n5", weight: 3 },
+      { id: "n6", weight: 1.5 },
+      { id: "n7", weight: 1.2 },
+    ];
+    const neighbours = areas.slice(1).map((area) => area.id);
+    const size = { w: 1110, h: 620 };
+    const rows = partition(areas, { x: 0, y: 0, ...size });
+    const share = openAreaShare(areas, "open", rows, size, 0.66);
+    expect(share).toBeGreaterThan(0);
+    const rects = place(rows, expandedWeights(areas, "open", share), {
+      x: 0,
+      y: 0,
+      ...size,
+    });
+    // Every neighbour that could say its name before the area opened still can.
+    const base = place(rows, expandedWeights(areas, undefined, 0), {
+      x: 0,
+      y: 0,
+      ...size,
+    });
+    const named = neighbours.filter(
+      (id) => base.get(id)!.w >= MIN_AREA.w && base.get(id)!.h >= MIN_AREA.h,
+    );
+    expect(named.length).toBeGreaterThan(4);
+    for (const id of named) {
+      expect(rects.get(id)!.w).toBeGreaterThanOrEqual(MIN_AREA.w - 0.5);
+      expect(rects.get(id)!.h).toBeGreaterThanOrEqual(MIN_AREA.h - 0.5);
+    }
+    // Uncapped, 66% would have crushed one of them.
+    const greedy = place(rows, expandedWeights(areas, "open", 0.66), {
+      x: 0,
+      y: 0,
+      ...size,
+    });
+    expect(
+      named.some(
+        (id) =>
+          greedy.get(id)!.w < MIN_AREA.w || greedy.get(id)!.h < MIN_AREA.h,
+      ),
+    ).toBe(true);
+    expect(share).toBeLessThan(0.66);
+  });
+
+  it("balances card rows: 16 cards in equal rows, 13 with no card alone", () => {
+    const rowsOf = (n: number, size: { w: number; h: number }) => {
+      const ids = Array.from({ length: n }, (_, index) => `t${index}`);
+      const { rects } = cardLayout(ids, size, { w: 150, h: 90 });
+      const rows = new Map<number, number>();
+      for (const id of ids) {
+        const y = rects.get(id)!.y;
+        rows.set(y, (rows.get(y) ?? 0) + 1);
+      }
+      return [...rows.values()];
+    };
+    const sixteen = rowsOf(16, { w: 1160, h: 600 });
+    expect(new Set(sixteen).size).toBe(1);
+    expect(sixteen.length).toBeGreaterThan(1);
+    for (const size of [
+      { w: 1160, h: 600 },
+      { w: 900, h: 700 },
+      { w: 700, h: 500 },
+    ])
+      expect(rowsOf(13, size)).not.toContain(1);
   });
 });

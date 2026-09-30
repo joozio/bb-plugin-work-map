@@ -150,7 +150,8 @@ function WorkMap() {
   const [refreshError, setRefreshError] = useState("");
   const [notice, setNotice] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
-  const [layoutMode, setLayoutMode] = useState<MapLayout>("overview");
+  // Unknown until the stored choice arrives, so neither layout paints first.
+  const [layoutMode, setLayoutMode] = useState<MapLayout | null>(null);
   const [heatFreeze, setHeatFreeze] = useState<WorkItem[] | null>(null);
   const [uncollapsed, setUncollapsed] = useState<string[]>([]);
   const [query, setQuery] = useState("");
@@ -259,11 +260,14 @@ function WorkMap() {
   );
   useEffect(() => {
     // A missing or failed choice keeps the default view; it is never an error.
+    // A choice made while it loads wins over the stored one.
     rpc.call("layout").then(
       (result) => {
-        if (live.current) setLayoutMode(result.layout);
+        if (live.current) setLayoutMode((mode) => mode ?? result.layout);
       },
-      () => undefined,
+      () => {
+        if (live.current) setLayoutMode((mode) => mode ?? "overview");
+      },
     );
   }, [rpc]);
   const chooseLayout = (next: MapLayout) => {
@@ -446,20 +450,25 @@ function WorkMap() {
     return index;
   }, [snapshot]);
   const needle = query.trim().toLowerCase();
-  const zoomDisabled = settling || launcher.busy || manager.busy || dragging;
-  const zoomControl = useMapZoom(
-    canvasRef,
-    worldRef,
-    selection?.id ?? expandedArea?.id,
-    zoomDisabled,
-  );
-  const { zoom } = zoomControl;
-  const density = zoomDensity(zoom, mapWidth);
-  const spatial = !expanded && !needle && filter === "all";
+  // The map, its counts and its layout toggle paint together, never one
+  // layout's chrome ahead of the stored choice.
+  const mapReady = !!snapshot && !!layoutMode;
   // A treemap shows everything: the root budget that keeps the overview
   // readable would hide areas that Heat has room for.
   const heatOn =
     layoutMode === "heat" && filter === "all" && !needle && !expanded;
+  const zoomDisabled = settling || launcher.busy || manager.busy || dragging;
+  // Heat already fits every area to the screen and its geometry ignores zoom,
+  // so the control and its gestures rest there rather than promise a change.
+  const zoomControl = useMapZoom(
+    canvasRef,
+    worldRef,
+    selection?.id ?? expandedArea?.id,
+    zoomDisabled || heatOn,
+  );
+  const { zoom } = zoomControl;
+  const density = zoomDensity(zoom, mapWidth);
+  const spatial = !expanded && !needle && filter === "all";
   // Fitting the collapsed Overview to the viewport is that layout's own sizing.
   // Heat fills the map itself and stacks into scrolling bands when narrow.
   const fitRequested =
@@ -769,6 +778,20 @@ function WorkMap() {
     // not depend on whether the host treats an initial prop as a request.
     if (chatOpen) setChatFocusRequest((request) => request + 1);
   }, [chatOpen, previewMode]);
+  // The native reply editor may take Escape for itself: closing its own menu
+  // keeps focus there, but leaving the editor drops focus on the page body,
+  // where the next Escape never reaches Work Map. Once the editor has had its
+  // turn, focus lost to nowhere goes to Back to summary, so Escape steps back.
+  const rescueChatEscape = () => {
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (
+        (!active || active === document.body) &&
+        chatToggleRef.current?.isConnected
+      )
+        chatToggleRef.current.focus({ preventScroll: true });
+    }, 0);
+  };
   const closeChat = () => {
     setChatTarget(null);
     requestAnimationFrame(() =>
@@ -2297,6 +2320,11 @@ function WorkMap() {
           event.stopPropagation();
           return;
         }
+        if (
+          event.key === "Escape" &&
+          (event.target as HTMLElement).closest?.(".wm-live-session")
+        )
+          rescueChatEscape();
         if (keyMovesLayout(event)) captureLayout();
       }}
       onKeyDown={(event) => {
@@ -2328,38 +2356,41 @@ function WorkMap() {
               </option>
             ))}
           </select>
-          <div
-            className="wm-filter-counts"
-            role="group"
-            aria-label="Attention counts"
-          >
-            <button
-              className="wm-filter wm-waiting"
-              aria-label={
-                heatOn
-                  ? `Show work that needs you (${counts.waiting})`
-                  : `Show work waiting for you (${counts.waiting})`
-              }
-              title={`${counts.waiting} ${heatOn ? "need you" : "waiting for you"}`}
-              aria-pressed={filter === "waiting"}
-              disabled={launcher.busy}
-              onClick={() => chooseFilter("waiting")}
+          {/* Counts wait for the tasks: a 0 while loading reads as a real 0. */}
+          {mapReady && (
+            <div
+              className="wm-filter-counts"
+              role="group"
+              aria-label="Attention counts"
             >
-              <i />
-              {counts.waiting}
-            </button>
-            <button
-              className="wm-filter wm-unread"
-              aria-label={`Show results ready to read (${counts.unread})`}
-              title={`${counts.unread} ready to read`}
-              aria-pressed={filter === "unread"}
-              disabled={launcher.busy}
-              onClick={() => chooseFilter("unread")}
-            >
-              <i />
-              {counts.unread}
-            </button>
-          </div>
+              <button
+                className="wm-filter wm-waiting"
+                aria-label={
+                  heatOn
+                    ? `Show work that needs you (${counts.waiting})`
+                    : `Show work waiting for you (${counts.waiting})`
+                }
+                title={`${counts.waiting} ${heatOn ? "need you" : "waiting for you"}`}
+                aria-pressed={filter === "waiting"}
+                disabled={launcher.busy}
+                onClick={() => chooseFilter("waiting")}
+              >
+                <i />
+                {counts.waiting}
+              </button>
+              <button
+                className="wm-filter wm-unread"
+                aria-label={`Show results ready to read (${counts.unread})`}
+                title={`${counts.unread} ready to read`}
+                aria-pressed={filter === "unread"}
+                disabled={launcher.busy}
+                onClick={() => chooseFilter("unread")}
+              >
+                <i />
+                {counts.unread}
+              </button>
+            </div>
+          )}
           <div className="wm-filters" role="group" aria-label="Filter work">
             {filters.map(([value, label]) => (
               <button
@@ -2371,7 +2402,7 @@ function WorkMap() {
               >
                 <i />
                 {label}
-                {value !== "all" && <b>{counts[value]}</b>}
+                {value !== "all" && mapReady && <b>{counts[value]}</b>}
               </button>
             ))}
           </div>
@@ -2427,7 +2458,11 @@ function WorkMap() {
               </button>
             ))}
           </div>
-          <ZoomControls {...zoomControl} disabled={zoomDisabled} />
+          <ZoomControls
+            {...zoomControl}
+            disabled={zoomDisabled}
+            inert={heatOn ? "Zoom applies to Overview" : undefined}
+          />
           <button
             type="button"
             className="wm-tool-icon"
@@ -2536,7 +2571,7 @@ function WorkMap() {
               </div>
             </div>
           )}
-          {!snapshot ? (
+          {!mapReady ? (
             <div className="wm-empty" role="status">
               {refreshError
                 ? "Task data is unavailable. Use Retry refresh above."
@@ -2551,7 +2586,9 @@ function WorkMap() {
               <p>
                 {needle
                   ? "Try a task key, project name or a few words from its title."
-                  : "Choose Overview to see the rest of your work."}
+                  : !snapshot?.projects.length && !items.length
+                    ? "No open work yet. Create a project or start a session."
+                    : "Choose Overview to see the rest of your work."}
               </p>
             </div>
           ) : (
@@ -2670,7 +2707,6 @@ function WorkMap() {
                       : undefined
                   }
                   now={now}
-                  detail={density.detail}
                   onOpen={openPreview}
                   onOpenArea={(heatArea) => {
                     if (heatArea.root) openPreview(heatArea.root);
@@ -2849,8 +2885,10 @@ function WorkMap() {
             pending={undoing}
             error={settledError}
           />
-          {/* Heat carries its own legend above the map; a second one repeats it. */}
-          {!heatOn && (
+          {/* Overview's legend only: Heat carries its own above the map, and a
+              search run from Heat is still Heat's, as is the wait for the
+              stored layout. */}
+          {layoutMode === "overview" && (
             <footer className="wm-footer">
               <span>
                 <span className="wm-legend-focus">Coral ring · Focus</span>

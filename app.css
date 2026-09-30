@@ -2231,8 +2231,11 @@ i.wm-heat-key {
   flex: none;
   max-width: 55%;
 }
-.wm-heat-area-tight .wm-heat-name em {
+.wm-heat-area-tight .wm-heat-name em:not(.wm-heat-orchestrated) {
   display: none;
+}
+.wm-heat-area-tight .wm-heat-name em.wm-heat-orchestrated {
+  max-width: none;
 }
 .wm-heat-actions {
   flex: none;
@@ -2267,6 +2270,15 @@ i.wm-heat-key {
   flex: 1;
   min-height: 0;
   padding: 3px;
+}
+/* The tiles' own box: the body's full padding box, as before, or a taller
+   grid of readable cards that the body scrolls through. */
+.wm-heat-cards {
+  position: absolute;
+  inset: 0;
+}
+.wm-heat-body-scroll {
+  overflow-y: auto;
 }
 .wm-heat-slot {
   position: absolute;
@@ -2542,6 +2554,16 @@ i.wm-heat-key.wm-heat-late {
   outline: 2px solid var(--wm-blue);
   outline-offset: -2px;
 }
+/* Tiles too small to read, folded: a name and a count, never a blank sliver. */
+.wm-heat-more {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+.wm-heat-more .wm-heat-meta {
+  font-size: 10px;
+  font-weight: 600;
+}
 .wm-heat-dots {
   display: flex;
   flex-wrap: wrap;
@@ -2566,6 +2588,34 @@ i.wm-heat-key.wm-heat-late {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card);
+}
+/* An open card's cover is only as tall as what it says; the details take the
+   rest. With chat open the details become a column and the live session fills
+   what is left, so the reply editor sits inside the card instead of under a
+   fixed 65vh timeline. Too little room: the details scroll, never the chat away. */
+.wm-heat-slot-open .wm-inline-detail:has(> .wm-session-view .wm-live-session) {
+  display: flex;
+  flex-direction: column;
+}
+.wm-heat-slot-open
+  .wm-inline-detail:has(> .wm-session-view .wm-live-session)
+  > * {
+  flex: none;
+}
+/* Sized from the remainder (basis 0), never from the timeline's own length,
+   with a floor of the session controls plus a readable chat. */
+.wm-heat-slot-open
+  .wm-inline-detail
+  > .wm-session-view:has(> .wm-live-session) {
+  flex: 1 1 0;
+  min-height: 290px;
+  display: flex;
+  flex-direction: column;
+}
+.wm-heat-slot-open .wm-session-view > .wm-live-session {
+  flex: 1 1 0;
+  min-height: 220px;
+  height: auto;
 }
 @media (prefers-reduced-motion: reduce) {
   .wm-heat-running {
@@ -2605,6 +2655,9 @@ i.wm-heat-key.wm-heat-late {
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+  }
+  .wm-heat-area-open .wm-heat-cards {
+    display: contents;
   }
   .wm-heat-area-open .wm-heat-slot {
     position: relative;
@@ -2663,13 +2716,14 @@ i.wm-heat-key.wm-heat-late {
   outline: 2px solid var(--wm-ink);
   outline-offset: -2px;
 }
-/* The act row is the card's footer: one shape, inside the same slot. */
+/* The act row is the card's footer: one shape, inside the same slot. A closed
+   card's cover grows over the slot; an open card's does not (see below). */
 .wm-heat-slot:has(.wm-tile-actions) {
   display: flex;
   flex-direction: column;
   gap: 0;
 }
-.wm-heat-slot:has(.wm-tile-actions) > .wm-heat-tile {
+.wm-heat-slot:not(.wm-heat-slot-open):has(.wm-tile-actions) > .wm-heat-tile {
   flex: 1 1 auto;
   height: auto;
   min-height: 0;
@@ -2805,12 +2859,15 @@ i.wm-heat-key.wm-heat-late {
   color: var(--wm-dim);
   white-space: nowrap;
 }
+/* Whole rows only (three here, fewer on narrow bars), a scrollbar that stays
+   visible, and a fade on the last row while more rows wait below. */
 .wm-bulk-picks {
   display: flex;
   flex-wrap: wrap;
   gap: 2px 10px;
-  max-height: 84px;
-  overflow: auto;
+  max-height: calc(3 * 24px + 2 * 2px);
+  overflow-y: auto;
+  scrollbar-width: thin;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -2827,6 +2884,16 @@ i.wm-heat-key.wm-heat-late {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.wm-bulk-picks::-webkit-scrollbar {
+  width: 6px;
+}
+.wm-bulk-picks::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--foreground) 30%, transparent);
+}
+.wm-bulk-picks-more {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent);
 }
 /* The confirmation lies over the tiles instead of pushing them: positions
    hold while you read the list, and Cancel leaves the area exactly as it was. */
@@ -2899,7 +2966,7 @@ i.wm-heat-key.wm-heat-late {
 }
 @container (max-width: 680px) {
   .wm-bulk-picks {
-    max-height: 56px;
+    max-height: calc(2 * 24px + 2px);
   }
 }
 /* A finger needs 36px: card acts, bulk acts and picker rows all grow, and the
@@ -2911,6 +2978,6 @@ i.wm-heat-key.wm-heat-late {
     min-height: 36px;
   }
   .wm-bulk-picks {
-    max-height: 112px;
+    max-height: calc(3 * 36px + 2 * 2px);
   }
 }
