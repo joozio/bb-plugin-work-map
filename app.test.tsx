@@ -449,6 +449,8 @@ async function mount(
     settleError?: boolean;
     manageRequests?: ManagementInput[];
     layout?: "overview" | "heat";
+    delegateRequests?: { requestId: string; taskId: string }[];
+    delegateError?: string;
   } = {},
 ) {
   const app = await loadPluginApp(() => import("./app"));
@@ -533,6 +535,23 @@ async function mount(
           };
           settled.push(result);
           return result;
+        },
+        delegatePreset: () => ({ preset: "wiz" }),
+        delegate: (input) => {
+          options.delegateRequests?.push({
+            requestId: input.requestId,
+            taskId: input.taskId,
+          });
+          if (options.delegateError) throw new Error(options.delegateError);
+          const target = tasks.find((row) => row.id === input.taskId);
+          return {
+            taskId: input.taskId,
+            taskKey: target?.key ?? "TEST-1",
+            threadId: `thr_agent_${input.taskId}`,
+            preset: "wiz",
+            movedFrom: target?.status === "in_review" ? "in_review" : null,
+            commented: true,
+          };
         },
         undoSettlement: ({ id }) => {
           const row = settled.find((row) => row.id === id)!;
@@ -2440,6 +2459,183 @@ describe("heat layout", () => {
   };
   const areas = (slot: { container: HTMLElement }) =>
     Array.from(slot.container.querySelectorAll<HTMLElement>(".wm-heat-area"));
+
+  /** Open Heat and expand the project area, which is where acts appear. */
+  const expandProject = async (slot: Awaited<ReturnType<typeof mount>>) => {
+    await slot.findByRole("button", { name: /^Open project Test project/ });
+    fireEvent.click(slot.getByRole("button", { name: "Heat layout" }));
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat")).toBeTruthy(),
+    );
+    fireEvent.click(
+      slot.getByRole("button", { name: /^Open project Test project/ }),
+    );
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-bulk")).toBeTruthy(),
+    );
+  };
+
+  it("offers acts on the tiles of an expanded area, not before", async () => {
+    const slot = await mount({ ...heatFixture(), layout: "heat" });
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat")).toBeTruthy(),
+    );
+    // A collapsed map is for reading. Nothing is one click from being settled.
+    expect(slot.container.querySelector(".wm-tile-actions")).toBeNull();
+    fireEvent.click(
+      slot.getByRole("button", { name: /^Open project Test project/ }),
+    );
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-tile-actions")).toBeTruthy(),
+    );
+    expect(
+      slot.getAllByRole("button", { name: /^Decide on your own · / }).length,
+    ).toBeGreaterThan(0);
+    slot.lifecycle.unmount();
+  });
+
+  it("delegates one task with the whole standing brief and its own request id", async () => {
+    const delegateRequests: { requestId: string; taskId: string }[] = [];
+    const slot = await mount({ ...heatFixture(), delegateRequests });
+    await expandProject(slot);
+    fireEvent.click(
+      slot.getByRole("button", {
+        name: "Decide on your own · Pick a direction",
+      }),
+    );
+    await waitFor(() => expect(delegateRequests).toHaveLength(1));
+    expect(delegateRequests[0].taskId).toBe("t1");
+    expect(delegateRequests[0].requestId).toMatch(/^[0-9a-f-]{36}$/);
+    // The map says where the work went, naming the preset that will run it.
+    await slot.findByText(/handed to an agent on wiz/);
+    slot.lifecycle.unmount();
+  });
+
+  it("names the count and every task before a bulk act runs", async () => {
+    const delegateRequests: { requestId: string; taskId: string }[] = [];
+    const slot = await mount({ ...heatFixture(), delegateRequests });
+    await expandProject(slot);
+    fireEvent.click(
+      slot.getByRole("button", { name: /^Let agents decide all/ }),
+    );
+    const confirm = await slot.findByRole("dialog");
+    expect(
+      within(confirm).getByRole("heading", {
+        name: "Let agents decide 3 tasks?",
+      }),
+    ).toBeTruthy();
+    for (const key of ["TEST-1", "TEST-2", "TEST-3"])
+      expect(within(confirm).getByText(key)).toBeTruthy();
+    expect(
+      within(confirm).getByText(/cannot unstart an agent that has already begun/),
+    ).toBeTruthy();
+    expect(within(confirm).getByText(/wiz/)).toBeTruthy();
+    // Nothing is dispatched by opening the confirmation.
+    expect(delegateRequests).toHaveLength(0);
+    fireEvent.click(
+      within(confirm).getByRole("button", { name: "Let agents decide 3 tasks" }),
+    );
+    await waitFor(() => expect(delegateRequests).toHaveLength(3));
+    expect(delegateRequests.map((call) => call.taskId)).toEqual([
+      "t1",
+      "t2",
+      "t3",
+    ]);
+    // One request id per task: a bulk run is never one dispatch repeated.
+    expect(new Set(delegateRequests.map((call) => call.requestId)).size).toBe(3);
+    slot.lifecycle.unmount();
+  });
+
+  it("acts on the picked subset only, and cancelling changes nothing", async () => {
+    const delegateRequests: { requestId: string; taskId: string }[] = [];
+    const slot = await mount({ ...heatFixture(), delegateRequests });
+    await expandProject(slot);
+    // The picker is shut by default so the area keeps its room for tiles.
+    expect(slot.queryByRole("checkbox", { name: /TEST-2/ })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Pick tasks" }));
+    fireEvent.click(slot.getByRole("checkbox", { name: /TEST-2/ }));
+    await slot.findByText(/1 of 3 picked/);
+    fireEvent.click(slot.getByRole("button", { name: /^Let agents decide 1/ }));
+    const confirm = await slot.findByRole("dialog");
+    expect(
+      within(confirm).getByRole("heading", { name: "Let agents decide 1 task?" }),
+    ).toBeTruthy();
+    expect(within(confirm).queryByText("TEST-1")).toBeNull();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
+    expect(delegateRequests).toHaveLength(0);
+    fireEvent.click(slot.getByRole("button", { name: /^Let agents decide 1/ }));
+    fireEvent.click(
+      within(await slot.findByRole("dialog")).getByRole("button", {
+        name: "Let agents decide 1 task",
+      }),
+    );
+    await waitFor(() => expect(delegateRequests).toHaveLength(1));
+    expect(delegateRequests[0].taskId).toBe("t2");
+    slot.lifecycle.unmount();
+  });
+
+  it("marks a task done through the same settlement that Undo reverses", async () => {
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({ ...heatFixture(), settleRequests });
+    await expandProject(slot);
+    fireEvent.click(
+      slot.getByRole("button", { name: "Done · Pick a direction" }),
+    );
+    await waitFor(() => expect(settleRequests).toHaveLength(1));
+    expect(settleRequests[0].action).toBe("done");
+    expect(settleRequests[0].taskId).toBe("t1");
+    // It lands in Settled today, which is where its Undo lives.
+    const strip = await slot.findByRole("region", { name: "Settled today" });
+    expect(within(strip).getByRole("button", { name: /Undo/ })).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+
+  it("keeps the area open through a bulk settle and refreshes once at the end", async () => {
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({ ...heatFixture(), settleRequests });
+    await expandProject(slot);
+    const before = slot.inspection.rpcCalls.filter(
+      (call) => call.method === "snapshot",
+    ).length;
+    fireEvent.click(slot.getByRole("button", { name: /^Mark all done/ }));
+    fireEvent.click(
+      within(await slot.findByRole("dialog")).getByRole("button", {
+        name: /^Mark \d+ tasks? done$/,
+      }),
+    );
+    await waitFor(() => expect(settleRequests.length).toBeGreaterThan(1));
+    // The area the run was started from is still the one you are looking at.
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat-area-open")).toBeTruthy(),
+    );
+    const after = slot.inspection.rpcCalls.filter(
+      (call) => call.method === "snapshot",
+    ).length;
+    expect(after - before).toBeLessThanOrEqual(2);
+    slot.lifecycle.unmount();
+  });
+
+  it("stops a bulk run at the first failure and says how far it got", async () => {
+    const delegateRequests: { requestId: string; taskId: string }[] = [];
+    const slot = await mount({
+      ...heatFixture(),
+      delegateRequests,
+      delegateError: "Preset is gone.",
+    });
+    await expandProject(slot);
+    fireEvent.click(
+      slot.getByRole("button", { name: /^Let agents decide all/ }),
+    );
+    fireEvent.click(
+      within(await slot.findByRole("dialog")).getByRole("button", {
+        name: "Let agents decide 3 tasks",
+      }),
+    );
+    await slot.findByText(/Stopped after 0 of 3; the rest are unchanged\./);
+    expect(delegateRequests).toHaveLength(1);
+    slot.lifecycle.unmount();
+  });
 
   it("stays off until chosen, then remembers the choice and sizes areas by pull", async () => {
     const slot = await mount(heatFixture());

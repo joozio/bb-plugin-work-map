@@ -2241,6 +2241,9 @@ i.wm-heat-key {
   max-height: 45%;
   overflow: auto;
 }
+.wm-heat-actions-frame {
+  display: contents;
+}
 /* Anchor the area menu in the action row, not on the absolute area box. */
 .wm-heat-actions > .wm-area-tools {
   position: relative;
@@ -2532,5 +2535,196 @@ i.wm-heat-key.wm-heat-stale {
   }
   .wm-heat-legend {
     justify-content: flex-start;
+  }
+}
+
+/* ── An expanded area is a place to act ───────────────────────────────── */
+/* Tiles inside an expanded area read like small cards: the facts and the
+   agent's latest line take the room the bigger tile just gained. */
+.wm-heat-facts {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 9.5px;
+  line-height: 1.35;
+  opacity: 0.75;
+}
+.wm-heat-facts em {
+  font-style: normal;
+  white-space: nowrap;
+}
+.wm-heat-line {
+  flex: none;
+  font-size: 10px;
+  line-height: 1.35;
+  opacity: 0.9;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+.wm-heat-picked {
+  outline: 2px solid var(--wm-ink);
+  outline-offset: -2px;
+}
+/* The action row sits over the foot of its tile, inside the same slot. */
+.wm-heat-slot:has(.wm-tile-actions) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wm-heat-slot:has(.wm-tile-actions) > .wm-heat-tile {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+.wm-heat-inside .wm-heat-title {
+  flex: 0 1 auto;
+  min-height: 1.22em;
+}
+.wm-heat-inside .wm-heat-facts,
+.wm-heat-inside .wm-heat-line,
+.wm-heat-inside .wm-heat-reason {
+  flex: none;
+}
+.wm-tile-actions {
+  flex: none;
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+}
+.wm-tile-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--wm-ink);
+  font-size: 9.5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.wm-tile-action svg {
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
+.wm-tile-action:not(:disabled):hover {
+  background: var(--accent);
+}
+.wm-tile-action:disabled {
+  opacity: 0.5;
+}
+.wm-tile-delegate {
+  border-color: color-mix(in srgb, var(--wm-green) 55%, var(--border));
+}
+/* Below this the labels stop fitting; the icon and its aria-label carry it. */
+.wm-heat-slot:has(.wm-tile-actions) {
+  container-type: inline-size;
+}
+@container (max-width: 330px) {
+  .wm-tile-done span,
+  .wm-tile-snooze span {
+    display: none;
+  }
+  .wm-tile-done,
+  .wm-tile-snooze {
+    padding: 0 5px;
+  }
+}
+@container (max-width: 148px) {
+  .wm-tile-action span {
+    display: none;
+  }
+  .wm-tile-action {
+    padding: 0 5px;
+  }
+}
+.wm-tile-delegate span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wm-bulk {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.wm-bulk-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.wm-bulk-hint {
+  font-size: 10px;
+  color: var(--wm-dim);
+}
+.wm-bulk-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  max-height: 84px;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.wm-bulk-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 260px;
+  font-size: 10.5px;
+}
+.wm-bulk-pick span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wm-bulk-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.wm-bulk-confirm h4 {
+  font-size: 12px;
+  font-weight: 600;
+}
+.wm-bulk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 190px;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 10.5px;
+}
+.wm-bulk-list b {
+  font-weight: 600;
+}
+.wm-bulk-skip,
+.wm-bulk-note {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--wm-dim);
+}
+@container (max-width: 680px) {
+  .wm-bulk-picks {
+    max-height: 56px;
   }
 }

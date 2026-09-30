@@ -42,6 +42,8 @@ import { SESSIONS_AREA, buildHeat, heatStats, type HeatArea } from "./heat";
 import { HeatMap } from "./heat-view";
 import { useSessionLauncher } from "./session-launcher";
 import { SettlementActions, SettledToday } from "./settlement-actions";
+import { AreaBulkActions, TileActions } from "./quick-actions";
+import { ACTION_LABEL, type QuickAction } from "./delegation";
 import type { Settlement } from "./settlement-contract";
 import { AreaTools, ProjectDot, useAreaManager } from "./management-ui";
 import type { ManagementResult } from "./management-contract";
@@ -163,6 +165,12 @@ function WorkMap() {
   const [settling, setSettling] = useState(false);
   const [settled, setSettled] = useState<Settlement[]>([]);
   const [settledError, setSettledError] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  const [acting, setActing] = useState<{ id: string; action: QuickAction } | null>(
+    null,
+  );
+  const [bulk, setBulk] = useState<QuickAction | null>(null);
+  const [preset, setPreset] = useState("wiz");
   const [undoing, setUndoing] = useState<string | null>(null);
   const undoLock = useRef(false);
   const live = useRef(true);
@@ -601,7 +609,14 @@ function WorkMap() {
       (i.focus || i.signal !== "inactive") &&
       !shown.some((s) => s.id === i.id),
   ).length;
-  const visibleThreads = (heatOn ? (selected ? [selected] : []) : shown)
+  const heatExcerptItems = heatOn
+    ? [
+        ...(selected ? [selected] : []),
+        // Bounded on purpose: an expanded area, not the whole treemap.
+        ...(area ? area.children.slice(0, 16) : []),
+      ]
+    : [];
+  const visibleThreads = (heatOn ? heatExcerptItems : shown)
     .flatMap((i) => (i.kind === "thread" ? i.threads : []))
     .map((t) => t.id)
     .sort()
@@ -967,17 +982,107 @@ function WorkMap() {
       setActiveSession(null);
     } else close();
   };
-  const afterSettlement = (result: Settlement) => {
-    captureLayout();
+  const recordSettlement = (result: Settlement) => {
     setSettled((rows) => [
       result,
       ...rows.filter((row) => row.id !== result.id),
     ]);
     setSettledError("");
+  };
+  const afterSettlement = (result: Settlement) => {
+    captureLayout();
+    recordSettlement(result);
     close();
     setInspectionLayout(null);
     void refresh(true);
   };
+  // One act on one piece of work. Done and Snooze reuse the settlement service
+  // that the expanded details already use, so they land in Settled today with
+  // the same Undo. Delegate is its own path: it hands the task to an agent.
+  const runAction = async (
+    action: QuickAction,
+    item: WorkItem,
+    // A bulk run settles many in a row: collapsing the area and refreshing the
+    // map after each one would fight the run it is part of.
+    quiet = false,
+  ) => {
+    if (!item.task) return;
+    if (action === "delegate") {
+      const result = await rpc.call("delegate", {
+        requestId: crypto.randomUUID(),
+        taskId: item.task.id,
+        expectedUpdatedAt: item.task.updatedAt,
+      });
+      return `${result.taskKey} handed to an agent on ${result.preset}${result.movedFrom ? ", out of review" : ""}.`;
+    }
+    const result = await rpc.call("settle", {
+      id: `${Date.now()}-${crypto.randomUUID()}`,
+      action: action === "done" ? "done" : "pause",
+      taskId: item.task.id,
+      expectedUpdatedAt: item.task.updatedAt,
+      nextAction: action === "done" ? "" : item.task.nextAction,
+      reviewBy: "me",
+      reviewer: "",
+    });
+    if (quiet) recordSettlement(result);
+    else afterSettlement(result);
+    return null;
+  };
+  const act = async (action: QuickAction, item: WorkItem) => {
+    if (acting || bulk || settling) return;
+    setActing({ id: item.id, action });
+    setSettledError("");
+    try {
+      const note = await runAction(action, item);
+      if (note) {
+        setNotice(note);
+        await refresh(true);
+      }
+    } catch (cause) {
+      setSettledError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setActing(null);
+    }
+  };
+  // A bulk act is the same act repeated in order, never a different code path.
+  // One failure stops the run so the rest stay exactly as they were.
+  const actAll = async (action: QuickAction, items: WorkItem[]) => {
+    if (acting || bulk || settling || !items.length) return;
+    setBulk(action);
+    setSettledError("");
+    let done = 0;
+    try {
+      for (const item of items) {
+        await runAction(action, item, true);
+        done += 1;
+      }
+      setNotice(
+        `${ACTION_LABEL[action]} · ${done} of ${items.length} ${items.length === 1 ? "task" : "tasks"}.`,
+      );
+      setPicked([]);
+    } catch (cause) {
+      setSettledError(
+        `${cause instanceof Error ? cause.message : String(cause)} Stopped after ${done} of ${items.length}; the rest are unchanged.`,
+      );
+    } finally {
+      setBulk(null);
+      await refresh(true);
+    }
+  };
+  useEffect(() => {
+    let canceled = false;
+    rpc
+      .call("delegatePreset")
+      .then((result) => {
+        if (!canceled) setPreset(result.preset);
+      })
+      .catch(() => {
+        /* The confirmation falls back to the documented preset name. */
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [rpc]);
   const undoSettlement = async (id: string) => {
     if (undoLock.current) return;
     undoLock.current = true;
@@ -1419,6 +1524,11 @@ function WorkMap() {
   function heatAreaActions(heatArea: HeatArea) {
     const root = heatArea.root;
     if (!root) return null;
+    // Only the work the area actually shows can be acted on in bulk: a hidden
+    // or collapsed quiet task is not something you just agreed to close.
+    const actionable = heatArea.tiles
+      .map((tile) => tile.item)
+      .filter((item): item is WorkItem => !!item?.task);
     return (
       <div
         className="wm-area-actions wm-heat-actions"
@@ -1456,6 +1566,27 @@ function WorkMap() {
           hidden={!!preferences[root.id]?.hidden}
           onAction={(action) => manageArea(root, action)}
         />
+        {actionable.length > 0 && (
+          <AreaBulkActions
+            title={heatArea.title}
+            items={actionable}
+            selected={picked.filter((id) =>
+              actionable.some((item) => item.id === id),
+            )}
+            disabled={settling || launcher.busy || manager.busy || !!acting}
+            running={bulk}
+            preset={preset}
+            onToggle={(id) =>
+              setPicked((current) =>
+                current.includes(id)
+                  ? current.filter((other) => other !== id)
+                  : [...current, id],
+              )
+            }
+            onClearSelection={() => setPicked([])}
+            onRun={(action, items) => void actAll(action, items)}
+          />
+        )}
         {manager.inlineProjectId === root.id.slice(8) && manager.inline}
         {launcher.context?.id === root.id && (
           <>
@@ -2365,6 +2496,18 @@ function WorkMap() {
                   }}
                   onDragEnd={() => setDragging(false)}
                   areaActions={heatAreaActions}
+                  selected={picked}
+                  tileActions={(item) => (
+                    <TileActions
+                      item={item}
+                      disabled={settling || launcher.busy || !!bulk}
+                      busy={acting?.id === item.id ? acting.action : null}
+                      onAct={(action, target) => void act(action, target)}
+                    />
+                  )}
+                  excerpt={(item) =>
+                    detailExcerpts[item.threads[0]?.id ?? ""] ?? ""
+                  }
                   tileDetails={
                     inspecting && selected && selected.kind !== "project"
                       ? details()

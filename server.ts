@@ -7,6 +7,7 @@ import { settlementService } from "./settlement";
 import { managementContract } from "./management-contract";
 import { managementService } from "./management";
 import { managementUsage, runManagementCli } from "./management-cli";
+import { delegationContract, delegationService } from "./delegate-service";
 import {
   sessionRequestSchema,
   sessionResultSchema,
@@ -95,6 +96,7 @@ const itemId = z
 export const rpcContract = defineRpcContract({
   ...settlementContract,
   ...managementContract,
+  ...delegationContract,
   createSession: {
     input: z.object({
       requestId: z.string().uuid(),
@@ -388,6 +390,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(rpcContract, {
     ...management,
     ...settlementService(bb, invalidate),
+    ...delegationService(bb, invalidate),
     createSession: ({ requestId, request, taskId }) => {
       const existing = creations.get(requestId);
       if (existing)

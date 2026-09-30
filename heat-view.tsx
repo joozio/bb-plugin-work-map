@@ -41,6 +41,11 @@ export interface HeatProps {
   onDragEnd: () => void;
   areaActions?: (area: HeatArea) => ReactNode;
   tileDetails?: ReactNode;
+  /** Rendered on each tile of the expanded area, beneath its text. */
+  tileActions?: (item: WorkItem) => ReactNode;
+  /** One line of live agent text for a tile, when the map already has it. */
+  excerpt?: (item: WorkItem) => string;
+  selected?: string[];
 }
 export function HeatMap({
   areas,
@@ -54,6 +59,9 @@ export function HeatMap({
   onDragEnd,
   areaActions,
   tileDetails,
+  tileActions,
+  excerpt,
+  selected,
 }: HeatProps) {
   const frame = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState(FALLBACK);
@@ -66,6 +74,20 @@ export function HeatMap({
     observer.observe(frame.current);
     return () => observer.disconnect();
   }, []);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const [actionsHeight, setActionsHeight] = useState(0);
+  useEffect(() => {
+    const node = actionsRef.current;
+    if (!node || typeof ResizeObserver === "undefined") {
+      setActionsHeight(0);
+      return;
+    }
+    const observer = new ResizeObserver(([entry]) =>
+      setActionsHeight(entry.contentRect.height),
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [expandedAreaId]);
   const ordered = useMemo(() => heatOrder(areas), [areas]);
   const layout = useMemo(() => {
     const rects = place(
@@ -76,11 +98,18 @@ export function HeatMap({
     return ordered.map((area) => {
       const rect = rects.get(area.id) ?? UNIT;
       const tiles = heatOrder(area.tiles);
+      const bodyHeight = Math.max(
+        1,
+        (rect.h / 100) * size.height -
+          HEADER -
+          BODY_PAD -
+          (area.id === expandedAreaId ? actionsHeight : 0),
+      );
       const inner = place(
         partition(tiles, {
           ...UNIT,
           w: (rect.w / 100) * size.width,
-          h: (rect.h / 100) * size.height,
+          h: bodyHeight,
         }),
         expandedWeights(
           tiles,
@@ -89,16 +118,23 @@ export function HeatMap({
         ),
         UNIT,
       );
-      return { area, rect, tiles, inner };
+      return { area, rect, tiles, inner, bodyHeight };
     });
-  }, [ordered, expandedAreaId, expandedItemId, size.width, size.height]);
+  }, [
+    ordered,
+    expandedAreaId,
+    expandedItemId,
+    size.width,
+    size.height,
+    actionsHeight,
+  ]);
   return (
     <div
       className="wm-heat"
       ref={frame}
       style={{ "--wm-heat-areas": ordered.length } as CSSProperties}
     >
-      {layout.map(({ area, rect, tiles, inner }) => {
+      {layout.map(({ area, rect, tiles, inner, bodyHeight }) => {
         const open = area.id === expandedAreaId;
         const width = (rect.w / 100) * size.width;
         const height = (rect.h / 100) * size.height;
@@ -130,7 +166,11 @@ export function HeatMap({
                 </em>
               </button>
             </header>
-            {open && areaActions?.(area)}
+            {open && (
+              <div className="wm-heat-actions-frame" ref={actionsRef}>
+                {areaActions?.(area)}
+              </div>
+            )}
             <div className="wm-heat-body">
               {tiles.map((tile) => {
                 const cell = inner.get(tile.id) ?? UNIT;
@@ -140,9 +180,7 @@ export function HeatMap({
                     tile={tile}
                     rect={cell}
                     width={(cell.w / 100) * Math.max(0, width - BODY_PAD)}
-                    height={
-                      (cell.h / 100) * Math.max(0, height - HEADER - BODY_PAD)
-                    }
+                    height={(cell.h / 100) * bodyHeight}
                     area={area}
                     now={now}
                     detail={detail}
@@ -152,6 +190,9 @@ export function HeatMap({
                     onDragStart={onDragStart}
                     onDragEnd={onDragEnd}
                     details={tileDetails}
+                    actions={open ? tileActions : undefined}
+                    excerpt={open ? excerpt : undefined}
+                    picked={!!selected?.includes(tile.item?.id ?? "")}
                   />
                 );
               })}
@@ -176,6 +217,9 @@ function Tile({
   onDragStart,
   onDragEnd,
   details,
+  actions,
+  excerpt,
+  picked,
 }: {
   tile: HeatTile;
   rect: Rect;
@@ -190,6 +234,9 @@ function Tile({
   onDragStart: (event: DragEvent, item: WorkItem) => void;
   onDragEnd: () => void;
   details?: ReactNode;
+  actions?: (item: WorkItem) => ReactNode;
+  excerpt?: (item: WorkItem) => string;
+  picked?: boolean;
 }) {
   const item = tile.item;
   // Title from 30px of height; a key alone down to 30px of width; below that, colour only.
@@ -245,10 +292,43 @@ function Tile({
       : item.task && detail > 0
         ? shortAge
         : "";
+  // Inside an expanded area a tile is a small card: it spends its room on the
+  // state of the work rather than on empty fill. Tiles too small to hold a
+  // title cannot hold facts either, so they keep exactly what they had.
+  const inside = !!actions && !tiny && height > 74 && width > 104;
+  const dense = inside && height > 104 && width > 132;
+  const status = item.task?.nextAction || item.task?.summary || "";
+  const attached = item.task?.sessionLinks?.length ?? item.threads.length;
+  const facts = dense
+    ? [
+        item.reason,
+        item.task && item.task.priority !== "none"
+          ? `${item.task.priority} priority`
+          : "",
+        working
+          ? "agent running"
+          : attached
+            ? `${attached} session${attached === 1 ? "" : "s"}`
+            : "",
+        item.task?.waitingOn && item.task.waitingOn !== "none"
+          ? `waiting on ${item.task.waitingOn}`
+          : "",
+      ].filter(Boolean)
+    : [];
+  // One line only: the agent's latest word if the map has it, else the next step.
+  const line =
+    (dense && height > 86 && (excerpt?.(item) || status).trim()) || "";
   // Clamp the title to the lines that actually fit, so nothing is cut mid-word.
+  const rows = (roomy && !facts.length ? 1 : 0) + (facts.length ? 1 : 0) + (line ? 1 : 0);
+  const spent =
+    27 +
+    (roomy && !facts.length ? 14 : 0) +
+    (facts.length ? 14 : 0) +
+    (line ? 16 : 0) +
+    rows * 2;
   const lines = Math.max(
     1,
-    Math.min(4, Math.floor((height - 27 - (roomy ? 14 : 0)) / 14)),
+    Math.min(4, Math.floor((height - spent - (inside ? 22 : 0)) / 14)),
   );
   return (
     <div
@@ -262,7 +342,7 @@ function Tile({
         data-level={tile.level}
         aria-expanded={open}
         aria-controls={open ? `detail-${item.id}` : undefined}
-        className={`wm-heat-tile wm-heat-${tile.tone} ${working ? "wm-heat-running" : ""} ${item.focus ? "wm-heat-focused" : ""} ${tile.stale ? "wm-heat-stale" : ""} ${tiny ? "wm-heat-tiny" : ""} ${sliver ? "wm-heat-sliver" : ""} ${!open && width < 118 ? "wm-heat-narrow" : ""} ${!open && width < 72 ? "wm-heat-keyonly" : ""}`}
+        className={`wm-heat-tile wm-heat-${tile.tone} ${working ? "wm-heat-running" : ""} ${item.focus ? "wm-heat-focused" : ""} ${tile.stale ? "wm-heat-stale" : ""} ${tiny ? "wm-heat-tiny" : ""} ${sliver ? "wm-heat-sliver" : ""} ${!open && width < 118 ? "wm-heat-narrow" : ""} ${!open && width < 72 ? "wm-heat-keyonly" : ""} ${picked ? "wm-heat-picked" : ""} ${inside ? "wm-heat-inside" : ""}`}
         draggable
         onDragStart={(event) => onDragStart(event, item)}
         onDragEnd={onDragEnd}
@@ -290,8 +370,19 @@ function Tile({
           <span>{right}</span>
         </span>
         {!tiny && <span className="wm-heat-title">{title}</span>}
-        {roomy && <span className="wm-heat-reason">{item.reason}</span>}
+        {roomy && !facts.length && (
+          <span className="wm-heat-reason">{item.reason}</span>
+        )}
+        {dense && facts.length > 0 && (
+          <span className="wm-heat-facts">
+            {facts.map((fact) => (
+              <em key={fact}>{fact}</em>
+            ))}
+          </span>
+        )}
+        {dense && line && <span className="wm-heat-line">{line}</span>}
       </button>
+      {inside && actions?.(item)}
       {open && details}
     </div>
   );
