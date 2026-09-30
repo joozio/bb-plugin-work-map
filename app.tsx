@@ -166,9 +166,10 @@ function WorkMap() {
   const [settled, setSettled] = useState<Settlement[]>([]);
   const [settledError, setSettledError] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
-  const [acting, setActing] = useState<{ id: string; action: QuickAction } | null>(
-    null,
-  );
+  const [acting, setActing] = useState<{
+    id: string;
+    action: QuickAction;
+  } | null>(null);
   const [bulk, setBulk] = useState<QuickAction | null>(null);
   const [preset, setPreset] = useState("wiz");
   const [undoing, setUndoing] = useState<string | null>(null);
@@ -573,9 +574,7 @@ function WorkMap() {
   const heatAreas = heatOn
     ? buildHeat(heatRoots, now, {
         uncollapsed:
-          area?.kind === "project"
-            ? [...uncollapsed, area.id]
-            : uncollapsed,
+          area?.kind === "project" ? [...uncollapsed, area.id] : uncollapsed,
       })
     : [];
   const heat = heatOn ? heatStats(heatAreas, now) : null;
@@ -2394,7 +2393,8 @@ function WorkMap() {
                         [heat.waiting, "waiting for you", "waiting"],
                         [heat.unread, "ready to read", "unread"],
                         [heat.running, "agents running", "working"],
-                        [heat.stale, "waiting 30d+", "stale"],
+                        [heat.overdue, "past date", "overdue"],
+                        [heat.aged, "undated 30d+", "aged"],
                       ] as [number, string, string][]
                     ).map(([count, label, tone]) => (
                       <div key={label} data-tone={tone}>
@@ -2412,7 +2412,8 @@ function WorkMap() {
                         ["unread", "Ready to read"],
                         ["working", "Agent working"],
                         ["focused", "In focus"],
-                        ["stale", "Waiting over 30 days"],
+                        ["overdue", "Past due / planned date"],
+                        ["aged", "Undated 30d+"],
                       ] as [string, string][]
                     ).map(([tone, label]) => (
                       <span key={tone}>
@@ -2430,10 +2431,10 @@ function WorkMap() {
                           />
                         ))}
                       </i>
-                      Deeper = pulls harder
+                      Deeper = closer date / older undated task
                     </span>
                     <span className="wm-heat-hint">
-                      Size = pull · 81d = days waiting on you
+                      Size = urgency · Due date first, otherwise creation age
                     </span>
                     <span className="wm-heat-hint">
                       {heatFreeze
@@ -2624,22 +2625,22 @@ function WorkMap() {
               )}
               {!heatOn &&
                 browseCount > (fitting ? shown.length : visible.length) && (
-                <button
-                  className="wm-more"
-                  onClick={() => {
-                    setSelection(null);
-                    setExpandedArea(null);
-                    setActiveSession(null);
-                    setExpanded(true);
-                  }}
-                >
-                  {hiddenImportant
-                    ? `${hiddenImportant} more active or focused areas · `
-                    : ""}
-                  Show all {browseCount} areas and sessions{" "}
-                  <span aria-hidden="true">↗</span>
-                </button>
-              )}
+                  <button
+                    className="wm-more"
+                    onClick={() => {
+                      setSelection(null);
+                      setExpandedArea(null);
+                      setActiveSession(null);
+                      setExpanded(true);
+                    }}
+                  >
+                    {hiddenImportant
+                      ? `${hiddenImportant} more active or focused areas · `
+                      : ""}
+                    Show all {browseCount} areas and sessions{" "}
+                    <span aria-hidden="true">↗</span>
+                  </button>
+                )}
             </div>
           )}
           <SettledToday
@@ -2671,8 +2672,8 @@ function WorkMap() {
                 ? heatOn
                   ? "Rotation paused in Heat"
                   : zoom !== 1
-                  ? "Rotation paused while zoomed"
-                  : "Rotation on"
+                    ? "Rotation paused while zoomed"
+                    : "Rotation on"
                 : "Rotation paused"}
             </button>
           </footer>

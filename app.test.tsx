@@ -10,6 +10,7 @@ import {
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { data, task, thread } from "./fixtures";
 import { sessionPreview } from "./preview";
+import { localDay } from "./model";
 import type { rpcContract, MapTask, Preference } from "./server";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import {
@@ -2423,7 +2424,69 @@ describe("preview and native navigation", () => {
 });
 
 describe("heat layout", () => {
-  it("shows the current review wait and omits unknown age without inventing today", async () => {
+  it("shows current due dates and old undated backlog with distinct timing marks", async () => {
+    const current = Date.now();
+    const days = (offset: number) => localDay(current + offset * 86400000);
+    const slot = await mount({
+      layout: "heat",
+      threads: [],
+      tasks: [
+        task({
+          id: "recurring",
+          title: "Weekly check",
+          status: "in_review",
+          dateKind: "deadline",
+          dueDate: days(0),
+          createdAt: new Date(current - 300 * 86400000).toISOString(),
+        }),
+        task({
+          id: "late",
+          title: "Late decision",
+          dateKind: "deadline",
+          dueDate: days(-2),
+        }),
+        task({
+          id: "near",
+          title: "Near deadline",
+          dateKind: "deadline",
+          dueDate: days(3),
+        }),
+        task({
+          id: "backlog",
+          title: "Old idea",
+          status: "backlog",
+          createdAt: new Date(current - 90 * 86400000).toISOString(),
+        }),
+        ...Array.from({ length: 10 }, (_, index) =>
+          task({
+            id: `quiet${index}`,
+            title: `New idea ${index}`,
+            status: "backlog",
+            createdAt: new Date(current).toISOString(),
+          }),
+        ),
+      ],
+    });
+    const recurring = await slot.findByRole("button", {
+      name: /^Preview Weekly check/,
+    });
+    const late = slot.getByRole("button", { name: /^Preview Late decision/ });
+    const near = slot.getByRole("button", { name: /^Preview Near deadline/ });
+    const backlog = slot.getByRole("button", { name: /^Preview Old idea/ });
+    expect(recurring.textContent).toContain("Due today");
+    expect(recurring.textContent).not.toContain("300d");
+    expect(recurring.getAttribute("data-level")).toBe("4");
+    expect(late.textContent).toContain("2d overdue");
+    expect(late.className).toContain("wm-heat-overdue");
+    expect(near.textContent).toContain("Due in 3d");
+    expect(near.getAttribute("data-level")).toBe("2");
+    expect(backlog.textContent).toContain("90d old");
+    expect(backlog.className).toContain("wm-heat-aged");
+    expect(backlog.getAttribute("data-level")).toBe("4");
+    expect(backlog.getAttribute("aria-label")).toContain("no due date");
+    slot.lifecycle.unmount();
+  });
+  it("labels undated tasks by creation age and keeps verified review waits separate", async () => {
     const current = Date.now();
     const slot = await mount({
       layout: "heat",
@@ -2453,7 +2516,8 @@ describe("heat layout", () => {
     expect(known.getAttribute("aria-label")).toContain(
       "Waiting less than a day",
     );
-    expect(known.textContent).toContain("<1d");
+    expect(known.textContent).toContain("40d old");
+    expect(unknown.textContent).toContain("40d old");
     expect(unknown.getAttribute("aria-label")).not.toContain("Waiting");
     expect(unknown.textContent).not.toContain("today");
     expect(
@@ -2778,11 +2842,10 @@ describe("heat layout", () => {
     slot.lifecycle.unmount();
   });
 
-  it("colours tiles from the existing attention channels and marks stale waiting", async () => {
+  it("preserves attention channels while marking aged undated work", async () => {
     const fixture = heatFixture();
     fixture.threads[0].latestAttentionAt = Date.now() - 44 * 86400000;
-    // The task was created 44 days ago and an agent touched it yesterday:
-    // the wait is measured from when it started needing you, not from activity.
+    // Routine edits reset neither creation age nor the current input wait.
     fixture.tasks[0].createdAt = new Date(
       Date.now() - 44 * 86400000,
     ).toISOString();
@@ -2795,7 +2858,7 @@ describe("heat layout", () => {
       name: /^Preview Decide: pick a direction/,
     });
     expect(tile.className).toContain("wm-heat-input");
-    expect(tile.className).toContain("wm-heat-stale");
+    expect(tile.className).toContain("wm-heat-aged");
     expect(tile.getAttribute("aria-label")).toContain("Needs your input");
     expect(tile.getAttribute("aria-label")).toContain("Waiting 44 days");
     expect(
@@ -2804,13 +2867,13 @@ describe("heat layout", () => {
     expect(
       slot.getByRole("button", { name: /^Preview Live agent/ }).className,
     ).toContain("wm-heat-running");
-    expect(slot.getByText("44d")).toBeTruthy();
+    expect(slot.getByText("44d old")).toBeTruthy();
     // The verb moves to the label line; the title keeps its words.
     expect(tile.querySelector(".wm-heat-ask")?.textContent).toBe("decide");
     expect(tile.querySelector(".wm-heat-title")?.textContent).toBe(
       "pick a direction",
     );
-    expect(tile.getAttribute("data-level")).toBe("4");
+    expect(tile.getAttribute("data-level")).toBe("3");
     expect(
       Array.from(slot.container.querySelectorAll(".wm-heat-counts > div")).map(
         (entry) => entry.textContent,
@@ -2819,7 +2882,8 @@ describe("heat layout", () => {
       "1waiting for you",
       "1ready to read",
       "1agents running",
-      "1waiting 30d+",
+      "0past date",
+      "1undated 30d+",
     ]);
     // Heat already holds every area, so the overview's Show all has nothing to add.
     expect(slot.container.querySelector(".wm-more")).toBeNull();

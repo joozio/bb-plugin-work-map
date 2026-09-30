@@ -2378,7 +2378,7 @@ i.wm-heat-key {
 }
 /* Attention colours are the map's own channels; nothing new is invented here.
    Hue is what the work needs. Depth (data-level 1 to 4) is how hard it pulls:
-   priority, a wait past 30 days, focus. Deep tiles switch to dark ink. */
+   current due date, otherwise creation age. Deep tiles switch to dark ink. */
 .wm-heat-input,
 i.wm-heat-key.wm-heat-input {
   background: var(--wm-orange);
@@ -2444,6 +2444,46 @@ i.wm-heat-key.wm-heat-unread {
   color: var(--wm-dim);
   background: color-mix(in srgb, var(--muted) 40%, var(--card));
 }
+/* Dated and aging backlog work must remain visible even without a review state. */
+.wm-heat-quiet[data-timing][data-level="2"],
+.wm-heat-working[data-timing][data-level="2"] {
+  background: color-mix(in srgb, var(--wm-orange) 32%, var(--card));
+  color: var(--foreground);
+}
+.wm-heat-quiet[data-timing][data-level="3"],
+.wm-heat-working[data-timing][data-level="3"] {
+  background: color-mix(in srgb, var(--wm-orange) 68%, var(--card));
+  color: #2a1a06;
+}
+.wm-heat-quiet[data-timing][data-level="4"],
+.wm-heat-working[data-timing][data-level="4"] {
+  background: color-mix(in srgb, var(--wm-orange) 92%, #ff6a1a);
+  color: #2a1a06;
+}
+/* Match the depth selectors' specificity so their background shorthand cannot
+   erase the overdue hatch or replace its red edge. */
+.wm-heat-tile.wm-heat-overdue[data-level] {
+  border: 2px solid var(--destructive);
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 9px,
+    rgb(42 26 6 / 0.16) 9px 11px
+  );
+}
+.wm-heat-overdue .wm-heat-meta > span:last-child {
+  font-weight: 800;
+}
+i.wm-heat-key.wm-heat-overdue {
+  border: 2px solid var(--destructive);
+  background: var(--wm-orange);
+}
+.wm-heat-aged {
+  border-style: dashed;
+}
+i.wm-heat-key.wm-heat-aged {
+  border: 1px dashed var(--wm-orange);
+  background: color-mix(in srgb, var(--wm-orange) 32%, var(--card));
+}
 /* Running is an outline, so it can sit on any attention colour at once. */
 .wm-heat-running,
 i.wm-heat-key.wm-heat-working {
@@ -2454,7 +2494,8 @@ i.wm-heat-key.wm-heat-working {
 }
 @keyframes wm-heat-pulse {
   50% {
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--wm-green) 35%, transparent);
+    box-shadow: inset 0 0 0 2px
+      color-mix(in srgb, var(--wm-green) 35%, transparent);
   }
 }
 .wm-heat-focused,

@@ -310,21 +310,21 @@ function Tile({
   const shortAge = age.replace(/^Active /, "").replace(/ ago$/, "");
   const working = isWorking(item);
   const waiting = needsYou(tile.tone);
-  // Left: what it is. Right: how long it has waited on you, else a date still
-  // ahead, else how fresh it is. A passed date is already inside the wait.
-  // A session has no key: running says so, otherwise its age takes the line.
+  // Tasks name their timing driver; session wait ages remain separate.
   const left = item.task?.key ?? (working ? "running" : shortAge);
-  const right = waiting
-    ? tile.waited === null
-      ? ""
-      : tile.waited
-        ? `${tile.waited}d`
-        : "<1d"
-    : due && !due.endsWith("passed")
-      ? due.replace(/^(Due|Planned) /, (word) => word.toLowerCase())
-      : item.task && detail > 0
-        ? shortAge
-        : "";
+  const right = tile.timing
+    ? tile.timing.label
+    : waiting
+      ? tile.waited === null
+        ? ""
+        : tile.waited
+          ? `${tile.waited}d`
+          : "<1d"
+      : due && !due.endsWith("passed")
+        ? due.replace(/^(Due|Planned) /, (word) => word.toLowerCase())
+        : item.task && detail > 0
+          ? shortAge
+          : "";
   // Inside an expanded area a tile is a small card: it spends its room on the
   // state of the work rather than on empty fill. Tiles too small to hold a
   // title cannot hold facts either, so they keep exactly what they had.
@@ -421,9 +421,10 @@ function Tile({
         type="button"
         data-work-id={item.id}
         data-level={tile.level}
+        data-timing={tile.timing?.kind}
         aria-expanded={open}
         aria-controls={open ? `detail-${item.id}` : undefined}
-        className={`wm-heat-tile wm-heat-${tile.tone} ${working ? "wm-heat-running" : ""} ${item.focus ? "wm-heat-focused" : ""} ${tile.stale ? "wm-heat-stale" : ""} ${tiny ? "wm-heat-tiny" : ""} ${sliver ? "wm-heat-sliver" : ""} ${!open && width < 118 ? "wm-heat-narrow" : ""} ${!open && width < 72 ? "wm-heat-keyonly" : ""} ${picked ? "wm-heat-picked" : ""} ${inside ? "wm-heat-inside" : ""}`}
+        className={`wm-heat-tile wm-heat-${tile.tone} ${working ? "wm-heat-running" : ""} ${item.focus ? "wm-heat-focused" : ""} ${tile.timing?.overdue ? "wm-heat-overdue" : ""} ${tile.timing?.aged ? "wm-heat-aged" : ""} ${!tile.timing && tile.stale ? "wm-heat-stale" : ""} ${tiny ? "wm-heat-tiny" : ""} ${sliver ? "wm-heat-sliver" : ""} ${!open && width < 118 ? "wm-heat-narrow" : ""} ${!open && width < 72 ? "wm-heat-keyonly" : ""} ${picked ? "wm-heat-picked" : ""} ${inside ? "wm-heat-inside" : ""}`}
         draggable
         onDragStart={(event) => onDragStart(event, item)}
         onDragEnd={onDragEnd}
@@ -432,6 +433,7 @@ function Tile({
           `Preview ${item.title}`,
           HEAT_LABEL[tile.tone],
           item.focus ? "In focus" : "",
+          tile.timing?.description ?? "",
           waiting
             ? tile.waited === null
               ? ""

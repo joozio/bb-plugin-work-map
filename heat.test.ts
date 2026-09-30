@@ -287,7 +287,9 @@ describe("attention to colour", () => {
         }),
         now,
       ),
-    ).toBeGreaterThan(review);
+    ).toBeGreaterThan(
+      heatPull(item({ task: task({ status: "in_review" }) }), now),
+    );
   });
   it("marks work stale only after 30 days of actually waiting on you", () => {
     const old = now - 45 * DAY;
@@ -475,7 +477,7 @@ describe("attention to colour", () => {
     );
     expect(heatPull(dated(0), now)).toBeGreaterThan(heatPull(dated(30), now));
   });
-  it("deepens colour with priority, a long wait and focus, never past 4", () => {
+  it("deepens task colour with creation age and focus, not review age or priority", () => {
     const iso = (days: number) => new Date(now - days * DAY).toISOString();
     const review = (priority: string, days = 0, focus = false) =>
       item({
@@ -484,18 +486,19 @@ describe("attention to colour", () => {
         task: task({
           status: "in_review",
           priority,
-          statusSince: iso(days),
+          statusSince: iso(0),
+          createdAt: iso(days),
           dueDate: null,
         }),
       });
     expect(heatLevel(review("none"), now)).toBe(1);
     expect(heatLevel(review("low"), now)).toBe(1);
-    expect(heatLevel(review("medium"), now)).toBe(2);
-    expect(heatLevel(review("high"), now)).toBe(3);
-    expect(heatLevel(review("urgent"), now)).toBe(3);
+    expect(heatLevel(review("medium"), now)).toBe(1);
+    expect(heatLevel(review("high"), now)).toBe(1);
+    expect(heatLevel(review("urgent"), now)).toBe(1);
     expect(heatLevel(review("none", 45), now)).toBe(2);
-    expect(heatLevel(review("high", 45), now)).toBe(4);
-    expect(heatLevel(review("high", 45, true), now)).toBe(4);
+    expect(heatLevel(review("high", 45), now)).toBe(2);
+    expect(heatLevel(review("high", 90, true), now)).toBe(4);
     expect(heatLevel(review("low", 0, true), now)).toBe(2);
     expect(heatLevel(item({ attention: "input" }), now)).toBe(3);
     expect(heatLevel(item({ attention: "error" }), now)).toBe(3);
@@ -614,6 +617,8 @@ describe("areas", () => {
       unread: 1,
       running: 1,
       stale: 1,
+      overdue: 0,
+      aged: 0,
     });
   });
   it("lays every area inside the board without gaps", () => {

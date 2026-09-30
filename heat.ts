@@ -1,5 +1,6 @@
 import type { WorkItem } from "./model";
 import { isWorking, needsReview, localDay } from "./model";
+import { heatTiming, type HeatTiming } from "./heat-timing";
 
 const DAY = 86400000;
 export const STALE_DAYS = 30;
@@ -74,11 +75,19 @@ export function staleDays(item: WorkItem, now: number) {
 }
 /**
  * How deep the tile's colour goes: 1 to 4. Hue says what the work needs;
- * depth says how hard it pulls, from priority and from how long it has
- * waited. Both are the task's own fields, nothing inferred.
+ * depth follows the task's current due date, or creation age when undated.
+ * Explicit input/error requests and focus remain visible attention signals.
  */
 export function heatLevel(item: WorkItem, now: number): 1 | 2 | 3 | 4 {
   const tone = heatTone(item);
+  const timing = heatTiming(item, now);
+  if (timing) {
+    const level = Math.max(
+      timing.level,
+      tone === "input" || tone === "error" ? 3 : 1,
+    );
+    return Math.min(4, level + (item.focus ? 1 : 0)) as 1 | 2 | 3 | 4;
+  }
   if (tone === "quiet") return 1;
   const priority = item.task?.priority ?? "";
   let level =
@@ -132,20 +141,37 @@ const round = (value: number) => Math.round(value * 10000) / 10000;
  */
 export function heatPull(item: WorkItem, now: number) {
   const tone = heatTone(item);
+  const timing = heatTiming(item, now);
+  if (timing) {
+    const attention =
+      tone === "input"
+        ? 2.5
+        : tone === "error"
+          ? 2
+          : tone === "review" || tone === "followup"
+            ? 0.5
+            : tone === "unread"
+              ? 0.4
+              : 0;
+    const priority =
+      item.task?.priority === "urgent"
+        ? 0.4
+        : item.task?.priority === "high"
+          ? 0.2
+          : 0;
+    return round(
+      timing.weight +
+        attention +
+        priority +
+        (isWorking(item) ? 0.3 : 0) +
+        (item.focus ? 2 : 0),
+    );
+  }
   let pull = 0.8 + TONE_PULL[tone];
   if (tone !== "working" && isWorking(item)) pull += 1.2;
   if (item.focus) pull += 2;
-  const task = item.task;
-  if (task && !["done", "canceled", "backlog"].includes(task.status)) {
-    pull +=
-      task.priority === "urgent" ? 1.6 : task.priority === "high" ? 0.8 : 0;
-    if (
-      task.dueDate &&
-      task.dueDate <= localDay(now + DAY) &&
-      (!task.waitingOn || task.waitingOn.toLowerCase() === "none")
-    )
-      pull += task.dateKind === "plan" ? 0.3 : 0.7;
-  }
+  // Sessions and tasks with unavailable timing retain their attention signals.
+  // Invalid task dates never silently fall back to creation or a date bonus.
   // A long wait pulls harder, up to the weight of a high priority and a bit.
   pull += Math.min(1.5, (waitDays(item, now) / 60) * 1.5);
   return round(Math.max(0.8, Math.min(14, pull)));
@@ -383,6 +409,7 @@ export interface HeatTile {
   /** Days in the current wait, null when its start is unknown. */
   waited: number | null;
   level: 1 | 2 | 3 | 4;
+  timing: HeatTiming | null;
 }
 export interface HeatArea {
   id: string;
@@ -409,6 +436,7 @@ function quietTile(id: string, members: WorkItem[]): HeatTile {
     stale: 0,
     waited: 0,
     level: 1,
+    timing: null,
   };
 }
 function areaFrom(
@@ -430,10 +458,12 @@ function areaFrom(
       stale: staleDays(item, now),
       waited: waitingSince(item, now) ? waitDays(item, now) : null,
       level: heatLevel(item, now),
+      timing: heatTiming(item, now),
     })),
   );
   const loud = tiles.filter(
-    (tile) => tile.tone !== "quiet" || tile.item!.focus,
+    (tile) =>
+      tile.tone !== "quiet" || tile.item!.focus || tile.timing?.prominent,
   );
   const quiet = tiles.filter((tile) => !loud.includes(tile));
   const shown =
@@ -447,9 +477,10 @@ function areaFrom(
           ),
         ]
       : [...loud, ...quiet];
-  // Focus is loud even when quiet; a pinned session must not vanish into the quiet cap.
+  // Pins, imminent dates and aged undated tasks stay outside the quiet cap.
   const active = shown.filter(
-    (tile) => tile.tone !== "quiet" || tile.item?.focus,
+    (tile) =>
+      tile.tone !== "quiet" || tile.item?.focus || tile.timing?.prominent,
   );
   return {
     id,
@@ -512,5 +543,7 @@ export function heatStats(areas: readonly HeatArea[], now: number) {
     unread: items.filter((item) => heatTone(item) === "unread").length,
     running: items.filter(isWorking).length,
     stale: items.filter((item) => staleDays(item, now)).length,
+    overdue: items.filter((item) => heatTiming(item, now)?.overdue).length,
+    aged: items.filter((item) => heatTiming(item, now)?.aged).length,
   };
 }
