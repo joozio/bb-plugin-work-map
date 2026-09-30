@@ -136,7 +136,7 @@ describe("the standing brief handed to a delegated agent", () => {
     expect(DELEGATION_PROMPT).not.toMatch(/pawel|wiz\b/i);
   });
   it("labels the act the same way everywhere", () => {
-    expect(ACTION_LABEL.delegate).toBe("Decide on your own");
+    expect(ACTION_LABEL.delegate).toBe("Agent decides");
     expect(DELEGATION_COMMENT).toBe("Delegated: decide on your own");
   });
 });

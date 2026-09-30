@@ -3,8 +3,12 @@ import { isWorking } from "./model";
 
 /** What an expanded area can do to a piece of work without opening it. */
 export type QuickAction = "delegate" | "done" | "snooze";
+/**
+ * The labels say what happens, in the map's own voice, where "you" is always
+ * the reader: "Agent decides" is the act of letting it decide on its own.
+ */
 export const ACTION_LABEL: Record<QuickAction, string> = {
-  delegate: "Decide on your own",
+  delegate: "Agent decides",
   done: "Done",
   snooze: "Snooze",
 };

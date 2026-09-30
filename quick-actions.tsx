@@ -86,6 +86,9 @@ export function AreaBulkActions({
   onRun: (action: QuickAction, items: WorkItem[]) => void;
 }) {
   const [intent, setIntent] = useState<QuickAction | null>(null);
+  // Mark all done sits last: it is one click from closing everything here,
+  // so it is never the neighbour of the primary act.
+  const order: QuickAction[] = ["delegate", "snooze", "done"];
   // The picker stays shut by default: an expanded area is mostly for reading
   // its tiles, and a list of every task would take the room they need.
   const [picking, setPicking] = useState(false);
@@ -97,8 +100,10 @@ export function AreaBulkActions({
     ? items.filter((item) => selected.includes(item.id))
     : items;
   const plan = intent ? bulkPlan(chosen, intent) : null;
+  // Focus lands on the dialog itself, not on its act: Enter must never confirm
+  // a bulk close before the list has been read. Tab reaches the act next.
   useEffect(() => {
-    if (intent) dialogRef.current?.querySelector("button")?.focus();
+    if (intent) dialogRef.current?.focus();
   }, [intent]);
   const close = () => {
     setIntent(null);
@@ -125,7 +130,7 @@ export function AreaBulkActions({
   return (
     <div className="wm-bulk">
       <div className="wm-bulk-row">
-        {(["delegate", "done", "snooze"] as QuickAction[])
+        {order
           .filter(offer)
           .map((action) => (
             <Button
@@ -158,12 +163,19 @@ export function AreaBulkActions({
         >
           {picking ? "Hide picker" : "Pick tasks"}
         </Button>
+        <span className="wm-bulk-count">
+          {selected.length
+            ? `${selected.length} of ${items.length} picked`
+            : `${items.length} ${items.length === 1 ? "task" : "tasks"}`}
+        </span>
       </div>
-      <p className="wm-bulk-hint">
-        {selected.length
-          ? `${selected.length} of ${items.length} picked · acts apply to your pick`
-          : `${items.length} in ${title} · acts apply to all of them`}
-      </p>
+      {(selected.length > 0 || picking) && (
+        <p className="wm-bulk-hint">
+          {selected.length
+            ? "Acts apply to your pick."
+            : `Nothing picked: acts apply to all ${items.length} in ${title}.`}
+        </p>
+      )}
       <div hidden={!picking}>
       <ul className="wm-bulk-picks" aria-label={`Pick work in ${title}`}>
         {items.map((item) => (
@@ -185,11 +197,13 @@ export function AreaBulkActions({
       </ul>
       </div>
       {intent && plan && (
+        <div className="wm-bulk-anchor">
         <div
-          className="wm-bulk-confirm"
+          className={`wm-bulk-confirm wm-bulk-confirm-${intent}`}
           role="dialog"
           aria-modal="false"
           aria-labelledby={headingId}
+          tabIndex={-1}
           ref={dialogRef}
           onKeyDown={(event) => {
             if (event.key === "Escape" && !event.defaultPrevented) {
@@ -226,6 +240,7 @@ export function AreaBulkActions({
           <div className="wm-bulk-row">
             <Button
               size="sm"
+              variant={intent === "done" ? "destructive" : "default"}
               disabled={!plan.take.length}
               onClick={() => {
                 const take = plan.take;
@@ -239,6 +254,7 @@ export function AreaBulkActions({
               Cancel
             </Button>
           </div>
+        </div>
         </div>
       )}
     </div>

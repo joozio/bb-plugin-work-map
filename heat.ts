@@ -290,6 +290,62 @@ export function withFloor<T extends Weighted>(
   }
   return out;
 }
+/**
+ * Inside an expanded area every tile is a card you can read and act on, so
+ * the pull range is compressed: nothing lighter than `ratio` of the heaviest.
+ * Order still carries the rank; size stops deciding which tiles get an act row.
+ */
+export function evenOut<T extends Weighted>(
+  items: readonly T[],
+  ratio: number,
+): T[] {
+  const top = Math.max(0, ...items.map((item) => item.weight));
+  if (!top) return [...items];
+  const floor = top * ratio;
+  return items.map((item) =>
+    item.weight >= floor ? { ...item } : { ...item, weight: round(floor) },
+  );
+}
+/**
+ * An expanded area lays its tiles out as cards in rank order, row by row, so
+ * every one of them is readable and can be acted on. Columns are chosen so a
+ * card comes closest to `aspect` wide for its height; the last row shares its
+ * width among whatever is left, so the map has no hole. Rects are percentages.
+ */
+export function cardGrid(
+  ids: readonly string[],
+  size: { w: number; h: number },
+  aspect = 1.4,
+): Map<string, Rect> {
+  const out = new Map<string, Rect>();
+  const n = ids.length;
+  if (!n) return out;
+  let cols = 1;
+  let best = Infinity;
+  for (let candidate = 1; candidate <= n; candidate++) {
+    const rows = Math.ceil(n / candidate);
+    const ratio = size.w / candidate / (size.h / rows);
+    const miss = Math.abs(Math.log(ratio / aspect));
+    if (miss < best) {
+      best = miss;
+      cols = candidate;
+    }
+  }
+  const rows = Math.ceil(n / cols);
+  const h = 100 / rows;
+  ids.forEach((id, index) => {
+    const row = Math.floor(index / cols);
+    const inRow = row === rows - 1 ? n - row * cols : cols;
+    const w = 100 / inRow;
+    out.set(id, {
+      x: round((index - row * cols) * w),
+      y: round(row * h),
+      w: round(w),
+      h: round(h),
+    });
+  });
+  return out;
+}
 export function treemap(items: readonly Weighted[], rect: Rect) {
   const ordered = heatOrder(items);
   return place(

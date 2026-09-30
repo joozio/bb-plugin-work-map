@@ -2489,8 +2489,66 @@ describe("heat layout", () => {
       expect(slot.container.querySelector(".wm-tile-actions")).toBeTruthy(),
     );
     expect(
-      slot.getAllByRole("button", { name: /^Decide on your own · / }).length,
+      slot.getAllByRole("button", { name: /^Agent decides · / }).length,
     ).toBeGreaterThan(0);
+    slot.lifecycle.unmount();
+  });
+
+  it("gives every tile of an expanded area a card with one act-row shape and no repeated state", async () => {
+    const slot = await mount({ ...heatFixture(), layout: "heat" });
+    await expandProject(slot);
+    const open = slot.container.querySelector<HTMLElement>(".wm-heat-area-open")!;
+    const slots = Array.from(
+      open.querySelectorAll<HTMLElement>(".wm-heat-slot:not(.wm-heat-slot-open)"),
+    ).filter((node) => node.querySelector(".wm-heat-tile:not(.wm-heat-group)"));
+    expect(slots.length).toBe(3);
+    // Sizes are evened out: the quiet backlog task is still a card you can act on.
+    const sizes = slots.map((node) => rect(node).w * rect(node).h);
+    expect(Math.min(...sizes) / Math.max(...sizes)).toBeGreaterThanOrEqual(0.5);
+    for (const node of slots) {
+      expect(node.querySelector(".wm-tile-actions")).toBeTruthy();
+      expect(["full", "lead", "icons"]).toContain(node.dataset.acts);
+    }
+    // The hue already says "Needs your input"; the facts carry only what it adds.
+    const facts = Array.from(open.querySelectorAll(".wm-heat-facts")).map(
+      (node) => node.textContent ?? "",
+    );
+    expect(facts.join(" ")).not.toContain("Needs your input");
+    expect(facts.join(" ")).toContain("medium priority");
+    expect(open.querySelector(".wm-heat-reason")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
+  it("keeps Mark all done away from the primary act and makes its confirmation read as a close", async () => {
+    const slot = await mount({ ...heatFixture(), layout: "heat" });
+    await expandProject(slot);
+    const row = slot.container.querySelector<HTMLElement>(".wm-bulk-row")!;
+    const names = Array.from(row.querySelectorAll("button")).map(
+      (button) => button.textContent?.trim() ?? "",
+    );
+    expect(names.slice(0, 3)).toEqual([
+      "Let agents decide all",
+      "Snooze all",
+      "Mark all done",
+    ]);
+    // Nothing is picked, so the hint has nothing to say; the count is enough.
+    expect(row.textContent).toContain("3 tasks");
+    expect(slot.container.querySelector(".wm-bulk-hint")).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: /^Mark all done/ }));
+    const confirm = await slot.findByRole("dialog");
+    // Focus rests on the dialog, so Enter cannot close three tasks unread.
+    expect(document.activeElement).toBe(confirm);
+    expect(confirm.className).toContain("wm-bulk-confirm-done");
+    expect(
+      within(confirm).getByRole("button", { name: "Mark 3 tasks done" })
+        .className,
+    ).toContain("bg-destructive");
+    // The tiles behind it did not move: the dialog lies over them.
+    expect(
+      slot.container.querySelector(".wm-heat-area-open .wm-bulk-anchor"),
+    ).toBeTruthy();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
     slot.lifecycle.unmount();
   });
 
@@ -2500,7 +2558,7 @@ describe("heat layout", () => {
     await expandProject(slot);
     fireEvent.click(
       slot.getByRole("button", {
-        name: "Decide on your own · Pick a direction",
+        name: "Agent decides · Pick a direction",
       }),
     );
     await waitFor(() => expect(delegateRequests).toHaveLength(1));

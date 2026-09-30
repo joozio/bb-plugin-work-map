@@ -4,6 +4,8 @@ import type { WorkItem } from "./model";
 import {
   SESSIONS_AREA,
   buildHeat,
+  cardGrid,
+  evenOut,
   expandedWeights,
   heatOrder,
   heatPull,
@@ -171,6 +173,49 @@ describe("readable minimums", () => {
     // 30 areas cannot each hold 5%; the biggest must stay clearly the biggest.
     expect(floored[0].weight / sum).toBeGreaterThan(0.3);
     expect(withFloor([], 0.05)).toEqual([]);
+  });
+  it("lays an expanded area out as cards in rank order, with no hole", () => {
+    const ids = Array.from({ length: 17 }, (_, index) => `t${index}`);
+    const grid = cardGrid(ids, { w: 600, h: 460 });
+    expect(grid.size).toBe(17);
+    // Rank order reads row by row, left to right; rows never overlap.
+    const rects = ids.map((id) => grid.get(id)!);
+    for (let index = 1; index < rects.length; index++) {
+      const before = rects[index - 1];
+      const here = rects[index];
+      expect(here.y > before.y || (here.y === before.y && here.x > before.x)).toBe(true);
+    }
+    // Every row spans the full width, the last one included.
+    const rows = new Map<number, Rect[]>();
+    for (const rect of rects) rows.set(rect.y, [...(rows.get(rect.y) ?? []), rect]);
+    for (const row of rows.values()) {
+      const span = row.reduce((sum, rect) => sum + rect.w, 0);
+      expect(span).toBeCloseTo(100, 1);
+      const equal = row.every((rect) => Math.abs(rect.w - row[0].w) < 0.01);
+      expect(equal).toBe(true);
+    }
+    const height = [...rows.values()].reduce((sum, row) => sum + row[0].h, 0);
+    expect(height).toBeCloseTo(100, 1);
+    // A wide, short body takes more columns; a tall, narrow one fewer.
+    expect(cardGrid(ids, { w: 350, h: 1100 }).get("t1")!.x).toBe(50);
+    expect(cardGrid(ids, { w: 1400, h: 300 }).get("t1")!.x).toBeLessThan(20);
+    expect(cardGrid([], { w: 1, h: 1 }).size).toBe(0);
+  });
+  it("evens an expanded area so its lightest tile is still a card, in the same order", () => {
+    const items = [
+      { id: "loud", weight: 12 },
+      { id: "mid", weight: 4 },
+      { id: "quiet", weight: 0.8 },
+    ];
+    const even = evenOut(items, 0.6);
+    expect(even.map((entry) => entry.id)).toEqual(["loud", "mid", "quiet"]);
+    expect(even[0].weight).toBe(12);
+    expect(even[1].weight).toBeCloseTo(7.2, 3);
+    expect(even[2].weight).toBeCloseTo(7.2, 3);
+    // The input is left alone, and an empty or weightless list stays as it is.
+    expect(items[2].weight).toBe(0.8);
+    expect(evenOut([], 0.6)).toEqual([]);
+    expect(evenOut([{ id: "a", weight: 0 }], 0.6)).toEqual([{ id: "a", weight: 0 }]);
   });
 });
 

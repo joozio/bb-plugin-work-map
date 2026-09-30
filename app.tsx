@@ -1541,6 +1541,8 @@ function WorkMap() {
       >
         <Button
           size="sm"
+          // With acts in the bar, letting agents decide is the one primary.
+          variant={actionable.length ? "outline" : "default"}
           onClick={() => startSession(root)}
           disabled={launcher.busy}
         >
@@ -1587,12 +1589,18 @@ function WorkMap() {
             onRun={(action, items) => void actAll(action, items)}
           />
         )}
-        {manager.inlineProjectId === root.id.slice(8) && manager.inline}
-        {launcher.context?.id === root.id && (
-          <>
-            {launcher.view}
-            {launcher.threadId && settleControls(undefined, launcher.threadId)}
-          </>
+        {(manager.inlineProjectId === root.id.slice(8) ||
+          launcher.context?.id === root.id) && (
+          <div className="wm-heat-actions-scroll">
+            {manager.inlineProjectId === root.id.slice(8) && manager.inline}
+            {launcher.context?.id === root.id && (
+              <>
+                {launcher.view}
+                {launcher.threadId &&
+                  settleControls(undefined, launcher.threadId)}
+              </>
+            )}
+          </div>
         )}
       </div>
     );

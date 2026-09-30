@@ -4,6 +4,8 @@ import type { WorkItem } from "./model";
 import { activityLabel, dueLabel, isWorking } from "./model";
 import {
   HEAT_LABEL,
+  cardGrid,
+  evenOut,
   expandedWeights,
   heatOrder,
   needsYou,
@@ -18,6 +20,18 @@ import {
 const UNIT: Rect = { x: 0, y: 0, w: 100, h: 100 };
 const AREA_SHARE = 0.66;
 const TILE_SHARE = 0.78;
+/** Inside an expanded area no tile is lighter than this share of the heaviest. */
+const EVEN_RATIO = 0.8;
+/** Pixels a card spends before its title: slot padding, act row, tile chrome, key line. */
+const CARD_FIXED = 4 + 27 + 12 + 14.35;
+const TITLE_LINE = 14.03;
+const LINE_ROW = 15.5;
+const LINE_MORE = 13.5;
+const FACTS_ROW = 14.8;
+/** Widths at which the act row keeps every label, only the lead label, or none.
+    Measured: the lead label needs 93px beside two 23px icons and 22px of chrome. */
+const ACTS_FULL = 240;
+const ACTS_LEAD = 166;
 const FALLBACK = { width: 1280, height: 720 };
 /** The area header and the body padding are not available to the tiles. */
 const HEADER = 31;
@@ -89,6 +103,9 @@ export function HeatMap({
     return () => observer.disconnect();
   }, [expandedAreaId]);
   const ordered = useMemo(() => heatOrder(areas), [areas]);
+  // Narrow screens stack areas as bands; the open one grows per card it holds.
+  const openTiles =
+    ordered.find((area) => area.id === expandedAreaId)?.tiles.length ?? 0;
   const layout = useMemo(() => {
     const rects = place(
       partition(ordered, { ...UNIT, w: size.width, h: size.height }),
@@ -98,6 +115,10 @@ export function HeatMap({
     return ordered.map((area) => {
       const rect = rects.get(area.id) ?? UNIT;
       const tiles = heatOrder(area.tiles);
+      // Every tile in an expanded area is a card to read and act on, so the
+      // pull range is evened out; order still carries the rank.
+      const sized =
+        area.id === expandedAreaId ? evenOut(tiles, EVEN_RATIO) : tiles;
       const bodyHeight = Math.max(
         1,
         (rect.h / 100) * size.height -
@@ -105,19 +126,24 @@ export function HeatMap({
           BODY_PAD -
           (area.id === expandedAreaId ? actionsHeight : 0),
       );
-      const inner = place(
-        partition(tiles, {
-          ...UNIT,
-          w: (rect.w / 100) * size.width,
-          h: bodyHeight,
-        }),
-        expandedWeights(
-          tiles,
-          area.id === expandedAreaId ? expandedItemId : undefined,
-          TILE_SHARE,
-        ),
-        UNIT,
-      );
+      const bodyWidth = (rect.w / 100) * size.width;
+      // An open area with nothing expanded inside it is a grid of cards in
+      // rank order; once a tile opens, the rest squarify around its details.
+      const inner =
+        area.id === expandedAreaId && !expandedItemId
+          ? cardGrid(
+              tiles.map((tile) => tile.id),
+              { w: bodyWidth, h: bodyHeight },
+            )
+          : place(
+              partition(sized, { ...UNIT, w: bodyWidth, h: bodyHeight }),
+              expandedWeights(
+                sized,
+                area.id === expandedAreaId ? expandedItemId : undefined,
+                TILE_SHARE,
+              ),
+              UNIT,
+            );
       return { area, rect, tiles, inner, bodyHeight };
     });
   }, [
@@ -132,7 +158,12 @@ export function HeatMap({
     <div
       className="wm-heat"
       ref={frame}
-      style={{ "--wm-heat-areas": ordered.length } as CSSProperties}
+      style={
+        {
+          "--wm-heat-areas": ordered.length,
+          "--wm-heat-open-tiles": openTiles,
+        } as CSSProperties
+      }
     >
       {layout.map(({ area, rect, tiles, inner, bodyHeight }) => {
         const open = area.id === expandedAreaId;
@@ -296,12 +327,17 @@ function Tile({
   // state of the work rather than on empty fill. Tiles too small to hold a
   // title cannot hold facts either, so they keep exactly what they had.
   const inside = !!actions && !tiny && height > 74 && width > 104;
-  const dense = inside && height > 104 && width > 132;
   const status = item.task?.nextAction || item.task?.summary || "";
   const attached = item.task?.sessionLinks?.length ?? item.threads.length;
-  const facts = dense
+  // The hue already says what the work needs; a fact repeats it only when it
+  // adds something the legend does not: who it waits on, what it asked for.
+  const reason =
+    item.reason === HEAT_LABEL[tile.tone] || item.reason === "Inactive"
+      ? ""
+      : item.reason;
+  const facts = inside
     ? [
-        item.reason,
+        reason,
         item.task && item.task.priority !== "none"
           ? `${item.task.priority} priority`
           : "",
@@ -316,25 +352,68 @@ function Tile({
       ].filter(Boolean)
     : [];
   // One line only: the agent's latest word if the map has it, else the next step.
-  const line =
-    (dense && height > 86 && (excerpt?.(item) || status).trim()) || "";
-  // Clamp the title to the lines that actually fit, so nothing is cut mid-word.
-  const rows = (roomy && !facts.length ? 1 : 0) + (facts.length ? 1 : 0) + (line ? 1 : 0);
-  const spent =
-    27 +
-    (roomy && !facts.length ? 14 : 0) +
-    (facts.length ? 14 : 0) +
-    (line ? 16 : 0) +
-    rows * 2;
-  const lines = Math.max(
-    1,
-    Math.min(4, Math.floor((height - spent - (inside ? 22 : 0)) / 14)),
-  );
+  const line = inside ? (excerpt?.(item) || status).trim() : "";
+  // The card is budgeted in whole rows from its real height, so nothing is
+  // ever cut mid-line: two title lines first, then the latest word, then the
+  // facts, then a third title line if room is left.
+  let lines = 1;
+  let lineRows = 0;
+  let showFacts = false;
+  if (inside) {
+    let room = height - CARD_FIXED - TITLE_LINE;
+    if (room >= TITLE_LINE) {
+      lines = 2;
+      room -= TITLE_LINE;
+    }
+    if (line && room >= LINE_ROW) {
+      lineRows = 1;
+      room -= LINE_ROW;
+    }
+    if (facts.length && room >= FACTS_ROW) {
+      showFacts = true;
+      room -= FACTS_ROW;
+    }
+    // Spare rows go to the title and the latest word in turn, so a tall card
+    // reads its whole title and more of the agent's word instead of blank fill.
+    for (const [row, cost] of [
+      ["title", TITLE_LINE],
+      ["line", LINE_MORE],
+      ["title", TITLE_LINE],
+      ["line", LINE_MORE],
+      ["title", TITLE_LINE],
+    ] as const) {
+      if (room < cost) break;
+      if (row === "title") lines += 1;
+      else if (lineRows) lineRows += 1;
+      else continue;
+      room -= cost;
+    }
+  } else {
+    // Clamp the title to the lines that actually fit, so nothing is cut mid-word.
+    const spent = 27 + (roomy ? 16 : 0);
+    lines = Math.max(1, Math.min(4, Math.floor((height - spent) / 14)));
+  }
+  // The act row keeps its labels only where they fit whole: every tile of a
+  // similar width reads the same, and a label is never cut to an ellipsis.
+  const acts = inside
+    ? width >= ACTS_FULL
+      ? "full"
+      : width >= ACTS_LEAD
+        ? "lead"
+        : "icons"
+    : undefined;
   return (
     <div
       className={`wm-heat-slot ${open ? "wm-heat-slot-open" : ""}`}
       data-layout-id={tile.id}
-      style={{ ...box(rect), "--wm-heat-lines": lines } as CSSProperties}
+      data-acts={acts}
+      style={
+        {
+          ...box(rect),
+          "--wm-heat-lines": lines,
+          "--wm-heat-line-rows": lineRows,
+        } as CSSProperties
+      }
     >
       <button
         type="button"
@@ -370,17 +449,17 @@ function Tile({
           <span>{right}</span>
         </span>
         {!tiny && <span className="wm-heat-title">{title}</span>}
-        {roomy && !facts.length && (
+        {roomy && !inside && (
           <span className="wm-heat-reason">{item.reason}</span>
         )}
-        {dense && facts.length > 0 && (
+        {showFacts && (
           <span className="wm-heat-facts">
             {facts.map((fact) => (
               <em key={fact}>{fact}</em>
             ))}
           </span>
         )}
-        {dense && line && <span className="wm-heat-line">{line}</span>}
+        {lineRows > 0 && <span className="wm-heat-line">{line}</span>}
       </button>
       {inside && actions?.(item)}
       {open && details}

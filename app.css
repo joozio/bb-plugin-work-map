@@ -2233,16 +2233,24 @@ i.wm-heat-key {
   display: none;
 }
 .wm-heat-actions {
-  position: relative;
   flex: none;
   gap: 6px;
   padding: 8px 9px;
   border-bottom: 1px solid var(--border);
-  max-height: 45%;
-  overflow: auto;
 }
+/* A real box, so its measured height is the room the tiles do not get. */
 .wm-heat-actions-frame {
-  display: contents;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* Composers and managers opened in the bar scroll rather than eat the tiles. */
+.wm-heat-actions-scroll {
+  flex: 1 0 100%;
+  min-width: 0;
+  max-height: 260px;
+  overflow: auto;
 }
 /* Anchor the area menu in the action row, not on the absolute area box. */
 .wm-heat-actions > .wm-area-tools {
@@ -2520,7 +2528,9 @@ i.wm-heat-key.wm-heat-stale {
     overflow: auto;
   }
   .wm-heat {
-    min-height: calc(var(--wm-heat-areas, 4) * 132px);
+    min-height: calc(
+      var(--wm-heat-areas, 4) * 132px + var(--wm-heat-open-tiles, 0) * 60px
+    );
   }
   .wm-heat-stats {
     justify-content: flex-start;
@@ -2562,37 +2572,40 @@ i.wm-heat-key.wm-heat-stale {
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
+  -webkit-line-clamp: var(--wm-heat-line-rows, 1);
 }
 .wm-heat-picked {
   outline: 2px solid var(--wm-ink);
   outline-offset: -2px;
 }
-/* The action row sits over the foot of its tile, inside the same slot. */
+/* The act row is the card's footer: one shape, inside the same slot. */
 .wm-heat-slot:has(.wm-tile-actions) {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
 }
 .wm-heat-slot:has(.wm-tile-actions) > .wm-heat-tile {
   flex: 1 1 auto;
   height: auto;
   min-height: 0;
+  border-radius: 6px 6px 0 0;
 }
-.wm-heat-inside .wm-heat-title {
-  flex: 0 1 auto;
-  min-height: 1.22em;
-}
+/* Rows are budgeted in whole lines from the card's real height; none shrinks. */
+.wm-heat-inside .wm-heat-title,
 .wm-heat-inside .wm-heat-facts,
-.wm-heat-inside .wm-heat-line,
-.wm-heat-inside .wm-heat-reason {
+.wm-heat-inside .wm-heat-line {
   flex: none;
 }
 .wm-tile-actions {
   flex: none;
   display: flex;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
+  padding: 3px 4px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  background: color-mix(in srgb, var(--card) 88%, var(--muted));
   overflow: hidden;
 }
 .wm-tile-action {
@@ -2618,38 +2631,32 @@ i.wm-heat-key.wm-heat-stale {
 .wm-tile-action:not(:disabled):hover {
   background: var(--accent);
 }
+.wm-tile-action:focus-visible {
+  outline: 2px solid var(--wm-blue);
+  outline-offset: -1px;
+}
 .wm-tile-action:disabled {
   opacity: 0.5;
 }
+/* Green is the map's agent channel: this act hands the work to one. */
 .wm-tile-delegate {
   border-color: color-mix(in srgb, var(--wm-green) 55%, var(--border));
 }
-/* Below this the labels stop fitting; the icon and its aria-label carry it. */
-.wm-heat-slot:has(.wm-tile-actions) {
-  container-type: inline-size;
-}
-@container (max-width: 330px) {
-  .wm-tile-done span,
-  .wm-tile-snooze span {
-    display: none;
-  }
-  .wm-tile-done,
-  .wm-tile-snooze {
-    padding: 0 5px;
-  }
-}
-@container (max-width: 148px) {
-  .wm-tile-action span {
-    display: none;
-  }
-  .wm-tile-action {
-    padding: 0 5px;
-  }
-}
-.wm-tile-delegate span {
+.wm-tile-action span {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+/* Which labels a tile keeps is decided per tile from its width, so the row is
+   one of three known shapes and never a label cut short. */
+[data-acts="lead"] .wm-tile-done span,
+[data-acts="lead"] .wm-tile-snooze span,
+[data-acts="icons"] .wm-tile-action span {
+  display: none;
+}
+[data-acts="lead"] .wm-tile-done,
+[data-acts="lead"] .wm-tile-snooze,
+[data-acts="icons"] .wm-tile-action {
+  padding: 0 5px;
 }
 .wm-bulk {
   flex: 1 0 100%;
@@ -2667,6 +2674,12 @@ i.wm-heat-key.wm-heat-stale {
 .wm-bulk-hint {
   font-size: 10px;
   color: var(--wm-dim);
+}
+.wm-bulk-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--wm-dim);
+  white-space: nowrap;
 }
 .wm-bulk-picks {
   display: flex;
@@ -2690,14 +2703,37 @@ i.wm-heat-key.wm-heat-stale {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The confirmation lies over the tiles instead of pushing them: positions
+   hold while you read the list, and Cancel leaves the area exactly as it was. */
+.wm-bulk-anchor {
+  position: relative;
+  flex: 1 0 100%;
+  height: 0;
+}
 .wm-bulk-confirm {
+  position: absolute;
+  z-index: 6;
+  top: 4px;
+  left: 0;
+  right: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 9px 10px;
-  border: 1px solid var(--border);
+  max-height: min(60vh, 460px);
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 30%, var(--border));
   border-radius: 8px;
   background: var(--card);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.28);
+  outline: none;
+}
+.wm-bulk-confirm:focus-visible {
+  outline: 2px solid var(--wm-blue);
+  outline-offset: 1px;
+}
+.wm-bulk-confirm-done {
+  border-color: color-mix(in srgb, var(--destructive) 55%, var(--border));
 }
 .wm-bulk-confirm h4 {
   font-size: 12px;
