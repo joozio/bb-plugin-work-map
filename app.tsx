@@ -37,10 +37,11 @@ import {
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Icon } from "./components/ui/icon";
-import { useMapMotion } from "./layout-motion";
+import { keyMovesLayout, useMapMotion } from "./layout-motion";
 import { useMapZoom, ZoomControls } from "./map-zoom";
 import { extendOrbit, zoomDensity, zoomVisible } from "./zoom";
-import { SESSIONS_AREA, buildHeat, heatStats, type HeatArea } from "./heat";
+import { SESSIONS_AREA, heatStats, type HeatArea } from "./heat";
+import { useHeatModel } from "./heat-memo";
 import { HeatMap } from "./heat-view";
 import { useSessionLauncher } from "./session-launcher";
 import {
@@ -226,8 +227,12 @@ function WorkMap() {
     if (live.current)
       setError(cause instanceof Error ? cause.message : String(cause));
   }, []);
+  // Refreshes overlap: a slow older one must never replace a newer result.
+  const refreshStarted = useRef(0);
+  const refreshApplied = useRef(0);
   const refresh = useCallback(
     async (fresh = false) => {
+      const generation = ++refreshStarted.current;
       // Activity still ages when a source refresh fails.
       if (live.current) setNow(Date.now());
       try {
@@ -235,6 +240,8 @@ function WorkMap() {
           rpc.call("snapshot", fresh ? { fresh: true } : null),
           rpc.call("preferences"),
         ]);
+        if (generation < refreshApplied.current) return;
+        refreshApplied.current = generation;
         if (live.current) {
           setSnapshot(data);
           setPreferences(prefs);
@@ -242,7 +249,7 @@ function WorkMap() {
           if (!selectionRef.current) setInspectionLayout(null);
         }
       } catch (cause) {
-        if (live.current)
+        if (live.current && generation >= refreshApplied.current)
           setRefreshError(
             cause instanceof Error ? cause.message : String(cause),
           );
@@ -575,7 +582,14 @@ function WorkMap() {
       : fitting
         ? fit.orbit
         : extendOrbit(arrangeMap(baseline), visible);
-  const heatRoots = heatOn ? (heatFreeze?.map(currentItem) ?? visible) : [];
+  // Frozen roots are remapped once per data change, not on every render, so
+  // the Heat model below can tell an unchanged map from a new one.
+  const frozenRoots = useMemo(
+    () => heatFreeze?.map(currentItem) ?? null,
+    // currentItem reads only the item index, the sidebar and the clock.
+    [heatFreeze, itemById, sidebar.threads, now],
+  );
+  const heatRoots = heatOn ? (frozenRoots ?? visible) : [];
   const shown = heatOn
     ? heatRoots
     : spatial
@@ -595,12 +609,11 @@ function WorkMap() {
     : undefined;
   // An expanded project reveals its quiet tasks, as the overview does. Opening
   // one session is not a request to unpack every finished agent beside it.
-  const heatAreas = heatOn
-    ? buildHeat(heatRoots, now, {
-        uncollapsed:
-          area?.kind === "project" ? [...uncollapsed, area.id] : uncollapsed,
-      })
-    : [];
+  const heatAreas = useHeatModel(
+    heatRoots,
+    now,
+    area?.kind === "project" ? [...uncollapsed, area.id] : uncollapsed,
+  );
   const heat = heatOn ? heatStats(heatAreas, now) : null;
   const inspecting = !!area && !!selected && previewMode === "inline";
   const expandedZone = inspecting
@@ -2281,7 +2294,7 @@ function WorkMap() {
           event.stopPropagation();
           return;
         }
-        captureLayout();
+        if (keyMovesLayout(event)) captureLayout();
       }}
       onKeyDown={(event) => {
         if (

@@ -459,12 +459,15 @@ async function mount(
     layout?: "overview" | "heat";
     delegateRequests?: { requestId: string; taskId: string }[];
     delegateError?: string;
+    /** Answers a snapshot call in place of the fixture, by call number. */
+    snapshot?: (call: number, tasks: MapTask[]) => Promise<MapTask[]> | null;
   } = {},
 ) {
   const app = await loadPluginApp(() => import("./app"));
   const storedPreferences = { ...options.preferences };
   const storedLayout = { layout: options.layout ?? ("overview" as const) };
   const settled: Settlement[] = [];
+  let snapshotCalls = 0;
   const projects = [
     managedProjectSchema.parse({
       id: "p1",
@@ -627,10 +630,11 @@ async function mount(
           taskId: "task1",
           attachmentError: null,
         }),
-        snapshot: () => {
+        snapshot: async () => {
           if (options.rejectSnapshot)
             throw new Error("Task source disconnected");
-          return { ...data(tasks), projects };
+          const gated = options.snapshot?.(++snapshotCalls, tasks);
+          return { ...data(gated ? await gated : tasks), projects };
         },
         layout: () => ({ layout: storedLayout.layout }),
         setLayout: ({ layout }) => {
@@ -3317,6 +3321,54 @@ describe("heat layout", () => {
     expect(
       slot.queryByRole("button", { name: /agents finished in Sessions/ }),
     ).toBeNull();
+    slot.lifecycle.unmount();
+  });
+});
+
+describe("map bookkeeping under load", () => {
+  it("never measures the map for keys typed into an editor inside it", async () => {
+    const slot = await mount();
+    const card = await slot.findByRole("button", {
+      name: /^Open project Test project/,
+    });
+    const root = slot.container.querySelector(".wm-root")!;
+    const editor = document.createElement("div");
+    editor.setAttribute("contenteditable", "true");
+    root.append(editor);
+    const measure = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    for (const key of ["a", " ", "Enter", "Escape"])
+      fireEvent.keyDown(editor, { key });
+    expect(measure).not.toHaveBeenCalled();
+    fireEvent.keyDown(card, { key: "Enter" });
+    expect(measure).toHaveBeenCalled();
+    measure.mockRestore();
+    editor.remove();
+    slot.lifecycle.unmount();
+  });
+
+  it("keeps the newer snapshot when an older refresh resolves after it", async () => {
+    let releaseOld: (tasks: MapTask[]) => void = () => undefined;
+    let base = Infinity;
+    const slot = await mount({
+      tasks: [task({ nextAction: "Loaded first" })],
+      snapshot: (call) =>
+        call === base + 1
+          ? new Promise<MapTask[]>((resolve) => (releaseOld = resolve))
+          : call === base + 2
+            ? Promise.resolve([task({ nextAction: "Newest step" })])
+            : null,
+    });
+    await slot.findByText(/Loaded first/);
+    base = slot.inspection.rpcCalls.filter(
+      (call) => call.method === "snapshot",
+    ).length;
+    fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
+    fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
+    await slot.findByText(/Newest step/);
+    releaseOld([task({ nextAction: "Stale step" })]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(slot.container.textContent).toContain("Newest step");
+    expect(slot.container.textContent).not.toContain("Stale step");
     slot.lifecycle.unmount();
   });
 });
