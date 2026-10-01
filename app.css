@@ -2173,10 +2173,15 @@
 .wm-heat-ramp {
   gap: 1px !important;
 }
+.wm-heat-ramp i.wm-heat-key:first-of-type {
+  margin-left: 4px;
+}
+.wm-heat-ramp i.wm-heat-key:last-of-type {
+  margin-right: 4px;
+}
 .wm-heat-ramp i.wm-heat-key {
   width: 13px;
   border-radius: 2px;
-  border-color: color-mix(in srgb, var(--wm-gold) 40%, var(--border));
 }
 /* Only a phone folds the legend; wider screens always show it. */
 .wm-heat-legend-toggle {
@@ -2469,123 +2474,130 @@ i.wm-heat-key {
 .wm-heat-sliver .wm-heat-meta {
   display: none;
 }
-/* Attention colours are the map's own channels; nothing new is invented here.
-   Hue is what the work needs. Depth (data-step 1 to 5) is where the tile
-   ranks by pull across the whole map: the coldest step sits close to the
-   background, the hottest is the hue at full. Deep tiles switch to dark ink.
-   The same five steps read in both themes: the mix is against the card. */
+/* Heat: colour is importance. data-step (1 coldest to 5 hottest) is where
+   the tile ranks by pull across the whole map, drawn on one heat scale that
+   changes hue, not just lightness: red, orange, soft amber, then the plain
+   card, then near-background. Only the top half carries a colour, so the eye
+   lands on a few hot spots on a mostly dark map; the same scale sits on white
+   in the light theme. Text follows the heat: the hottest titles brightest and
+   boldest, the coldest dimmed and still readable. What the work needs no
+   longer colours the tile: it is the marker before the key and the words on
+   the tile. A request for your hands or a failed run keeps its shape on top
+   of the heat: a ring and a glyph. */
+.wm-root {
+  --wm-heat-5: #d9372b;
+  --wm-heat-4: #f28a2e;
+  --wm-heat-3: #f0c24a;
+}
 /* Zero specificity, so a data-step on the element always wins. */
 :where(.wm-heat-tile, i.wm-heat-key) {
-  --wm-heat-mix: 16%;
-  --wm-heat-hue: var(--muted);
+  background: var(--card);
+  border-color: var(--border);
 }
-[data-step="1"] {
-  --wm-heat-mix: 16%;
+.wm-heat-tile[data-step="1"],
+i.wm-heat-key[data-step="1"],
+.wm-heat-row-dot[data-step="1"] {
+  background: color-mix(in srgb, var(--wm-ink) 2%, var(--background));
+  border-color: color-mix(in srgb, var(--border) 60%, transparent);
 }
-[data-step="2"] {
-  --wm-heat-mix: 30%;
+/* The card may share the background's colour: the neutral step lifts off it by a little ink. */
+.wm-heat-tile[data-step="2"],
+i.wm-heat-key[data-step="2"],
+.wm-heat-row-dot[data-step="2"] {
+  background: color-mix(in srgb, var(--wm-ink) 7%, var(--card));
+  border-color: var(--border);
 }
-[data-step="3"] {
-  --wm-heat-mix: 50%;
+.wm-heat-tile[data-step="3"],
+i.wm-heat-key[data-step="3"],
+.wm-heat-row-dot[data-step="3"] {
+  background: color-mix(in srgb, var(--wm-heat-3) 28%, var(--card));
+  border-color: color-mix(in srgb, var(--wm-heat-3) 40%, var(--border));
 }
-[data-step="4"] {
-  --wm-heat-mix: 70%;
+.wm-heat-tile[data-step="4"],
+i.wm-heat-key[data-step="4"],
+.wm-heat-row-dot[data-step="4"] {
+  background: var(--wm-heat-4);
+  border-color: color-mix(in srgb, var(--wm-heat-4) 70%, #000);
 }
-[data-step="5"] {
-  --wm-heat-mix: 100%;
+.wm-heat-tile[data-step="5"],
+i.wm-heat-key[data-step="5"],
+.wm-heat-row-dot[data-step="5"] {
+  background: var(--wm-heat-5);
+  border-color: color-mix(in srgb, var(--wm-heat-5) 70%, #000);
 }
-/* The coldest tiles keep readable text, only quieter. */
+/* Text contrast follows heat too. */
 .wm-heat-tile[data-step="1"] {
-  color: color-mix(in srgb, var(--wm-ink) 72%, var(--wm-dim));
+  color: color-mix(in srgb, var(--wm-ink) 40%, var(--wm-dim));
 }
 .wm-heat-tile[data-step="2"] {
-  color: color-mix(in srgb, var(--wm-ink) 88%, var(--wm-dim));
+  color: color-mix(in srgb, var(--wm-ink) 72%, var(--wm-dim));
 }
-.wm-heat-input,
-i.wm-heat-key.wm-heat-input {
-  --wm-heat-hue: var(--wm-hot);
-  background: color-mix(in srgb, var(--wm-hot) var(--wm-heat-mix), var(--card));
-  border-color: color-mix(in srgb, var(--wm-hot) 70%, var(--border));
+.wm-heat-tile[data-step="3"] .wm-heat-meta,
+.wm-heat-tile[data-step="3"] .wm-heat-reason {
+  opacity: 0.95;
 }
-.wm-heat-error,
-i.wm-heat-key.wm-heat-error {
-  --wm-heat-hue: var(--destructive);
-  background: color-mix(
-    in srgb,
-    var(--destructive) calc(var(--wm-heat-mix) * 0.85),
-    var(--card)
-  );
-  border-color: var(--destructive);
-}
-.wm-heat-review,
-.wm-heat-followup,
-i.wm-heat-key.wm-heat-review {
-  --wm-heat-hue: var(--wm-gold);
-  background: color-mix(in srgb, var(--wm-gold) var(--wm-heat-mix), var(--card));
-  border-color: color-mix(in srgb, var(--wm-gold) 55%, var(--border));
-}
-.wm-heat-unread,
-i.wm-heat-key.wm-heat-unread {
-  --wm-heat-hue: var(--wm-blue);
-  background: color-mix(in srgb, var(--wm-blue) var(--wm-heat-mix), var(--card));
-  border-color: color-mix(in srgb, var(--wm-blue) 60%, var(--border));
-}
-/* Quiet and running work share a neutral ramp: a dated backlog task near
-   its date still climbs, in grey, and the green ring says running. */
-.wm-heat-quiet,
-.wm-heat-working,
-i.wm-heat-key.wm-heat-working {
-  --wm-heat-hue: var(--wm-ink);
-  color: var(--wm-dim);
-  background: color-mix(
-    in srgb,
-    var(--wm-ink) calc(var(--wm-heat-mix) * 0.2),
-    var(--card)
-  );
-}
-.wm-heat-quiet[data-step="3"],
-.wm-heat-quiet[data-step="4"],
-.wm-heat-quiet[data-step="5"],
-.wm-heat-working[data-step="3"],
-.wm-heat-working[data-step="4"],
-.wm-heat-working[data-step="5"] {
-  color: var(--wm-ink);
-}
-i.wm-heat-key.wm-heat-working {
-  background: color-mix(in srgb, var(--wm-green) 25%, var(--card));
-}
-/* From the middle step up a coloured tile is bright enough for dark ink. */
-.wm-heat-input[data-step="3"],
-.wm-heat-input[data-step="4"],
-.wm-heat-input[data-step="5"],
-.wm-heat-review[data-step="3"],
-.wm-heat-review[data-step="4"],
-.wm-heat-review[data-step="5"],
-.wm-heat-followup[data-step="3"],
-.wm-heat-followup[data-step="4"],
-.wm-heat-followup[data-step="5"] {
+.wm-heat-tile[data-step="4"] {
   color: #2a1a06;
 }
-.wm-heat-unread[data-step="3"],
-.wm-heat-unread[data-step="4"],
-.wm-heat-unread[data-step="5"] {
-  color: #0d1c2b;
+.wm-heat-tile[data-step="4"] .wm-heat-title {
+  font-weight: 650;
 }
-.wm-heat-error[data-step="4"],
-.wm-heat-error[data-step="5"] {
-  color: #fff4f2;
+.wm-heat-tile[data-step="5"] {
+  color: #fff;
 }
-/* The hottest step burns a little past the hue, so 5 is not just 4 again. */
-.wm-heat-input[data-step="5"] {
-  background: color-mix(in srgb, var(--wm-hot) 82%, #ff4d00);
+.wm-heat-tile[data-step="5"] .wm-heat-title {
+  font-weight: 700;
 }
-.wm-heat-review[data-step="5"],
-.wm-heat-followup[data-step="5"],
-i.wm-heat-key.wm-heat-review[data-step="5"] {
-  background: color-mix(in srgb, var(--wm-gold) 78%, #ff8a1a);
+.wm-heat-tile[data-step="5"] .wm-heat-meta,
+.wm-heat-tile[data-step="5"] .wm-heat-reason {
+  opacity: 0.95;
 }
-/* The rank numeral: a small ring ahead of the key on the three hottest tiles, in the tile's own ink. */
-.wm-heat-rank {
+/* A pile of quiet work reads as the coldest step. */
+.wm-heat-quiet {
+  background: color-mix(in srgb, var(--wm-ink) 2%, var(--background));
+  border-color: color-mix(in srgb, var(--border) 60%, transparent);
+  color: var(--wm-dim);
+}
+/* The marker before the key says what the work needs; its hue is the map's
+   own channel. Running work's green dot replaces it, so one dot reads at a time. */
+.wm-heat-review .wm-heat-meta > span:first-child::before,
+.wm-heat-followup .wm-heat-meta > span:first-child::before,
+.wm-heat-unread .wm-heat-meta > span:first-child::before,
+.wm-heat-running .wm-heat-meta > span:first-child::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  align-self: center;
+  flex: none;
+  background: var(--wm-gold);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.25);
+}
+.wm-heat-unread .wm-heat-meta > span:first-child::before {
+  background: var(--wm-blue);
+}
+.wm-heat-running .wm-heat-meta > span:first-child::before {
+  background: var(--wm-green);
+}
+/* A request for your hands or a failed run: a ring in its own hue and a
+   glyph ahead of the key, on any heat. */
+.wm-heat-tile.wm-heat-input[data-step],
+.wm-heat-tile.wm-heat-input,
+i.wm-heat-key.wm-heat-input {
+  border: 2px solid var(--wm-hot);
+}
+.wm-heat-tile.wm-heat-error[data-step],
+.wm-heat-tile.wm-heat-error,
+i.wm-heat-key.wm-heat-error {
+  border: 2px solid var(--destructive);
+}
+.wm-heat-tile[data-step="5"].wm-heat-error {
+  border-color: #fff;
+}
+/* The rank numeral (1 2 3 on the map's three hottest) and the flag glyph:
+   small rings ahead of the key, in the tile's own ink. */
+.wm-heat-rank,
+.wm-heat-flag {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2598,24 +2610,12 @@ i.wm-heat-key.wm-heat-review[data-step="5"] {
   font-weight: 800;
   line-height: 1;
 }
-/* The red edge: past due, up to two weeks. Its selector matches the depth
-   rules so their border shorthand cannot replace it. */
-.wm-heat-tile.wm-heat-overdue[data-step] {
-  border: 2px solid var(--destructive);
+.wm-heat-flag {
+  color: var(--wm-hot);
+  background: var(--card);
 }
-.wm-heat-overdue .wm-heat-meta > span:last-child {
-  font-weight: 800;
-}
-i.wm-heat-key.wm-heat-overdue {
-  border: 2px solid var(--destructive);
-  background: color-mix(in srgb, var(--wm-gold) 54%, var(--card));
-}
-.wm-heat-aged {
-  border-style: dashed;
-}
-i.wm-heat-key.wm-heat-aged {
-  border: 1px dashed var(--wm-gold);
-  background: color-mix(in srgb, var(--wm-gold) 32%, var(--card));
+.wm-heat-error .wm-heat-flag {
+  color: var(--destructive);
 }
 /* One orchestrator on an area reads in the running green; past its cap, in the warning orange. */
 .wm-heat-head em.wm-heat-orchestrated {
@@ -2625,7 +2625,7 @@ i.wm-heat-key.wm-heat-aged {
   color: var(--wm-orange);
   font-weight: 700;
 }
-/* Running is an outline, so it can sit on any attention colour at once. */
+/* Running is an outline, so it can sit on any heat at once. */
 .wm-heat-running,
 i.wm-heat-key.wm-heat-working {
   box-shadow: inset 0 0 0 2px var(--wm-green);
@@ -2644,30 +2644,24 @@ i.wm-heat-key.wm-heat-focused {
   outline: 2px solid var(--wm-focus);
   outline-offset: -2px;
 }
-/* The hatch means one thing: 60 days or more past due. Its selector
-   outranks the depth backgrounds, which would otherwise erase it. */
-.wm-heat-tile.wm-heat-stale[data-step] {
-  background-image: repeating-linear-gradient(
-    135deg,
-    transparent 0 7px,
-    color-mix(in srgb, var(--wm-ink) 13%, transparent) 7px 8.5px
-  );
+/* The area wears its hottest step: a swatch by its name and, for the two
+   hottest steps, an edge in that heat, so the big picture reads at area level. */
+.wm-heat-swatch {
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  align-self: center;
+  flex: none;
 }
-.wm-heat-tile.wm-heat-stale[data-step="3"],
-.wm-heat-tile.wm-heat-stale[data-step="4"],
-.wm-heat-tile.wm-heat-stale[data-step="5"] {
-  background-image: repeating-linear-gradient(
-    135deg,
-    transparent 0 7px,
-    rgb(42 26 6 / 0.16) 7px 8.5px
-  );
+.wm-heat-area[data-step="5"] {
+  border-color: color-mix(in srgb, var(--wm-heat-5) 55%, var(--border));
 }
-i.wm-heat-key.wm-heat-stale {
-  background: repeating-linear-gradient(
-    135deg,
-    var(--card) 0 3px,
-    color-mix(in srgb, var(--foreground) 35%, transparent) 3px 5px
-  );
+.wm-heat-area[data-step="4"] {
+  border-color: color-mix(in srgb, var(--wm-heat-4) 45%, var(--border));
+}
+.wm-heat-area[data-step="1"] .wm-heat-name strong,
+.wm-heat-area[data-step="2"] .wm-heat-name strong {
+  color: color-mix(in srgb, var(--wm-ink) 70%, var(--wm-dim));
 }
 .wm-heat-tile:hover {
   filter: brightness(1.08);

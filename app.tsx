@@ -2714,41 +2714,34 @@ function WorkMap() {
                     className="wm-heat-legend"
                     data-open={legendOpen}
                     title={
+                      "Colour and size are heat: pull rank across the map, hottest tenth red, coldest fifth near the background.\n" +
                       "Pull = what it needs × priority × how near the date is (peaking this week, fading when long past), more in focus.\n" +
-                      "Size follows pull. Depth is pull rank across the map: hottest tenth deepest, coldest 15% palest, so there is always a top and a bottom.\n" +
-                      "1 2 3 mark the three hottest tiles."
+                      "A ring and a glyph mark a request for your hands or a failed run on any heat; 1 2 3 mark the three hottest tiles."
                     }
                   >
+                    <span className="wm-heat-ramp" aria-label="Heat, cold to hot">
+                      cold
+                      {[1, 2, 3, 4, 5].map((step) => (
+                        <i key={step} className="wm-heat-key" data-step={step} />
+                      ))}
+                      hot
+                    </span>
                     {(
                       [
                         ["input", "Needs your input"],
                         ["error", "Run failed"],
-                        ["review", "Needs review or follow-up"],
-                        ["unread", "Ready to read"],
                         ["working", "Agent working"],
                         ["focused", "In focus"],
-                        ["overdue", "Past due", "Up to 14 days past due"],
-                        ["stale", "Stale 60d+", "60 days or more past due"],
-                        ["aged", "Undated 30d+"],
-                      ] as [string, string, string?][]
-                    ).map(([tone, label, hint]) => (
-                      <span key={tone} title={hint}>
+                      ] as [string, string][]
+                    ).map(([tone, label]) => (
+                      <span key={tone}>
                         <i className={`wm-heat-key wm-heat-${tone}`} />
                         {label}
                       </span>
                     ))}
-                    <span className="wm-heat-ramp" aria-hidden="true">
-                      {[1, 2, 3, 4, 5].map((step) => (
-                        <i
-                          key={step}
-                          className="wm-heat-key wm-heat-review"
-                          data-step={step}
-                        />
-                      ))}
-                    </span>
                     <span className="wm-heat-sense">
-                      Pull = need × priority × date nearness · Size and depth =
-                      pull rank · Hue = what it needs
+                      Heat = pull rank · Pull = need × priority × date nearness
+                      · 1 2 3 = hottest
                     </span>
                   </div>
                 </div>

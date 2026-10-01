@@ -104,16 +104,29 @@ export function staleDays(item: WorkItem, now: number) {
 export type Step = 1 | 2 | 3 | 4 | 5;
 /**
  * Where each step starts, as a share of the map's tiles ranked by pull: the
- * hottest tenth wears 5, the next fifth 4, the middle three tenths 3, then a
- * quarter at 2 and the coldest 15% at 1. Rank, not an absolute score, so a
+ * hottest tenth wears 5, the next 15% 4, the next quarter 3, then three
+ * tenths at 2 and the coldest fifth at 1. Rank, not an absolute score, so a
  * map where every date is past still has a visible top, middle and bottom.
+ * Only the top half carries a colour; the eye lands on a few hot spots.
  */
 export const STEP_SHARES: readonly [Step, number][] = [
   [5, 0.1],
-  [4, 0.3],
-  [3, 0.6],
-  [2, 0.85],
+  [4, 0.25],
+  [3, 0.5],
+  [2, 0.8],
 ];
+/**
+ * How much of its size a tile lends to its area, by step: an area of cold
+ * work shrinks and an area holding the hot spots grows, so the map's big
+ * picture reads at area level too.
+ */
+export const STEP_GAIN: Record<Step, number> = {
+  5: 1,
+  4: 0.8,
+  3: 0.5,
+  2: 0.25,
+  1: 0.15,
+};
 /** The step for a place `at` (0 = hottest, 1 = coldest) in the ranking. */
 export function stepAt(at: number): Step {
   for (const [step, share] of STEP_SHARES) if (at < share) return step;
@@ -609,6 +622,8 @@ export interface HeatArea {
   /** The project or container this area opens; sessions have no single root. */
   root: WorkItem | null;
   weight: number;
+  /** The hottest step among the area's own tiles; 1 when nothing is drawn. */
+  step: Step;
   waiting: number;
   running: number;
   /** The one agent handling this whole area, while it runs. */
@@ -679,34 +694,51 @@ function areaFrom(
           ),
         ]
       : [...loud, ...quiet];
-  // Pins, imminent dates and aged undated tasks stay outside the quiet cap.
-  const active = shown.filter(
-    (tile) =>
-      tile.tone !== "quiet" || tile.item?.focus || tile.timing?.prominent,
-  );
+  const drawn = withFloor(heatOrder(shown), TILE_FLOOR);
   return {
     id,
     title,
     scope,
     root,
     items,
-    tiles: withFloor(heatOrder(shown), TILE_FLOOR),
-    weight: round(
-      total(active) +
-        Math.min(QUIET_CAP, total(shown.filter((t) => !active.includes(t)))),
-    ),
+    tiles: drawn,
+    weight: areaWeight(drawn, false),
+    step: 1,
     waiting: items.filter((item) => needsYou(heatTone(item))).length,
     running: items.filter(heatWorking).length,
     orchestrator: root?.orchestrator ?? null,
     steps: new Map(),
   };
 }
+/** Pins, imminent dates and aged undated tasks stay outside the quiet cap. */
+const active = (tile: HeatTile) =>
+  tile.tone !== "quiet" || !!tile.item?.focus || !!tile.timing?.prominent;
+/**
+ * An area weighs what its tiles lend it: each tile's size through its step's
+ * gain, so the hot spots carry the area and cold work barely does. Before the
+ * ranking every tile lends its whole size; quiet work is capped as a pile.
+ */
+export function areaWeight(tiles: readonly HeatTile[], ranked = true) {
+  const lent = (tile: HeatTile) =>
+    Math.max(0, tile.weight) * (ranked && tile.item ? STEP_GAIN[tile.step] : 1);
+  const loud = tiles.filter(active);
+  return round(
+    loud.reduce((sum, tile) => sum + lent(tile), 0) +
+      Math.min(
+        QUIET_CAP,
+        tiles
+          .filter((tile) => !active(tile))
+          .reduce((sum, tile) => sum + lent(tile), 0),
+      ),
+  );
+}
 /**
  * Depth by rank across the map: every tile drawn on its own is ranked by
  * pull against every other, whatever its area, and the three hottest are
  * numbered. Pull, not the floored size: tiles lifted to the readable minimum
  * share a size but keep their order. Grouped work is not in the ranking and
- * reads as the coldest.
+ * reads as the coldest. Once the steps are known each area weighs what its
+ * tiles lend it and wears its hottest step.
  */
 export function withSteps(areas: readonly HeatArea[]): HeatArea[] {
   const drawn = areas.flatMap((area) =>
@@ -727,6 +759,11 @@ export function withSteps(areas: readonly HeatArea[]): HeatArea[] {
     return {
       ...area,
       tiles,
+      weight: areaWeight(tiles),
+      step: tiles.reduce<Step>(
+        (top, tile) => (tile.item && tile.step > top ? tile.step : top),
+        1,
+      ),
       steps: new Map(
         tiles.flatMap((tile) =>
           tile.item ? [[tile.item.id, tile.step] as const] : [],

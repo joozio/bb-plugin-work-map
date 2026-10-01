@@ -2599,16 +2599,16 @@ describe("heat layout", () => {
     const backlog = slot.getByRole("button", { name: /^Preview Old idea/ });
     expect(recurring.textContent).toContain("Due today");
     expect(recurring.textContent).not.toContain("300d");
-    // Depth is rank across the map: the review due today is the hottest,
-    // the dated quiet tasks sit under it, the fresh quiet ones at the bottom.
+    // Heat is rank across the map: the review due today is the hottest, the
+    // date just passed next, the dated quiet tasks in the warm middle, the
+    // fresh quiet ones at the bottom.
     expect(recurring.getAttribute("data-step")).toBe("5");
     expect(recurring.querySelector(".wm-heat-rank")?.textContent).toBe("1");
     expect(late.textContent).toContain("2d overdue");
-    expect(late.className).toContain("wm-heat-overdue");
+    expect(late.getAttribute("data-step")).toBe("4");
     expect(near.textContent).toContain("Due in 3d");
-    expect(near.getAttribute("data-step")).toBe("4");
+    expect(near.getAttribute("data-step")).toBe("3");
     expect(backlog.textContent).toContain("90d old");
-    expect(backlog.className).toContain("wm-heat-aged");
     expect(backlog.getAttribute("data-step")).toBe("3");
     expect(
       slot.getByRole("button", { name: /^Preview New idea 0/ }).getAttribute(
@@ -2652,9 +2652,11 @@ describe("heat layout", () => {
     expect(unknown.textContent).toContain("40d old");
     expect(unknown.getAttribute("aria-label")).not.toContain("Waiting");
     expect(unknown.textContent).not.toContain("today");
-    expect(
-      slot.container.querySelector(".wm-heat-tile.wm-heat-stale"),
-    ).toBeNull();
+    // No edge or hatch repeats a date: the label and the heat speak.
+    for (const tile of Array.from(
+      slot.container.querySelectorAll(".wm-heat-tile"),
+    ))
+      expect(tile.className).not.toMatch(/wm-heat-(stale|overdue|aged)/);
     slot.lifecycle.unmount();
   });
   const heatFixture = () => ({
@@ -3503,7 +3505,8 @@ describe("heat layout", () => {
       name: /^Preview Decide: pick a direction/,
     });
     expect(tile.className).toContain("wm-heat-input");
-    expect(tile.className).toContain("wm-heat-aged");
+    // A request for your hands keeps its shape on any heat: the glyph ahead of the key.
+    expect(tile.querySelector(".wm-heat-flag")?.textContent).toBe("!");
     expect(tile.getAttribute("aria-label")).toContain("Needs your input");
     expect(tile.getAttribute("aria-label")).toContain("Waiting 44 days");
     expect(
@@ -3532,20 +3535,16 @@ describe("heat layout", () => {
     ]);
     // One legend: a single row above the map, no footer repeating it.
     const legend = slot.container.querySelector(".wm-heat-legend")!;
+    // One heat bar, cold to hot, then the few shape signals; no edge or hatch chips.
     expect(Array.from(legend.children, (entry) => entry.textContent)).toEqual([
+      "coldhot",
       "Needs your input",
       "Run failed",
-      "Needs review or follow-up",
-      "Ready to read",
       "Agent working",
       "In focus",
-      "Past due",
-      "Stale 60d+",
-      "Undated 30d+",
-      "",
-      "Pull = need × priority × date nearness · Size and depth = pull rank · Hue = what it needs",
+      "Heat = pull rank · Pull = need × priority × date nearness · 1 2 3 = hottest",
     ]);
-    // The five depths, coldest to hottest, drawn as chips in the legend.
+    // The five steps, coldest to hottest, drawn as chips in the legend.
     expect(
       Array.from(legend.querySelectorAll(".wm-heat-ramp i"), (chip) =>
         chip.getAttribute("data-step"),
@@ -3555,7 +3554,7 @@ describe("heat layout", () => {
       "Pull = what it needs × priority × how near the date is",
     );
     expect(legend.getAttribute("title")).toContain(
-      "Depth is pull rank across the map",
+      "Colour and size are heat: pull rank across the map",
     );
     expect(slot.container.querySelector(".wm-footer")).toBeNull();
     expect(slot.container.querySelector(".wm-heat-hint")?.textContent).toBe(

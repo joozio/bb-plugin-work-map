@@ -28,6 +28,9 @@ import {
   rankSteps,
   stepAt,
   SIZE_POWER,
+  STEP_GAIN,
+  areaWeight,
+  type Step,
   heatTone,
   needsYou,
   partition,
@@ -568,27 +571,82 @@ describe("attention to colour", () => {
       [...rankSteps(weighted(weights)).entries()]
         .sort((a, b) => Number(a[0].slice(1)) - Number(b[0].slice(1)))
         .map(([, step]) => step);
-    // Shares: hottest tenth 5, next fifth 4, middle three tenths 3, a
-    // quarter 2, the coldest 15% at 1.
+    // Shares: hottest tenth 5, next 15% 4, next quarter 3, three tenths 2,
+    // the coldest fifth 1: only the top half carries a colour.
     expect(stepAt(0)).toBe(5);
     expect(stepAt(0.099)).toBe(5);
     expect(stepAt(0.1)).toBe(4);
-    expect(stepAt(0.3)).toBe(3);
-    expect(stepAt(0.6)).toBe(2);
-    expect(stepAt(0.85)).toBe(1);
+    expect(stepAt(0.25)).toBe(3);
+    expect(stepAt(0.5)).toBe(2);
+    expect(stepAt(0.8)).toBe(1);
     // A flat band of nearly equal weights still spreads over every step.
     const flat = Array.from({ length: 40 }, (_, i) => 7 + i * 0.01);
     const spread = steps(flat);
     expect(new Set(spread)).toEqual(new Set([1, 2, 3, 4, 5]));
     expect(spread.filter((s) => s === 5).length).toBe(4);
-    expect(spread.filter((s) => s === 1).length).toBe(6);
+    expect(spread.filter((s) => s === 1).length).toBe(8);
+    // Half the tiles, the cold half, wear the two steps with no colour fill.
+    expect(spread.filter((s) => s <= 2).length).toBe(20);
     // The heaviest is always 5 and the lightest always 1, from two tiles up.
     expect(steps([1, 2])).toEqual([1, 5]);
-    expect(steps([3, 1, 2])).toEqual([5, 1, 3]);
+    expect(steps([3, 1, 2])).toEqual([5, 1, 2]);
     expect(steps([5])).toEqual([5]);
     // Identical weights share one step: the same work never reads as two depths.
     expect(steps([2, 2, 2, 1])).toEqual([5, 5, 5, 1]);
     expect(new Set(steps(Array(12).fill(3))).size).toBe(1);
+  });
+  it("weighs an area by what its tiles lend it through their steps, and wears its hottest step", () => {
+    // Gain falls with the step, so an area of cold work shrinks and one
+    // holding the hot spots grows; the hottest step lends its whole size.
+    expect(STEP_GAIN[5]).toBe(1);
+    for (const step of [5, 4, 3, 2] as const)
+      expect(STEP_GAIN[step]).toBeGreaterThan(STEP_GAIN[(step - 1) as Step]);
+    expect(STEP_GAIN[1]).toBeLessThan(0.25);
+    const tileOf = (id: string, pull: number, step: Step): HeatTile => ({
+      id,
+      weight: heatSize(pull),
+      pull,
+      tone: "review",
+      item: item({ id, attention: "review" }),
+      members: [],
+      stale: 0,
+      waited: 0,
+      step,
+      timing: null,
+    });
+    const hot = [tileOf("a", 1, 5), tileOf("b", 1, 4)];
+    const cold = [tileOf("c", 1, 1), tileOf("d", 1, 2)];
+    expect(areaWeight(hot)).toBeCloseTo(STEP_GAIN[5] + STEP_GAIN[4], 4);
+    expect(areaWeight(cold)).toBeCloseTo(STEP_GAIN[1] + STEP_GAIN[2], 4);
+    expect(areaWeight(hot) / areaWeight(cold)).toBeGreaterThan(4);
+    // Before the ranking every tile lends its whole size.
+    expect(areaWeight(cold, false)).toBeCloseTo(2, 4);
+    // On a built map each area's weight follows the ranked steps and the
+    // area wears the step of its hottest tile.
+    const today = new Date(now).toISOString().slice(0, 10);
+    const areas = buildHeat(
+      [
+        project("p1", [
+          item({ id: "task:u", attention: "review", task: task({ status: "in_review", priority: "urgent", dueDate: today }) }),
+          item({ id: "task:m", attention: "review", task: task({ status: "in_review", priority: "medium", dueDate: today }) }),
+        ]),
+        project("p2", [
+          item({ id: "task:l1", attention: "review", task: task({ status: "in_review", priority: "low" }) }),
+          item({ id: "task:l2", attention: "review", task: task({ status: "in_review", priority: "low" }) }),
+        ]),
+      ],
+      now,
+    );
+    const hotArea = areas.find((area) => area.id === "project:p1")!;
+    const coldArea = areas.find((area) => area.id === "project:p2")!;
+    expect(hotArea.step).toBe(5);
+    expect(coldArea.step).toBeLessThanOrEqual(3);
+    // The map floors and caps area weights after the ranking; the order the
+    // steps give still holds, and the cold pair cannot catch the hot pair.
+    expect(hotArea.weight).toBeGreaterThan(coldArea.weight);
+    expect(areaWeight(hotArea.tiles)).toBeGreaterThan(
+      areaWeight(coldArea.tiles) * 3,
+    );
   });
   it("curves size with pull so the hottest tile is several times the coldest", () => {
     expect(SIZE_POWER).toBeGreaterThan(1);
@@ -771,6 +829,7 @@ describe("what an area header says", () => {
     scope: "TEST",
     root: null,
     weight: 1,
+    step: 1,
     waiting: 0,
     running: 0,
     orchestrator: null,

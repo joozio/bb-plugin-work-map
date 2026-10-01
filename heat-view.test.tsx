@@ -92,7 +92,7 @@ it("renders the whole key on a narrow tile and drops the label instead of cuttin
   }
 });
 
-it("keeps the red edge for this fortnight's dates and hatches only two months past", () => {
+it("lets the label and the heat speak for a date: no edge, no hatch, whatever its age", () => {
   frame(1200, 700);
   const view = heat([
     task({
@@ -103,20 +103,6 @@ it("keeps the red edge for this fortnight's dates and hatches only two months pa
       dueDate: due(-3),
     }),
     task({
-      id: "edge",
-      key: "T-2",
-      title: "Edge",
-      dateKind: "deadline",
-      dueDate: due(-14),
-    }),
-    task({
-      id: "mid",
-      key: "T-4",
-      title: "Mid",
-      dateKind: "deadline",
-      dueDate: due(-40),
-    }),
-    task({
       id: "old",
       key: "T-3",
       title: "Old",
@@ -124,19 +110,47 @@ it("keeps the red edge for this fortnight's dates and hatches only two months pa
       dueDate: due(-84),
     }),
   ]);
-  for (const title of ["Fresh", "Edge"]) {
-    expect(tile(view, title).className).toContain("wm-heat-overdue");
-    expect(tile(view, title).className).not.toContain("wm-heat-stale");
+  for (const title of ["Fresh", "Old"]) {
+    expect(tile(view, title).className).not.toMatch(/wm-heat-(overdue|stale|aged)/);
+    expect(tile(view, title).querySelector(".wm-heat-flag")).toBeNull();
   }
-  // Between the fortnight and two months: the label and the depth speak alone.
-  const mid = tile(view, "Mid");
-  expect(mid.className).not.toContain("wm-heat-overdue");
-  expect(mid.className).not.toContain("wm-heat-stale");
-  expect(mid.textContent).toContain("40d overdue");
-  const old = tile(view, "Old");
-  expect(old.className).toContain("wm-heat-stale");
-  expect(old.className).not.toContain("wm-heat-overdue");
-  expect(old.textContent).toContain("84d overdue");
+  expect(tile(view, "Fresh").textContent).toContain("3d overdue");
+  expect(tile(view, "Old").textContent).toContain("84d overdue");
+  // The fresher date pulls harder and wears the hotter step.
+  expect(Number(tile(view, "Fresh").getAttribute("data-step"))).toBeGreaterThan(
+    Number(tile(view, "Old").getAttribute("data-step")),
+  );
+});
+
+it("keeps a request for your hands and a failed run loud by shape: a glyph ahead of the key", () => {
+  frame(1200, 700);
+  const view = heat(
+    [
+      task({ id: "ask", key: "T-1", title: "Ask", threadIds: ["thr_ask"] }),
+      task({ id: "fail", key: "T-2", title: "Fail", threadIds: ["thr_fail"] }),
+      task({ id: "rev", key: "T-3", title: "Review", status: "in_review" }),
+    ],
+    [
+      thread({ id: "thr_ask", indicator: "waiting-for-input" }),
+      thread({ id: "thr_fail", indicator: "unread-error" }),
+    ],
+  );
+  expect(tile(view, "Ask").querySelector(".wm-heat-flag")?.textContent).toBe("!");
+  expect(tile(view, "Fail").querySelector(".wm-heat-flag")?.textContent).toBe("✕");
+  expect(tile(view, "Review").querySelector(".wm-heat-flag")).toBeNull();
+});
+
+it("gives every area its hottest step: a swatch by the name and the step on the section", () => {
+  frame(1200, 700);
+  const view = heat([
+    task({ id: "hot", key: "T-1", title: "Hot", priority: "urgent", dateKind: "deadline", dueDate: due(0) }),
+    task({ id: "cold", key: "T-2", title: "Cold", priority: "low" }),
+  ]);
+  const area = view.container.querySelector<HTMLElement>(".wm-heat-area")!;
+  expect(area.dataset.step).toBe("5");
+  const swatch = area.querySelector<HTMLElement>(".wm-heat-name .wm-heat-swatch")!;
+  expect(swatch.dataset.step).toBe("5");
+  expect(swatch.getAttribute("aria-hidden")).toBe("true");
 });
 
 it("shows running whole on a roomy session tile and only the dot on a narrow one", () => {

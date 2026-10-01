@@ -25,7 +25,6 @@ import {
   type Rect,
   heatTone,
 } from "./heat";
-import { STALE_PAST_DAYS } from "./heat-timing";
 
 const UNIT: Rect = { x: 0, y: 0, w: 100, h: 100 };
 const AREA_SHARE = 0.66;
@@ -257,6 +256,7 @@ export function HeatMap({
             key={area.id}
             data-layout-id={area.id}
             className={`wm-heat-area ${open ? "wm-heat-area-open" : ""} ${width < TIGHT ? "wm-heat-area-tight" : ""}`}
+            data-step={area.step}
             style={box(rect)}
             aria-label={`${area.title} · ${areaState(area)}`}
           >
@@ -269,6 +269,12 @@ export function HeatMap({
                 onClick={() => onOpenArea(area)}
                 aria-label={`${area.root ? "Open project" : "Show every session in"} ${area.title}. ${areaState(area)}.`}
               >
+                {/* The area's hottest step, so the big picture reads at area level. */}
+                <i
+                  className="wm-heat-key wm-heat-swatch"
+                  data-step={area.step}
+                  aria-hidden="true"
+                />
                 <strong>{area.title}</strong>
                 <em
                   className={
@@ -599,18 +605,17 @@ function Tile({
   // accessible description keeps it either way.
   // The ask tag is hidden on a narrow tile (below 118px), so it is not budgeted there.
   // One of the map's three hottest wears its number ahead of the key.
+  // A request for your hands or a failed run keeps its shape on any heat:
+  // a ring and a glyph ahead of the key. Dates speak through the label and
+  // the heat; no edge or hatch repeats them.
+  const flag = tile.tone === "input" ? "!" : tile.tone === "error" ? "✕" : "";
   const rank = tiny ? undefined : tile.rank;
   const row = open
     ? { lead, label, ask }
-    : labelRow(width - (rank ? RANK_W : 0), lead, label, working, {
+    : labelRow(width - (rank ? RANK_W : 0) - (flag ? RANK_W : 0), lead, label, working, {
         compact: tile.timing?.compact,
         ask: width < 118 ? "" : ask,
       });
-  // Past due up to two weeks wears the red edge: urgent. Two months past
-  // due wears the hatch: stale. Between them the label and the depth speak.
-  const overdue = !!tile.timing?.overdue && !tile.timing.late;
-  const stale =
-    !!tile.timing?.overdue && -tile.timing.days >= STALE_PAST_DAYS;
   // Inside an expanded area a tile is a small card: it spends its room on the
   // state of the work rather than on empty fill. Tiles too small to hold a
   // title cannot hold facts either, so they keep exactly what they had.
@@ -715,7 +720,7 @@ function Tile({
         data-timing={tile.timing?.kind}
         aria-expanded={open}
         aria-controls={open ? `detail-${item.id}` : undefined}
-        className={`wm-heat-tile wm-heat-${tile.tone} ${working ? "wm-heat-running" : ""} ${item.focus ? "wm-heat-focused" : ""} ${overdue ? "wm-heat-overdue" : ""} ${stale ? "wm-heat-stale" : ""} ${tile.timing?.aged ? "wm-heat-aged" : ""} ${tiny ? "wm-heat-tiny" : ""} ${sliver ? "wm-heat-sliver" : ""} ${!open && width < 118 ? "wm-heat-narrow" : ""} ${!open && width < 72 ? "wm-heat-keyonly" : ""} ${picked ? "wm-heat-picked" : ""} ${inside ? "wm-heat-inside" : ""}`}
+        className={`wm-heat-tile wm-heat-${tile.tone} ${working ? "wm-heat-running" : ""} ${item.focus ? "wm-heat-focused" : ""} ${tiny ? "wm-heat-tiny" : ""} ${sliver ? "wm-heat-sliver" : ""} ${!open && width < 118 ? "wm-heat-narrow" : ""} ${!open && width < 72 ? "wm-heat-keyonly" : ""} ${picked ? "wm-heat-picked" : ""} ${inside ? "wm-heat-inside" : ""}`}
         draggable
         onDragStart={(event) => onDragStart(event, item)}
         onDragEnd={onDragEnd}
@@ -749,6 +754,11 @@ function Tile({
             {rank && (
               <b className="wm-heat-rank" aria-hidden="true">
                 {rank}
+              </b>
+            )}
+            {flag && !tiny && (
+              <b className="wm-heat-flag" aria-hidden="true">
+                {flag}
               </b>
             )}
             {row.lead && <span className="wm-heat-key-text">{row.lead}</span>}
