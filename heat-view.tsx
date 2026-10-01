@@ -65,7 +65,7 @@ const ASK_GAP = 2;
 /** The most lines of the ask a tile shows; past that the words are in the open card. */
 const ASK_MAX = 6;
 /** Below this width the words of an ask do not fit; the tile keeps its title. */
-const ASK_MIN_W = 120;
+const ASK_MIN_W = 90;
 /** One line of context under the ask: sessions, waiting on, the agent's state. */
 const CONTEXT_ROW = 13.5;
 const REASON_ROW = 16;
