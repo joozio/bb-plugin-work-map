@@ -92,7 +92,7 @@ it("renders the whole key on a narrow tile and drops the label instead of cuttin
   }
 });
 
-it("keeps the red edge for this fortnight's dates and marks older ones stale", () => {
+it("keeps the red edge for this fortnight's dates and hatches only two months past", () => {
   frame(1200, 700);
   const view = heat([
     task({
@@ -110,6 +110,13 @@ it("keeps the red edge for this fortnight's dates and marks older ones stale", (
       dueDate: due(-14),
     }),
     task({
+      id: "mid",
+      key: "T-4",
+      title: "Mid",
+      dateKind: "deadline",
+      dueDate: due(-40),
+    }),
+    task({
       id: "old",
       key: "T-3",
       title: "Old",
@@ -119,10 +126,15 @@ it("keeps the red edge for this fortnight's dates and marks older ones stale", (
   ]);
   for (const title of ["Fresh", "Edge"]) {
     expect(tile(view, title).className).toContain("wm-heat-overdue");
-    expect(tile(view, title).className).not.toContain("wm-heat-late");
+    expect(tile(view, title).className).not.toContain("wm-heat-stale");
   }
+  // Between the fortnight and two months: the label and the depth speak alone.
+  const mid = tile(view, "Mid");
+  expect(mid.className).not.toContain("wm-heat-overdue");
+  expect(mid.className).not.toContain("wm-heat-stale");
+  expect(mid.textContent).toContain("40d overdue");
   const old = tile(view, "Old");
-  expect(old.className).toContain("wm-heat-late");
+  expect(old.className).toContain("wm-heat-stale");
   expect(old.className).not.toContain("wm-heat-overdue");
   expect(old.textContent).toContain("84d overdue");
 });
@@ -643,7 +655,8 @@ it("names a fold by what it hides, in short words when the full ones do not fit"
       members: Array.from({ length: members }, (_, i) => ({ id: `m${i}` })),
       stale: 0,
       waited: 0,
-      level: 1,
+      pull: 0,
+      step: 1,
       timing: null,
       overflow: true,
       waiting,

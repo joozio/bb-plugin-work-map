@@ -251,6 +251,9 @@
   --wm-focus: #e49385;
   --wm-green: #65e0aa;
   --wm-orange: #ffb85c;
+  /* Heat's two warm hues: hot orange for an explicit request, gold for a review. */
+  --wm-hot: #ff9a3c;
+  --wm-gold: #e6b04a;
   --wm-blue: #91b9df;
   --wm-ink: var(--foreground);
   --wm-dim: var(--muted-foreground);
@@ -2166,6 +2169,15 @@
 .wm-heat-sense {
   opacity: 0.7;
 }
+/* The five depths in a row, coldest to hottest, so the ramp is read at a glance. */
+.wm-heat-ramp {
+  gap: 1px !important;
+}
+.wm-heat-ramp i.wm-heat-key {
+  width: 13px;
+  border-radius: 2px;
+  border-color: color-mix(in srgb, var(--wm-gold) 40%, var(--border));
+}
 /* Only a phone folds the legend; wider screens always show it. */
 .wm-heat-legend-toggle {
   display: none;
@@ -2458,101 +2470,152 @@ i.wm-heat-key {
   display: none;
 }
 /* Attention colours are the map's own channels; nothing new is invented here.
-   Hue is what the work needs. Depth (data-level 1 to 4) is how hard it pulls:
-   current due date, otherwise creation age. Deep tiles switch to dark ink. */
+   Hue is what the work needs. Depth (data-step 1 to 5) is where the tile
+   ranks by pull across the whole map: the coldest step sits close to the
+   background, the hottest is the hue at full. Deep tiles switch to dark ink.
+   The same five steps read in both themes: the mix is against the card. */
+/* Zero specificity, so a data-step on the element always wins. */
+:where(.wm-heat-tile, i.wm-heat-key) {
+  --wm-heat-mix: 16%;
+  --wm-heat-hue: var(--muted);
+}
+[data-step="1"] {
+  --wm-heat-mix: 16%;
+}
+[data-step="2"] {
+  --wm-heat-mix: 30%;
+}
+[data-step="3"] {
+  --wm-heat-mix: 50%;
+}
+[data-step="4"] {
+  --wm-heat-mix: 70%;
+}
+[data-step="5"] {
+  --wm-heat-mix: 100%;
+}
+/* The coldest tiles keep readable text, only quieter. */
+.wm-heat-tile[data-step="1"] {
+  color: color-mix(in srgb, var(--wm-ink) 72%, var(--wm-dim));
+}
+.wm-heat-tile[data-step="2"] {
+  color: color-mix(in srgb, var(--wm-ink) 88%, var(--wm-dim));
+}
 .wm-heat-input,
 i.wm-heat-key.wm-heat-input {
-  background: var(--wm-orange);
-  color: #2a1a06;
-}
-.wm-heat-input[data-level="4"] {
-  background: color-mix(in srgb, var(--wm-orange) 86%, #ff6a1a);
+  --wm-heat-hue: var(--wm-hot);
+  background: color-mix(in srgb, var(--wm-hot) var(--wm-heat-mix), var(--card));
+  border-color: color-mix(in srgb, var(--wm-hot) 70%, var(--border));
 }
 .wm-heat-error,
 i.wm-heat-key.wm-heat-error {
-  background: color-mix(in srgb, var(--destructive) 62%, var(--card));
+  --wm-heat-hue: var(--destructive);
+  background: color-mix(
+    in srgb,
+    var(--destructive) calc(var(--wm-heat-mix) * 0.85),
+    var(--card)
+  );
   border-color: var(--destructive);
-}
-.wm-heat-error[data-level="4"] {
-  background: color-mix(in srgb, var(--destructive) 82%, var(--card));
-  color: #fff4f2;
 }
 .wm-heat-review,
 .wm-heat-followup,
 i.wm-heat-key.wm-heat-review {
-  background: color-mix(in srgb, var(--wm-orange) 24%, var(--card));
-  border-color: color-mix(in srgb, var(--wm-orange) 50%, var(--border));
-}
-.wm-heat-review[data-level="2"],
-.wm-heat-followup[data-level="2"] {
-  background: color-mix(in srgb, var(--wm-orange) 44%, var(--card));
-  border-color: color-mix(in srgb, var(--wm-orange) 70%, var(--border));
-}
-.wm-heat-review[data-level="3"],
-.wm-heat-followup[data-level="3"] {
-  background: color-mix(in srgb, var(--wm-orange) 68%, var(--card));
-  border-color: color-mix(in srgb, var(--wm-orange) 85%, var(--border));
-  color: #2a1a06;
-}
-.wm-heat-review[data-level="4"],
-.wm-heat-followup[data-level="4"] {
-  background: color-mix(in srgb, var(--wm-orange) 92%, #ff6a1a);
-  border-color: var(--wm-orange);
-  color: #2a1a06;
+  --wm-heat-hue: var(--wm-gold);
+  background: color-mix(in srgb, var(--wm-gold) var(--wm-heat-mix), var(--card));
+  border-color: color-mix(in srgb, var(--wm-gold) 55%, var(--border));
 }
 .wm-heat-unread,
 i.wm-heat-key.wm-heat-unread {
-  background: color-mix(in srgb, var(--wm-blue) 55%, var(--card));
-  border-color: color-mix(in srgb, var(--wm-blue) 70%, var(--border));
+  --wm-heat-hue: var(--wm-blue);
+  background: color-mix(in srgb, var(--wm-blue) var(--wm-heat-mix), var(--card));
+  border-color: color-mix(in srgb, var(--wm-blue) 60%, var(--border));
 }
-.wm-heat-unread[data-level="3"],
-.wm-heat-unread[data-level="4"] {
-  background: color-mix(in srgb, var(--wm-blue) 80%, var(--card));
+/* Quiet and running work share a neutral ramp: a dated backlog task near
+   its date still climbs, in grey, and the green ring says running. */
+.wm-heat-quiet,
+.wm-heat-working,
+i.wm-heat-key.wm-heat-working {
+  --wm-heat-hue: var(--wm-ink);
+  color: var(--wm-dim);
+  background: color-mix(
+    in srgb,
+    var(--wm-ink) calc(var(--wm-heat-mix) * 0.2),
+    var(--card)
+  );
+}
+.wm-heat-quiet[data-step="3"],
+.wm-heat-quiet[data-step="4"],
+.wm-heat-quiet[data-step="5"],
+.wm-heat-working[data-step="3"],
+.wm-heat-working[data-step="4"],
+.wm-heat-working[data-step="5"] {
+  color: var(--wm-ink);
+}
+i.wm-heat-key.wm-heat-working {
+  background: color-mix(in srgb, var(--wm-green) 25%, var(--card));
+}
+/* From the middle step up a coloured tile is bright enough for dark ink. */
+.wm-heat-input[data-step="3"],
+.wm-heat-input[data-step="4"],
+.wm-heat-input[data-step="5"],
+.wm-heat-review[data-step="3"],
+.wm-heat-review[data-step="4"],
+.wm-heat-review[data-step="5"],
+.wm-heat-followup[data-step="3"],
+.wm-heat-followup[data-step="4"],
+.wm-heat-followup[data-step="5"] {
+  color: #2a1a06;
+}
+.wm-heat-unread[data-step="3"],
+.wm-heat-unread[data-step="4"],
+.wm-heat-unread[data-step="5"] {
   color: #0d1c2b;
 }
-.wm-heat-quiet {
-  color: var(--wm-dim);
-  background: color-mix(in srgb, var(--muted) 40%, var(--card));
+.wm-heat-error[data-step="4"],
+.wm-heat-error[data-step="5"] {
+  color: #fff4f2;
 }
-/* Dated and aging backlog work must remain visible even without a review state. */
-.wm-heat-quiet[data-timing][data-level="2"],
-.wm-heat-working[data-timing][data-level="2"] {
-  background: color-mix(in srgb, var(--wm-orange) 32%, var(--card));
-  color: var(--foreground);
+/* The hottest step burns a little past the hue, so 5 is not just 4 again. */
+.wm-heat-input[data-step="5"] {
+  background: color-mix(in srgb, var(--wm-hot) 82%, #ff4d00);
 }
-.wm-heat-quiet[data-timing][data-level="3"],
-.wm-heat-working[data-timing][data-level="3"] {
-  background: color-mix(in srgb, var(--wm-orange) 68%, var(--card));
-  color: #2a1a06;
+.wm-heat-review[data-step="5"],
+.wm-heat-followup[data-step="5"],
+i.wm-heat-key.wm-heat-review[data-step="5"] {
+  background: color-mix(in srgb, var(--wm-gold) 78%, #ff8a1a);
 }
-.wm-heat-quiet[data-timing][data-level="4"],
-.wm-heat-working[data-timing][data-level="4"] {
-  background: color-mix(in srgb, var(--wm-orange) 92%, #ff6a1a);
-  color: #2a1a06;
+/* The rank numeral: a small ring ahead of the key on the three hottest tiles, in the tile's own ink. */
+.wm-heat-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
 }
-/* Match the depth selectors' specificity so their background shorthand cannot
-   erase the overdue hatch or replace its red edge. */
-.wm-heat-tile.wm-heat-overdue[data-level] {
+/* The red edge: past due, up to two weeks. Its selector matches the depth
+   rules so their border shorthand cannot replace it. */
+.wm-heat-tile.wm-heat-overdue[data-step] {
   border: 2px solid var(--destructive);
-  background-image: repeating-linear-gradient(
-    135deg,
-    transparent 0 9px,
-    rgb(42 26 6 / 0.16) 9px 11px
-  );
 }
 .wm-heat-overdue .wm-heat-meta > span:last-child {
   font-weight: 800;
 }
 i.wm-heat-key.wm-heat-overdue {
   border: 2px solid var(--destructive);
-  background: var(--wm-orange);
+  background: color-mix(in srgb, var(--wm-gold) 54%, var(--card));
 }
 .wm-heat-aged {
   border-style: dashed;
 }
 i.wm-heat-key.wm-heat-aged {
-  border: 1px dashed var(--wm-orange);
-  background: color-mix(in srgb, var(--wm-orange) 32%, var(--card));
+  border: 1px dashed var(--wm-gold);
+  background: color-mix(in srgb, var(--wm-gold) 32%, var(--card));
 }
 /* One orchestrator on an area reads in the running green; past its cap, in the warning orange. */
 .wm-heat-head em.wm-heat-orchestrated {
@@ -2581,29 +2644,25 @@ i.wm-heat-key.wm-heat-focused {
   outline: 2px solid var(--wm-focus);
   outline-offset: -2px;
 }
-/* A thin hatch: the wait is already in the label, the stripes only flag it.
-   A date more than two weeks past wears the same hatch: stale, not urgent.
-   Its selector outranks the depth backgrounds, which would erase it. */
-.wm-heat-stale,
-.wm-heat-tile.wm-heat-late[data-level] {
+/* The hatch means one thing: 60 days or more past due. Its selector
+   outranks the depth backgrounds, which would otherwise erase it. */
+.wm-heat-tile.wm-heat-stale[data-step] {
   background-image: repeating-linear-gradient(
     135deg,
     transparent 0 7px,
-    color-mix(in srgb, var(--foreground) 14%, transparent) 7px 8.5px
+    color-mix(in srgb, var(--wm-ink) 13%, transparent) 7px 8.5px
   );
 }
-.wm-heat-stale[data-level="3"],
-.wm-heat-stale[data-level="4"],
-.wm-heat-tile.wm-heat-late[data-level="3"],
-.wm-heat-tile.wm-heat-late[data-level="4"] {
+.wm-heat-tile.wm-heat-stale[data-step="3"],
+.wm-heat-tile.wm-heat-stale[data-step="4"],
+.wm-heat-tile.wm-heat-stale[data-step="5"] {
   background-image: repeating-linear-gradient(
     135deg,
     transparent 0 7px,
     rgb(42 26 6 / 0.16) 7px 8.5px
   );
 }
-i.wm-heat-key.wm-heat-stale,
-i.wm-heat-key.wm-heat-late {
+i.wm-heat-key.wm-heat-stale {
   background: repeating-linear-gradient(
     135deg,
     var(--card) 0 3px,

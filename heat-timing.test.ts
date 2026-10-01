@@ -3,8 +3,8 @@ import { data, now, task } from "./fixtures";
 import { buildMap, localDay } from "./model";
 import type { MapTask } from "./server";
 import type { WorkItem } from "./model";
-import { buildHeat, heatLevel, heatPull, heatStats } from "./heat";
-import { heatTiming } from "./heat-timing";
+import { buildHeat, heatPull, heatStats } from "./heat";
+import { ageNear, dueNear, heatTiming, ramp } from "./heat-timing";
 
 const DAY = 86400000;
 const iso = (days: number) => new Date(now - days * DAY).toISOString();
@@ -13,20 +13,33 @@ const item = (fields: Partial<MapTask> = {}, at = now) =>
   buildMap(data([task(fields)]), [], {}, at)[0].children[0];
 
 describe("task timing drives Heat", () => {
-  it("increases size at two weeks, one week, three days, tomorrow, today and overdue", () => {
+  it("increases size at two weeks, one week, three days, tomorrow and today, holds a week past due, then fades", () => {
     const offsets = [21, 14, 7, 3, 1, 0, -1, -14];
     const items = offsets.map((days) =>
       item({ dueDate: due(days), dateKind: "deadline" }),
     );
     const weights = items.map((entry) => heatPull(entry, now));
+    // Rising to today.
     weights
-      .slice(1)
+      .slice(1, 6)
       .forEach((weight, index) =>
         expect(weight).toBeGreaterThan(weights[index]),
       );
-    expect(items.map((entry) => heatLevel(entry, now))).toEqual([
-      1, 1, 1, 2, 3, 4, 4, 4,
-    ]);
+    // Yesterday pulls as hard as today: the peak is a plateau over the first
+    // week past due. Two weeks past it has started to fade, still above a
+    // date three days ahead.
+    expect(weights[6]).toBe(weights[5]);
+    expect(weights[7]).toBeLessThan(weights[6]);
+    expect(weights[7]).toBeGreaterThan(weights[3]);
+    expect(dueNear(21)).toBeLessThan(dueNear(14));
+    expect(dueNear(30)).toBe(dueNear(300));
+    // The ramp holds its ends and draws straight lines between its points.
+    expect(ramp([[0, 1], [10, 0]], -5)).toBe(1);
+    expect(ramp([[0, 1], [10, 0]], 2.5)).toBe(0.75);
+    expect(ramp([[0, 1], [10, 0]], 50)).toBe(0);
+    expect(ageNear(0)).toBe(0.2);
+    expect(ageNear(45)).toBeCloseTo(0.34);
+    expect(ageNear(400)).toBe(0.5);
     expect(items.map((entry) => heatTiming(entry, now)!.label)).toEqual([
       "Due in 21d",
       "Due in 14d",
@@ -42,22 +55,27 @@ describe("task timing drives Heat", () => {
   it("peaks overdue in its first week, then decays: a date long past is stale, not urgent", () => {
     const at = (days: number) =>
       heatTiming(item({ dueDate: due(days), dateKind: "deadline" }), now)!;
-    expect(at(-1).weight).toBeCloseTo(10 + 2 / 7);
-    expect(at(-7).weight).toBe(12);
-    expect(at(-8).weight).toBe(12);
-    expect(at(-30).weight).toBe(8);
-    expect(at(-31).weight).toBe(7);
-    expect(at(-84).weight).toBe(7);
-    // Stale overdue still outweighs a 30-day undated task, never due today.
+    // The peak holds for the first week past due, then the pull fades.
+    expect(at(0).near).toBe(1);
+    expect(at(-1).near).toBe(1);
+    expect(at(-7).near).toBe(1);
+    expect(at(-14).near).toBeCloseTo(0.85);
+    expect(at(-30).near).toBeCloseTo(0.6);
+    expect(at(-60).near).toBeCloseTo(0.36);
+    expect(at(-84).near).toBeCloseTo(0.26 + (0.1 * 6) / 30);
+    expect(at(-180).near).toBe(0.2);
+    expect(at(-400).near).toBe(0.2);
+    // Fading never crosses: every day past due pulls at most what the day before did.
+    for (let days = 1; days < 200; days++)
+      expect(at(-days).near).toBeLessThanOrEqual(at(-days + 1).near);
+    // Stale overdue is still under a date this week and over a month-old undated task.
     const undated30 = heatTiming(item({ createdAt: iso(30) }), now)!;
-    expect(at(-84).weight).toBeGreaterThan(undated30.weight);
-    expect(at(-84).weight).toBeLessThan(at(0).weight);
+    expect(at(-84).near).toBeLessThan(undated30.near);
+    expect(at(-60).near).toBeGreaterThan(undated30.near);
+    expect(at(-84).near).toBeLessThan(at(0).near);
     expect(heatPull(item({ dueDate: due(-3) }), now)).toBeGreaterThan(
       heatPull(item({ dueDate: due(-84) }), now),
     );
-    expect([-14, -15, -60, -61, -84].map((days) => at(days).level)).toEqual([
-      4, 3, 3, 2, 2,
-    ]);
     expect([-1, -14, -15, -84].map((days) => at(days).late)).toEqual([
       false,
       false,
@@ -85,13 +103,12 @@ describe("task timing drives Heat", () => {
       statusSince: iso(40),
     });
     expect(heatPull(recurring, now)).toBe(heatPull(fresh, now));
-    expect(heatLevel(recurring, now)).toBe(heatLevel(fresh, now));
     expect(heatTiming(recurring, now)!.kind).toBe("due");
     const overdue = item({ ...recurring.task, dueDate: due(-1) });
     expect(heatPull(overdue, now)).toBeGreaterThan(heatPull(recurring, now));
   });
 
-  it("keeps due dates primary over priority, review age and CHECK AFTER", () => {
+  it("multiplies priority with the date, and ignores review age and CHECK AFTER", () => {
     const far = item({
       dueDate: due(14),
       priority: "urgent",
@@ -99,8 +116,14 @@ describe("task timing drives Heat", () => {
       createdAt: iso(300),
       statusSince: iso(100),
     });
-    const near = item({ dueDate: due(3), priority: "none" });
-    expect(heatPull(near, now)).toBeGreaterThan(heatPull(far, now));
+    const today = item({ dueDate: due(0), priority: "medium", status: "in_review" });
+    const soon = item({ dueDate: due(3), priority: "none", status: "in_review" });
+    // A medium task due today still beats an urgent one two weeks out; an
+    // unset priority three days out does not.
+    expect(heatPull(today, now)).toBeGreaterThan(heatPull(far, now));
+    expect(heatPull(far, now)).toBeGreaterThan(heatPull(soon, now));
+    // Review age moves nothing: the same task, fresh in review, pulls the same.
+    expect(heatPull({ ...far, task: { ...far.task!, statusSince: iso(0), createdAt: iso(1) } }, now)).toBe(heatPull(far, now));
     const waiting = item({
       dueDate: due(-1),
       lifecycle: "waiting",
@@ -129,9 +152,6 @@ describe("task timing drives Heat", () => {
     expect(entries.map((entry) => heatTiming(entry, now)!.label)).toEqual(
       ages.map((age) => `${age}d old`),
     );
-    expect(entries.map((entry) => heatLevel(entry, now))).toEqual([
-      1, 1, 2, 3, 4, 4,
-    ]);
     expect(
       heatPull(item({ createdAt: iso(90), updatedAt: iso(60) }), now),
     ).toBe(heatPull(item({ createdAt: iso(90), updatedAt: iso(0) }), now));

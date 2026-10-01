@@ -24,8 +24,8 @@ import {
   type HeatTile,
   type Rect,
   heatTone,
-  heatLevel,
 } from "./heat";
+import { STALE_PAST_DAYS } from "./heat-timing";
 
 const UNIT: Rect = { x: 0, y: 0, w: 100, h: 100 };
 const AREA_SHARE = 0.66;
@@ -51,6 +51,8 @@ const ACTS_FULL = 240;
 const ACTS_LEAD = 166;
 const FALLBACK = { width: 1280, height: 720 };
 const RUNNING = "agent running";
+/** The rank numeral and its gap, taken from the label row's room. */
+const RANK_W = 19;
 /** The area header and the body padding are not available to the tiles. */
 const HEADER = 31;
 /** Below this area width the header keeps only the name and an orchestrator. */
@@ -454,7 +456,7 @@ function GroupTile({
     <div className="wm-heat-slot" data-layout-id={tile.id} style={box(rect)}>
       <div
         className={`wm-heat-tile wm-heat-${tile.overflow ? tile.tone : "quiet"} wm-heat-group ${tile.overflow ? "wm-heat-more" : ""} ${tile.running ? "wm-heat-running" : ""} ${shown.length ? "wm-heat-group-list" : ""}`}
-        data-level={tile.overflow ? tile.level : undefined}
+        data-step={tile.overflow ? tile.step : undefined}
         role="group"
         aria-label={`${tile.overflow ? foldHead(tile, Infinity) : head} in ${area.title}`}
         title={tile.overflow ? names.join(", ") : undefined}
@@ -483,7 +485,7 @@ function GroupTile({
                 >
                   <i
                     className={`wm-heat-row-dot wm-heat-${heatTone(member)}`}
-                    data-level={heatLevel(member, now)}
+                    data-step={area.steps.get(member.id) ?? 1}
                     aria-hidden="true"
                   />
                   {member.task?.key ? <b>{member.task.key}</b> : null}
@@ -596,15 +598,19 @@ function Tile({
   // The key never gives way; the label shows whole or not at all, and the
   // accessible description keeps it either way.
   // The ask tag is hidden on a narrow tile (below 118px), so it is not budgeted there.
+  // One of the map's three hottest wears its number ahead of the key.
+  const rank = tiny ? undefined : tile.rank;
   const row = open
     ? { lead, label, ask }
-    : labelRow(width, lead, label, working, {
+    : labelRow(width - (rank ? RANK_W : 0), lead, label, working, {
         compact: tile.timing?.compact,
         ask: width < 118 ? "" : ask,
       });
-  // Past due up to two weeks is urgent; longer past due reads as stale.
-  const late = !!tile.timing?.overdue && tile.timing.late;
-  const overdue = !!tile.timing?.overdue && !late;
+  // Past due up to two weeks wears the red edge: urgent. Two months past
+  // due wears the hatch: stale. Between them the label and the depth speak.
+  const overdue = !!tile.timing?.overdue && !tile.timing.late;
+  const stale =
+    !!tile.timing?.overdue && -tile.timing.days >= STALE_PAST_DAYS;
   // Inside an expanded area a tile is a small card: it spends its room on the
   // state of the work rather than on empty fill. Tiles too small to hold a
   // title cannot hold facts either, so they keep exactly what they had.
@@ -705,11 +711,11 @@ function Tile({
       <button
         type="button"
         data-work-id={item.id}
-        data-level={tile.level}
+        data-step={tile.step}
         data-timing={tile.timing?.kind}
         aria-expanded={open}
         aria-controls={open ? `detail-${item.id}` : undefined}
-        className={`wm-heat-tile wm-heat-${tile.tone} ${working ? "wm-heat-running" : ""} ${item.focus ? "wm-heat-focused" : ""} ${overdue ? "wm-heat-overdue" : ""} ${late ? "wm-heat-late" : ""} ${tile.timing?.aged ? "wm-heat-aged" : ""} ${!tile.timing && tile.stale ? "wm-heat-stale" : ""} ${tiny ? "wm-heat-tiny" : ""} ${sliver ? "wm-heat-sliver" : ""} ${!open && width < 118 ? "wm-heat-narrow" : ""} ${!open && width < 72 ? "wm-heat-keyonly" : ""} ${picked ? "wm-heat-picked" : ""} ${inside ? "wm-heat-inside" : ""}`}
+        className={`wm-heat-tile wm-heat-${tile.tone} ${working ? "wm-heat-running" : ""} ${item.focus ? "wm-heat-focused" : ""} ${overdue ? "wm-heat-overdue" : ""} ${stale ? "wm-heat-stale" : ""} ${tile.timing?.aged ? "wm-heat-aged" : ""} ${tiny ? "wm-heat-tiny" : ""} ${sliver ? "wm-heat-sliver" : ""} ${!open && width < 118 ? "wm-heat-narrow" : ""} ${!open && width < 72 ? "wm-heat-keyonly" : ""} ${picked ? "wm-heat-picked" : ""} ${inside ? "wm-heat-inside" : ""}`}
         draggable
         onDragStart={(event) => onDragStart(event, item)}
         onDragEnd={onDragEnd}
@@ -723,6 +729,7 @@ function Tile({
               : "Canceled"
             : HEAT_LABEL[tile.tone],
           item.focus ? "In focus" : "",
+          tile.rank ? `Hottest on the map, ${tile.rank} of 3` : "",
           tile.timing?.description ?? "",
           waiting
             ? tile.waited === null
@@ -739,6 +746,11 @@ function Tile({
       >
         <span className="wm-heat-meta">
           <span>
+            {rank && (
+              <b className="wm-heat-rank" aria-hidden="true">
+                {rank}
+              </b>
+            )}
             {row.lead && <span className="wm-heat-key-text">{row.lead}</span>}
             {row.ask && <em className="wm-heat-ask">{row.ask}</em>}
           </span>

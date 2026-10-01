@@ -24,7 +24,10 @@ import {
   labelWidth,
   heatPull,
   heatStats,
-  heatLevel,
+  heatSize,
+  rankSteps,
+  stepAt,
+  SIZE_POWER,
   heatTone,
   needsYou,
   partition,
@@ -280,18 +283,22 @@ describe("attention to colour", () => {
       "followup",
     ]);
   });
-  it("sizes attention above activity, and keeps the quietest tile readable", () => {
+  it("sizes attention above activity, and keeps the quietest tile a size", () => {
     const quiet = heatPull(item(), now);
     const input = heatPull(item({ attention: "input" }), now);
+    const error = heatPull(item({ attention: "error" }), now);
     const review = heatPull(item({ attention: "review" }), now);
     const unread = heatPull(item({ attention: "unread" }), now);
     const work = heatPull(item({ threads: running() }), now);
-    expect(quiet).toBe(0.8);
-    expect(input).toBeGreaterThan(review);
+    expect(quiet).toBeGreaterThan(0);
+    expect(input).toBeGreaterThan(error);
+    expect(error).toBeGreaterThan(review);
     expect(review).toBeGreaterThan(unread);
     expect(unread).toBeGreaterThan(work);
     expect(work).toBeGreaterThan(quiet);
-    expect(input).toBeLessThanOrEqual(14);
+    // An explicit request pulls three times a review, and is current
+    // whatever its date says, so a fresh one pulls four times an undated review.
+    expect(input / review).toBe(4);
     expect(
       heatPull(item({ attention: "input", focus: true }), now),
     ).toBeGreaterThan(input);
@@ -493,9 +500,15 @@ describe("attention to colour", () => {
     );
     expect(heatPull(dated(0), now)).toBeGreaterThan(heatPull(dated(30), now));
   });
-  it("deepens task colour with creation age and focus, not review age or priority", () => {
+  it("ranks pull by priority first-class, date nearness and focus, never by review age", () => {
     const iso = (days: number) => new Date(now - days * DAY).toISOString();
-    const review = (priority: string, days = 0, focus = false) =>
+    const dueIn = (days: number) =>
+      new Date(now + days * DAY).toISOString().slice(0, 10);
+    const review = (
+      priority: string,
+      fields: Partial<ReturnType<typeof task>> = {},
+      focus = false,
+    ) =>
       item({
         attention: "review",
         focus,
@@ -503,25 +516,109 @@ describe("attention to colour", () => {
           status: "in_review",
           priority,
           statusSince: iso(0),
-          createdAt: iso(days),
+          createdAt: iso(0),
           dueDate: null,
+          ...fields,
         }),
       });
-    expect(heatLevel(review("none"), now)).toBe(1);
-    expect(heatLevel(review("low"), now)).toBe(1);
-    expect(heatLevel(review("medium"), now)).toBe(1);
-    expect(heatLevel(review("high"), now)).toBe(1);
-    expect(heatLevel(review("urgent"), now)).toBe(1);
-    expect(heatLevel(review("none", 45), now)).toBe(2);
-    expect(heatLevel(review("high", 45), now)).toBe(2);
-    expect(heatLevel(review("high", 90, true), now)).toBe(4);
-    expect(heatLevel(review("low", 0, true), now)).toBe(2);
-    expect(heatLevel(item({ attention: "input" }), now)).toBe(3);
-    expect(heatLevel(item({ attention: "error" }), now)).toBe(3);
-    expect(
-      heatLevel(item({ attention: "unread", unreadResults: 1 }), now),
-    ).toBe(1);
-    expect(heatLevel(item(), now)).toBe(1);
+    const pull = (entry: WorkItem) => heatPull(entry, now);
+    // Priority is a multiplier: urgent > high > medium > low = none.
+    expect(pull(review("urgent"))).toBeGreaterThan(pull(review("high")));
+    expect(pull(review("high"))).toBeGreaterThan(pull(review("medium")));
+    expect(pull(review("medium"))).toBeGreaterThan(pull(review("low")));
+    expect(pull(review("low"))).toBe(pull(review("none")));
+    expect(pull(review("urgent")) / pull(review("medium"))).toBeCloseTo(2.4);
+    // A low-priority draft two months past due sits clearly under a
+    // high-priority task due this week, and under a medium one due today.
+    const staleDraft = review("low", { dueDate: dueIn(-60) });
+    const highThisWeek = review("high", { dueDate: dueIn(5) });
+    const mediumToday = review("medium", { dueDate: dueIn(0) });
+    expect(pull(highThisWeek) / pull(staleDraft)).toBeGreaterThan(3);
+    expect(pull(mediumToday)).toBeGreaterThan(pull(staleDraft) * 3);
+    // An urgent task a month past due still outranks a medium one a month out.
+    expect(pull(review("urgent", { dueDate: dueIn(-30) }))).toBeGreaterThan(
+      pull(review("medium", { dueDate: dueIn(30) })),
+    );
+    // But a date today beats a stale urgent date: nearness is not optional.
+    expect(pull(mediumToday)).toBeGreaterThan(
+      pull(review("urgent", { dueDate: dueIn(-90) })),
+    );
+    // Undated age is a modest factor: 90 days old is under any date this week.
+    expect(pull(review("medium", { createdAt: iso(90) }))).toBeLessThan(
+      pull(review("medium", { dueDate: dueIn(7) })),
+    );
+    expect(pull(review("medium", { createdAt: iso(90) }))).toBeGreaterThan(
+      pull(review("medium", { createdAt: iso(1) })),
+    );
+    // Focus multiplies, and review age moves nothing.
+    expect(pull(review("medium", {}, true)) / pull(review("medium"))).toBeCloseTo(1.6);
+    expect(pull(review("medium", { statusSince: iso(45) }))).toBe(
+      pull(review("medium")),
+    );
+    // Input and a failed run stay strong: an undated medium request for your
+    // hands beats a high-priority review due this week.
+    expect(pull(item({ attention: "input", task: task({ priority: "medium" }) }))).toBeGreaterThan(
+      pull(highThisWeek),
+    );
+  });
+  it("maps rank to five steps so any data has a top, a middle and a bottom", () => {
+    const weighted = (weights: number[]) =>
+      weights.map((weight, index) => ({ id: `t${index}`, weight }));
+    const steps = (weights: number[]) =>
+      [...rankSteps(weighted(weights)).entries()]
+        .sort((a, b) => Number(a[0].slice(1)) - Number(b[0].slice(1)))
+        .map(([, step]) => step);
+    // Shares: hottest tenth 5, next fifth 4, middle three tenths 3, a
+    // quarter 2, the coldest 15% at 1.
+    expect(stepAt(0)).toBe(5);
+    expect(stepAt(0.099)).toBe(5);
+    expect(stepAt(0.1)).toBe(4);
+    expect(stepAt(0.3)).toBe(3);
+    expect(stepAt(0.6)).toBe(2);
+    expect(stepAt(0.85)).toBe(1);
+    // A flat band of nearly equal weights still spreads over every step.
+    const flat = Array.from({ length: 40 }, (_, i) => 7 + i * 0.01);
+    const spread = steps(flat);
+    expect(new Set(spread)).toEqual(new Set([1, 2, 3, 4, 5]));
+    expect(spread.filter((s) => s === 5).length).toBe(4);
+    expect(spread.filter((s) => s === 1).length).toBe(6);
+    // The heaviest is always 5 and the lightest always 1, from two tiles up.
+    expect(steps([1, 2])).toEqual([1, 5]);
+    expect(steps([3, 1, 2])).toEqual([5, 1, 3]);
+    expect(steps([5])).toEqual([5]);
+    // Identical weights share one step: the same work never reads as two depths.
+    expect(steps([2, 2, 2, 1])).toEqual([5, 5, 5, 1]);
+    expect(new Set(steps(Array(12).fill(3))).size).toBe(1);
+  });
+  it("curves size with pull so the hottest tile is several times the coldest", () => {
+    expect(SIZE_POWER).toBeGreaterThan(1);
+    expect(heatSize(1)).toBe(1);
+    expect(heatSize(2) / heatSize(1)).toBeCloseTo(2 ** SIZE_POWER);
+    // Order is kept, and nothing goes negative.
+    expect(heatSize(0.5)).toBeLessThan(heatSize(0.6));
+    expect(heatSize(-1)).toBe(0);
+    // On a map of one hot and several warm review tasks the hot tile is at
+    // least three times the coldest drawn tile, after the readable floor.
+    const dueIn = (days: number) =>
+      new Date(now + days * DAY).toISOString().slice(0, 10);
+    const [area] = buildHeat(
+      [
+        project("p", [
+          item({ id: "task:hot", attention: "review", task: task({ status: "in_review", priority: "high", dueDate: dueIn(0) }) }),
+          ...[40, 50, 60, 70, 80].map((days) =>
+            item({ id: `task:warm${days}`, attention: "review", task: task({ status: "in_review", priority: "none", dueDate: dueIn(-days) }) }),
+          ),
+        ]),
+      ],
+      now,
+    );
+    const weights = area.tiles.map((tile) => tile.weight);
+    expect(Math.max(...weights) / Math.min(...weights)).toBeGreaterThan(3);
+    expect(area.tiles[0].id).toBe("task:hot");
+    expect(area.tiles[0].rank).toBe(1);
+    expect(area.tiles[0].step).toBe(5);
+    expect(area.tiles.at(-1)!.step).toBe(1);
+    expect(area.steps.get("task:hot")).toBe(5);
   });
   it("moves a known leading verb out of the title and leaves everything else alone", () => {
     expect(tileText("Review draft: The Screen That Lies")).toEqual({
@@ -678,6 +775,7 @@ describe("what an area header says", () => {
     running: 0,
     orchestrator: null,
     items: [],
+    steps: new Map(),
     tiles: [],
     ...overrides,
   });
@@ -802,7 +900,6 @@ describe("a snoozed task in Heat", () => {
     );
     const late = root.children.find((c) => c.id === "task:late")!;
     expect(heatTone(late)).toBe("quiet");
-    expect(heatLevel(late, now)).toBe(1);
     const [area] = buildHeat([root], now, { keepQuiet: 1 });
     const group = area.tiles.find((t) => t.id.startsWith("quiet:"));
     expect(group?.members.map((m) => m.id)).toContain("task:late");
@@ -810,6 +907,7 @@ describe("a snoozed task in Heat", () => {
     const tile = open.tiles.find((t) => t.id === "task:late")!;
     expect(tile.timing).toMatchObject({
       kind: "snooze",
+      near: 0.1,
       label: "snoozed 6d",
       overdue: false,
       prominent: false,
@@ -837,7 +935,8 @@ describe("folding tiles too small to read", () => {
     members: [],
     stale: 0,
     waited: null,
-    level: 1,
+    pull: 0,
+    step: 1,
     timing: null,
   });
   const size = { w: 300, h: 200 };
@@ -1124,7 +1223,8 @@ describe("folding keeps the heaviest tiles on screen", () => {
     members: [],
     stale: 0,
     waited: null,
-    level: 1,
+    pull: 0,
+    step: 1,
     timing: null,
   });
   it("folds the lightest half at a time, so a crowded area still shows its heaviest work", () => {
@@ -1151,7 +1251,7 @@ describe("folding keeps the heaviest tiles on screen", () => {
 describe("the fold tile itself", () => {
   const tile = (id: string, weight: number): HeatTile => ({
     id, weight, tone: "review", item: { id, title: id } as WorkItem, members: [],
-    stale: 0, waited: null, level: 1, timing: null,
+    stale: 0, waited: null, pull: 0, step: 1, timing: null,
   });
   it("is never a sliver: below the minimum it absorbs the next lightest tile", () => {
     // One heavy tile and many light ones in a short, narrow area: the light
@@ -1180,7 +1280,8 @@ describe("a fold never hides running work behind quiet work", () => {
     members: [],
     stale: 0,
     waited: null,
-    level: tone === "review" ? 3 : 1,
+    pull: 0,
+    step: tone === "review" ? 3 : 1,
     timing: null,
     running,
   });

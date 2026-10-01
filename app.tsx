@@ -2714,8 +2714,9 @@ function WorkMap() {
                     className="wm-heat-legend"
                     data-open={legendOpen}
                     title={
-                      "Deeper = closer date / older undated task\n" +
-                      "Size = urgency · Due date first, otherwise creation age"
+                      "Pull = what it needs × priority × how near the date is (peaking this week, fading when long past), more in focus.\n" +
+                      "Size follows pull. Depth is pull rank across the map: hottest tenth deepest, coldest 15% palest, so there is always a top and a bottom.\n" +
+                      "1 2 3 mark the three hottest tiles."
                     }
                   >
                     {(
@@ -2726,12 +2727,8 @@ function WorkMap() {
                         ["unread", "Ready to read"],
                         ["working", "Agent working"],
                         ["focused", "In focus"],
-                        ["overdue", "Past due"],
-                        [
-                          "stale",
-                          "Stale",
-                          "More than 14 days past due, or waiting 30+ days",
-                        ],
+                        ["overdue", "Past due", "Up to 14 days past due"],
+                        ["stale", "Stale 60d+", "60 days or more past due"],
                         ["aged", "Undated 30d+"],
                       ] as [string, string, string?][]
                     ).map(([tone, label, hint]) => (
@@ -2740,8 +2737,18 @@ function WorkMap() {
                         {label}
                       </span>
                     ))}
+                    <span className="wm-heat-ramp" aria-hidden="true">
+                      {[1, 2, 3, 4, 5].map((step) => (
+                        <i
+                          key={step}
+                          className="wm-heat-key wm-heat-review"
+                          data-step={step}
+                        />
+                      ))}
+                    </span>
                     <span className="wm-heat-sense">
-                      Size and depth = how hard it pulls · Hue = what it needs
+                      Pull = need × priority × date nearness · Size and depth =
+                      pull rank · Hue = what it needs
                     </span>
                   </div>
                 </div>

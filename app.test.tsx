@@ -2599,14 +2599,22 @@ describe("heat layout", () => {
     const backlog = slot.getByRole("button", { name: /^Preview Old idea/ });
     expect(recurring.textContent).toContain("Due today");
     expect(recurring.textContent).not.toContain("300d");
-    expect(recurring.getAttribute("data-level")).toBe("4");
+    // Depth is rank across the map: the review due today is the hottest,
+    // the dated quiet tasks sit under it, the fresh quiet ones at the bottom.
+    expect(recurring.getAttribute("data-step")).toBe("5");
+    expect(recurring.querySelector(".wm-heat-rank")?.textContent).toBe("1");
     expect(late.textContent).toContain("2d overdue");
     expect(late.className).toContain("wm-heat-overdue");
     expect(near.textContent).toContain("Due in 3d");
-    expect(near.getAttribute("data-level")).toBe("2");
+    expect(near.getAttribute("data-step")).toBe("4");
     expect(backlog.textContent).toContain("90d old");
     expect(backlog.className).toContain("wm-heat-aged");
-    expect(backlog.getAttribute("data-level")).toBe("4");
+    expect(backlog.getAttribute("data-step")).toBe("3");
+    expect(
+      slot.getByRole("button", { name: /^Preview New idea 0/ }).getAttribute(
+        "data-step",
+      ),
+    ).toBe("1");
     expect(backlog.getAttribute("aria-label")).toContain("no due date");
     slot.lifecycle.unmount();
   });
@@ -3510,7 +3518,7 @@ describe("heat layout", () => {
     expect(tile.querySelector(".wm-heat-title")?.textContent).toBe(
       "pick a direction",
     );
-    expect(tile.getAttribute("data-level")).toBe("3");
+    expect(tile.getAttribute("data-step")).toBe("5");
     expect(
       Array.from(slot.container.querySelectorAll(".wm-heat-counts > div")).map(
         (entry) => entry.textContent,
@@ -3532,15 +3540,22 @@ describe("heat layout", () => {
       "Agent working",
       "In focus",
       "Past due",
-      "Stale",
+      "Stale 60d+",
       "Undated 30d+",
-      "Size and depth = how hard it pulls · Hue = what it needs",
+      "",
+      "Pull = need × priority × date nearness · Size and depth = pull rank · Hue = what it needs",
     ]);
+    // The five depths, coldest to hottest, drawn as chips in the legend.
+    expect(
+      Array.from(legend.querySelectorAll(".wm-heat-ramp i"), (chip) =>
+        chip.getAttribute("data-step"),
+      ),
+    ).toEqual(["1", "2", "3", "4", "5"]);
     expect(legend.getAttribute("title")).toContain(
-      "Deeper = closer date / older undated task",
+      "Pull = what it needs × priority × how near the date is",
     );
     expect(legend.getAttribute("title")).toContain(
-      "Size = urgency · Due date first, otherwise creation age",
+      "Depth is pull rank across the map",
     );
     expect(slot.container.querySelector(".wm-footer")).toBeNull();
     expect(slot.container.querySelector(".wm-heat-hint")?.textContent).toBe(

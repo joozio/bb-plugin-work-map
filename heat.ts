@@ -100,34 +100,50 @@ export function staleDays(item: WorkItem, now: number) {
   const days = waitDays(item, now);
   return days > STALE_DAYS ? days : 0;
 }
+/** The five depths a tile can wear, coldest to hottest. */
+export type Step = 1 | 2 | 3 | 4 | 5;
 /**
- * How deep the tile's colour goes: 1 to 4. Hue says what the work needs;
- * depth follows the task's current due date, or creation age when undated.
- * Explicit input/error requests and focus remain visible attention signals.
+ * Where each step starts, as a share of the map's tiles ranked by pull: the
+ * hottest tenth wears 5, the next fifth 4, the middle three tenths 3, then a
+ * quarter at 2 and the coldest 15% at 1. Rank, not an absolute score, so a
+ * map where every date is past still has a visible top, middle and bottom.
  */
-export function heatLevel(item: WorkItem, now: number): 1 | 2 | 3 | 4 {
-  const tone = heatTone(item);
-  const timing = heatTiming(item, now);
-  if (timing) {
-    const level = Math.max(
-      timing.level,
-      tone === "input" || tone === "error" ? 3 : 1,
-    );
-    return Math.min(4, level + (item.focus ? 1 : 0)) as 1 | 2 | 3 | 4;
+export const STEP_SHARES: readonly [Step, number][] = [
+  [5, 0.1],
+  [4, 0.3],
+  [3, 0.6],
+  [2, 0.85],
+];
+/** The step for a place `at` (0 = hottest, 1 = coldest) in the ranking. */
+export function stepAt(at: number): Step {
+  for (const [step, share] of STEP_SHARES) if (at < share) return step;
+  return 1;
+}
+/**
+ * Steps for `weights` by rank: the heaviest is always 5, the lightest 1,
+ * and a tie shares one step, so identical work never reads as two depths.
+ * One tile alone is the hottest thing on the map.
+ */
+export function rankSteps(
+  weights: readonly Weighted[],
+): Map<string, Step> {
+  const ordered = heatOrder(weights);
+  const out = new Map<string, Step>();
+  const n = ordered.length;
+  let index = 0;
+  while (index < n) {
+    let end = index;
+    while (end + 1 < n && ordered[end + 1].weight === ordered[index].weight)
+      end++;
+    const at = n === 1 ? 0 : (index + end) / 2 / (n - 1);
+    // The first place is 5 and the last 1 even when the shares would not
+    // reach them: a map of three tiles still reads hottest, middle, coldest.
+    const step: Step =
+      index === 0 ? 5 : end === n - 1 && n > 1 ? 1 : stepAt(at);
+    for (let i = index; i <= end; i++) out.set(ordered[i].id, step);
+    index = end + 1;
   }
-  if (tone === "quiet") return 1;
-  const priority = item.task?.priority ?? "";
-  let level =
-    tone === "input" || tone === "error"
-      ? 3
-      : priority === "urgent" || priority === "high"
-        ? 3
-        : priority === "medium"
-          ? 2
-          : 1;
-  if (needsYou(tone) && waitDays(item, now) > STALE_DAYS) level += 1;
-  if (item.focus) level += 1;
-  return Math.min(4, level) as 1 | 2 | 3 | 4;
+  return out;
 }
 /**
  * The verb Wiz puts in front of a title is the kind of act it asks for.
@@ -214,56 +230,76 @@ export function labelRow(
 export function fitsWord(width: number, word: string) {
   return labelWidth(word) <= width - LABEL_CHROME;
 }
-const TONE_PULL: Record<HeatTone, number> = {
-  input: 6,
-  error: 5.4,
-  review: 3.4,
-  followup: 3.4,
-  unread: 2.8,
-  working: 2.6,
-  quiet: 0,
-};
-const round = (value: number) => Math.round(value * 10000) / 10000;
 /**
- * How hard one item pulls on you. Bounded on purpose: ranking score separates
- * first place from second, area size has to keep the quietest work readable.
+ * What the work needs, as a multiplier. An explicit request for your hands
+ * and a failed run pull far ahead of a review; a result to read and a running
+ * agent sit under it; quiet work keeps a little pull so it still has a size.
+ */
+const NEED: Record<HeatTone, number> = {
+  input: 3,
+  error: 2.6,
+  review: 1,
+  followup: 1,
+  unread: 0.7,
+  working: 0.55,
+  quiet: 0.3,
+};
+/** Priority multiplies: urgent is over twice a medium task, low and unset are well under it. */
+const PRIORITY: Record<string, number> = {
+  urgent: 2.4,
+  high: 1.6,
+  medium: 1,
+  low: 0.6,
+  none: 0.6,
+};
+const FOCUS = 1.6;
+const WORKING = 1.15;
+/** Timing of work with no date and no age: a session, or a task whose date cannot be read. */
+const UNTIMED_NEAR = 0.45;
+/**
+ * An explicit request for your hands or a failed run is current whatever
+ * the task's date says: its nearness is at least that of a date four days out.
+ */
+const NOW_NEAR = 0.6;
+/** A long wait on you adds to that, up to the pull of a date a few days out. */
+const WAIT_NEAR = 0.3;
+const WAIT_SPAN = 60;
+/** Area weight grows with pull faster than one to one, so the hottest tile is several times the coldest. */
+export const SIZE_POWER = 1.4;
+const round = (value: number) => Math.round(value * 10000) / 10000;
+export function priorityPull(priority: string | undefined) {
+  return PRIORITY[priority ?? "none"] ?? PRIORITY.none;
+}
+/**
+ * How hard one item pulls on you, in one sentence: what it needs, times its
+ * priority, times how near its date is (peaking this week and fading when
+ * long past), and more when it is in focus. Every factor multiplies, so a
+ * low-priority draft two months past due sits clearly under a high-priority
+ * task due this week, and an urgent task cannot hide behind a stale date.
  */
 export function heatPull(item: WorkItem, now: number) {
   const tone = heatTone(item);
   const timing = heatTiming(item, now);
-  if (timing) {
-    const attention =
-      tone === "input"
-        ? 2.5
-        : tone === "error"
-          ? 2
-          : tone === "review" || tone === "followup"
-            ? 0.5
-            : tone === "unread"
-              ? 0.4
-              : 0;
-    const priority =
-      item.task?.priority === "urgent"
-        ? 0.4
-        : item.task?.priority === "high"
-          ? 0.2
-          : 0;
-    return round(
-      timing.weight +
-        attention +
-        priority +
-        (heatWorking(item) ? 0.3 : 0) +
-        (item.focus ? 2 : 0),
-    );
-  }
-  let pull = 0.8 + TONE_PULL[tone];
-  if (tone !== "working" && heatWorking(item)) pull += 1.2;
-  if (item.focus) pull += 2;
-  // Sessions and tasks with unavailable timing retain their attention signals.
-  // Invalid task dates never silently fall back to creation or a date bonus.
-  // A long wait pulls harder, up to the weight of a high priority and a bit.
-  pull += Math.min(1.5, (waitDays(item, now) / 60) * 1.5);
-  return round(Math.max(0.8, Math.min(14, pull)));
+  // Sessions and tasks with unreadable dates keep their attention signals;
+  // an invalid date never silently becomes a creation age or a date bonus.
+  const timed =
+    timing?.near ??
+    UNTIMED_NEAR +
+      WAIT_NEAR * Math.min(1, waitDays(item, now) / WAIT_SPAN);
+  const near =
+    tone === "input" || tone === "error" ? Math.max(timed, NOW_NEAR) : timed;
+  const priority = item.task ? priorityPull(item.task.priority) : 1;
+  return round(
+    NEED[tone] *
+      priority *
+      near *
+      (item.focus ? FOCUS : 1) *
+      (tone !== "working" && heatWorking(item) ? WORKING : 1),
+  );
+}
+/** The area a pull takes: a curve, so size separates the hot from the cold. */
+export function heatSize(pull: number) {
+  return round(Math.max(0, pull) ** SIZE_POWER);
 }
 export interface Rect {
   x: number;
@@ -552,7 +588,12 @@ export interface HeatTile {
   stale: number;
   /** Days in the current wait, null when its start is unknown. */
   waited: number | null;
-  level: 1 | 2 | 3 | 4;
+  /** How hard it pulls, before the size curve. */
+  pull: number;
+  /** Colour depth by rank across the whole map, 1 coldest to 5 hottest. */
+  step: Step;
+  /** 1, 2 or 3 on the map's three hottest tiles; unset elsewhere. */
+  rank?: number;
   timing: HeatTiming | null;
   /** Stands for tiles too small to read, folded into one "+N more". */
   overflow?: boolean;
@@ -574,20 +615,24 @@ export interface HeatArea {
   orchestrator: AreaOrchestrator | null;
   items: WorkItem[];
   tiles: HeatTile[];
+  /** The step of every item drawn as its own tile; grouped work reads 1. */
+  steps: ReadonlyMap<string, Step>;
 }
-const QUIET_CAP = 6;
+/** The most a pile of quiet work can weigh: about two quiet tiles. */
+const QUIET_CAP = 0.3;
 const AREA_FLOOR = 0.05;
 const TILE_FLOOR = 0.035;
 function quietTile(id: string, members: WorkItem[]): HeatTile {
   return {
     id,
-    weight: round(Math.min(QUIET_CAP, 0.7 + members.length * 0.2)),
+    weight: round(Math.min(QUIET_CAP, 0.06 + members.length * 0.012)),
     tone: "quiet",
     item: null,
     members,
     stale: 0,
     waited: 0,
-    level: 1,
+    pull: 0,
+    step: 1,
     timing: null,
   };
 }
@@ -601,18 +646,22 @@ function areaFrom(
   keepQuiet: number,
 ): HeatArea {
   const tiles = heatOrder(
-    items.map((item) => ({
-      id: item.id,
-      weight: heatPull(item, now),
-      tone: heatTone(item),
-      item,
-      members: [] as WorkItem[],
-      stale: staleDays(item, now),
-      waited: waitingSince(item, now) ? waitDays(item, now) : null,
-      level: heatLevel(item, now),
-      timing: heatTiming(item, now),
-      running: heatWorking(item) ? 1 : 0,
-    })),
+    items.map((item): HeatTile => {
+      const pull = heatPull(item, now);
+      return {
+        id: item.id,
+        weight: heatSize(pull),
+        pull,
+        tone: heatTone(item),
+        item,
+        members: [] as WorkItem[],
+        stale: staleDays(item, now),
+        waited: waitingSince(item, now) ? waitDays(item, now) : null,
+        step: 1,
+        timing: heatTiming(item, now),
+        running: heatWorking(item) ? 1 : 0,
+      };
+    }),
   );
   const loud = tiles.filter(
     (tile) =>
@@ -649,7 +698,42 @@ function areaFrom(
     waiting: items.filter((item) => needsYou(heatTone(item))).length,
     running: items.filter(heatWorking).length,
     orchestrator: root?.orchestrator ?? null,
+    steps: new Map(),
   };
+}
+/**
+ * Depth by rank across the map: every tile drawn on its own is ranked by
+ * pull against every other, whatever its area, and the three hottest are
+ * numbered. Pull, not the floored size: tiles lifted to the readable minimum
+ * share a size but keep their order. Grouped work is not in the ranking and
+ * reads as the coldest.
+ */
+export function withSteps(areas: readonly HeatArea[]): HeatArea[] {
+  const drawn = areas.flatMap((area) =>
+    area.tiles.filter((tile) => tile.item).map((tile) => ({ id: tile.id, weight: tile.pull })),
+  );
+  const steps = rankSteps(drawn);
+  const top = heatOrder(drawn).slice(0, 3).map((tile) => tile.id);
+  return areas.map((area) => {
+    const tiles = area.tiles.map((tile) => {
+      if (!tile.item) return tile;
+      const rank = top.indexOf(tile.id);
+      return {
+        ...tile,
+        step: steps.get(tile.id) ?? 1,
+        ...(rank >= 0 ? { rank: rank + 1 } : {}),
+      };
+    });
+    return {
+      ...area,
+      tiles,
+      steps: new Map(
+        tiles.flatMap((tile) =>
+          tile.item ? [[tile.item.id, tile.step] as const] : [],
+        ),
+      ),
+    };
+  });
 }
 /** A drawn tile must hold its key and one title line; below this it folds. */
 export const MIN_TILE = { w: 64, h: 42 };
@@ -671,7 +755,7 @@ function loudness(tile: HeatTile) {
  */
 function moreTile(id: string, folded: readonly HeatTile[]): HeatTile {
   const strongest = [...folded].sort(
-    (a, b) => toneRank(a.tone) - toneRank(b.tone) || b.level - a.level,
+    (a, b) => toneRank(a.tone) - toneRank(b.tone) || b.step - a.step,
   )[0];
   return {
     id,
@@ -681,7 +765,8 @@ function moreTile(id: string, folded: readonly HeatTile[]): HeatTile {
     members: folded.flatMap((tile) => (tile.item ? [tile.item] : tile.members)),
     stale: 0,
     waited: 0,
-    level: strongest?.level ?? 1,
+    pull: 0,
+    step: strongest?.step ?? 1,
     timing: null,
     overflow: true,
     running: folded.reduce((sum, tile) => sum + runningIn(tile), 0),
@@ -852,7 +937,7 @@ export function buildHeat(
       ),
     );
   return heatOrder(
-    withCeiling(withFloor(heatOrder(areas), AREA_FLOOR), (area) =>
+    withCeiling(withFloor(heatOrder(withSteps(areas)), AREA_FLOOR), (area) =>
       areaCeiling(area.tiles.length),
     ),
   );
