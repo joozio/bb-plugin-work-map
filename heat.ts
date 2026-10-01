@@ -1109,15 +1109,43 @@ export function nowScale(
   }
   return scale;
 }
-/** Every Now tile at `scale` of its weight; the areas re-weighed. */
-export function scaleNow(areas: readonly HeatArea[], scale: number): HeatArea[] {
+/** A Now tile weighs at least this much more than any other tile of its area. */
+export const NOW_LEAD = 1.1;
+/**
+ * Every Now tile at `scale` of its weight. The cap trims the red, it never
+ * puts another tile over a Now tile: in an area holding Now tiles, any other
+ * tile heavier than the lightest Now tile over NOW_LEAD is lowered to that,
+ * so the room the cap frees goes to the map, not to one amber tile. Tidy
+ * mode skips the lowering: its slipped tiles grow for their fix rows. The
+ * areas are re-weighed.
+ */
+export function scaleNow(
+  areas: readonly HeatArea[],
+  scale: number,
+  options: { lead?: boolean } = {},
+): HeatArea[] {
   if (scale === 1) return [...areas];
+  const lead = options.lead ?? true;
   return areas.map((area) => {
-    const tiles = area.tiles.map((tile) =>
+    const scaled = area.tiles.map((tile) =>
       tile.tier === "now" && tile.item
         ? { ...tile, weight: round(tile.weight * scale) }
         : tile,
     );
+    const lightestNow = Math.min(
+      ...scaled
+        .filter((tile) => tile.item && tile.tier === "now")
+        .map((tile) => tile.weight),
+    );
+    const cap = lightestNow / NOW_LEAD;
+    const tiles =
+      lead && Number.isFinite(cap)
+        ? scaled.map((tile) =>
+            tile.item && tile.tier !== "now" && tile.weight > cap
+              ? { ...tile, weight: round(cap) }
+              : tile,
+          )
+        : scaled;
     return { ...area, tiles, weight: areaWeight(tiles) };
   });
 }
@@ -1247,7 +1275,11 @@ export function buildHeat(
   // where the slipped tiles grow and everything else shrinks under it.
   const plain = withTiers(areas, false);
   const scale = nowScale(plain, finish);
-  return finish(scaleNow(tidy ? withTiers(areas, true) : plain, scale));
+  return finish(
+    tidy
+      ? scaleNow(withTiers(areas, true), scale, { lead: false })
+      : scaleNow(plain, scale),
+  );
 }
 export function heatStats(areas: readonly HeatArea[], now: number) {
   const items = areas.flatMap((area) => area.items);
