@@ -947,8 +947,8 @@ it("puts the ask on a big map tile, with where it came from, and keeps it off a 
   expect(next.ask?.textContent).toBe("Choose a direction");
   expect(next.ask?.dataset.askFrom).toBeUndefined();
   next.view.unmount();
-  // Under 120px wide the words of an ask do not fit: the tile keeps its title.
-  const narrow = map(110, 700, { ask: "Pick the title and post it." });
+  // Under 90px wide the words of an ask do not fit: the tile keeps its title.
+  const narrow = map(86, 700, { ask: "Pick the title and post it." });
   expect(narrow.ask).toBeNull();
   expect(narrow.lines).toBe(0);
   narrow.view.unmount();
@@ -1000,9 +1000,9 @@ describe("fitting a tile to its words", () => {
     const longer = neededHeight(tileOf("a", 1, "later", long), 300);
     expect(short).toBeGreaterThan(0);
     expect(longer).toBeGreaterThan(short);
-    // Under 120px no ask is drawn, so it costs nothing.
-    expect(neededHeight(tileOf("a", 1, "later", long), 100)).toBe(
-      neededHeight(tileOf("a", 1, "later", "Post it."), 100),
+    // Under 90px no ask is drawn, so it costs nothing.
+    expect(neededHeight(tileOf("a", 1, "later", long), 80)).toBe(
+      neededHeight(tileOf("a", 1, "later", "Post it."), 80),
     );
     expect(neededHeight({ ...tileOf("g", 1, "later", ""), item: null }, 300)).toBe(0);
   });
