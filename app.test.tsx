@@ -10,10 +10,16 @@ import {
   within,
 } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { data, task, thread } from "./fixtures";
+import { data, now, task, thread } from "./fixtures";
 import { sessionPreview } from "./preview";
 import { localDay } from "./model";
-import type { rpcContract, MapTask, Preference } from "./server";
+import type {
+  rpcContract,
+  MapTask,
+  Preference,
+  TaskComment,
+  TaskDetail,
+} from "./server";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import {
   managedProjectSchema,
@@ -31,6 +37,19 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+/** An opened task's quiet acts sit behind its ⋯ menu: open it, choose one. */
+function pickMore(
+  scope: {
+    getByRole: (
+      role: string,
+      options?: { name?: string | RegExp },
+    ) => HTMLElement;
+  },
+  name: string | RegExp,
+) {
+  fireEvent.click(scope.getByRole("button", { name: /^More on / }));
+  fireEvent.click(scope.getByRole("menuitem", { name }));
+}
 it("fits collapsed Overview to height and width, keeps overflow reachable, and lets details scroll", async () => {
   let width = 1500,
     height = 780;
@@ -464,10 +483,15 @@ async function mount(
     /** Hold the layout and snapshot answers until these settle. */
     layoutGate?: Promise<void>;
     snapshotGate?: Promise<void>;
-    delegateRequests?: { requestId: string; taskId: string }[];
+    delegateRequests?: { requestId: string; taskId: string; note?: string }[];
     delegateError?: string;
     /** Answers a snapshot call in place of the fixture, by call number. */
     snapshot?: (call: number, tasks: MapTask[]) => Promise<MapTask[]> | null;
+    /** The opened task's full text and timeline, by task id. */
+    details?: Record<string, Partial<TaskDetail>>;
+    detailError?: string;
+    commentRequests?: { taskId: string; body: string }[];
+    commentError?: string;
   } = {},
 ) {
   const app = await loadPluginApp(() => import("./app"));
@@ -571,6 +595,7 @@ async function mount(
           options.delegateRequests?.push({
             requestId: input.requestId,
             taskId: input.taskId,
+            ...(input.note ? { note: input.note } : {}),
           });
           if (options.delegateError) throw new Error(options.delegateError);
           const target = tasks.find((row) => row.id === input.taskId);
@@ -646,6 +671,39 @@ async function mount(
           taskId: "task1",
           attachmentError: null,
         }),
+        taskDetail: ({ taskId }) => {
+          if (options.detailError) throw new Error(options.detailError);
+          const source = tasks.find((row) => row.id === taskId);
+          return {
+            taskId,
+            description: "",
+            createdAt: source?.createdAt ?? null,
+            updatedAt: source?.updatedAt ?? new Date(now).toISOString(),
+            labels: [],
+            attachments: [],
+            comments: [],
+            warnings: [],
+            ...options.details?.[taskId],
+          };
+        },
+        postComment: ({ taskId, body }) => {
+          options.commentRequests?.push({ taskId, body });
+          if (options.commentError) throw new Error(options.commentError);
+          const comment: TaskComment = {
+            id: `c${options.commentRequests?.length ?? 1}`,
+            kind: "user",
+            authorName: "You",
+            threadId: null,
+            body,
+            createdAt: new Date(Date.now()).toISOString(),
+          };
+          const detail = (options.details ??= {});
+          detail[taskId] = {
+            ...detail[taskId],
+            comments: [...(detail[taskId]?.comments ?? []), comment],
+          };
+          return { comment };
+        },
         snapshot: async () => {
           await options.snapshotGate;
           if (options.rejectSnapshot)
@@ -808,13 +866,11 @@ describe("existing session chat", () => {
     const taskDetail = slot.getByRole("region", {
       name: "Expanded: Review proposal",
     });
-    fireEvent.click(
-      within(taskDetail).getByRole("button", { name: "Open in side pane" }),
-    );
+    pickMore(within(taskDetail), "Open in side pane");
     expect(
       slot.getByTestId("bb-thread-chat").closest(".wm-preview"),
     ).not.toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Expand in map" }));
+    pickMore(slot, "Expand in map");
     const focusRequest = Number(
       slot.getByTestId("bb-thread-chat").getAttribute("data-focus-request"),
     );
@@ -1256,21 +1312,26 @@ describe("preview and native navigation", () => {
     ).not.toContain("Choose a direction");
     expect(slot.queryByLabelText("Next step")).toBeNull();
     expect(slot.queryByLabelText("Review by")).toBeNull();
-    const summary = within(detail).getByRole("region", {
-      name: "Task summary",
+    // One action bar first, then the work, then the facts and the people.
+    const settle = within(detail).getByRole("region", {
+      name: "Act on this task",
+    });
+    const ask = within(detail).getByRole("region", { name: "The ask" });
+    const description = within(detail).getByRole("region", {
+      name: "Description",
     });
     const sessions = within(detail).getByRole("region", {
       name: "Connected sessions",
     });
-    const settle = within(detail).getByRole("region", {
-      name: "Settle this work",
-    });
     expect(
-      summary.compareDocumentPosition(sessions) &
+      settle.compareDocumentPosition(ask) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      ask.compareDocumentPosition(description) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
-      sessions.compareDocumentPosition(settle) &
+      description.compareDocumentPosition(sessions) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
@@ -1307,7 +1368,7 @@ describe("preview and native navigation", () => {
       "Choose a direction",
     );
     fireEvent.click(slot.getByRole("button", { name: "Cancel" }));
-    fireEvent.click(slot.getByRole("button", { name: "Task done" }));
+    fireEvent.click(slot.getByRole("button", { name: "Done" }));
     await slot.findByRole("region", { name: "Settled today" });
     expect(settleRequests).toHaveLength(1);
     expect(settleRequests[0]).toMatchObject({
@@ -1326,10 +1387,9 @@ describe("preview and native navigation", () => {
     fireEvent.click(
       await slot.findByRole("button", { name: /^Preview Review proposal/ }),
     );
-    fireEvent.click(
-      within(
-        slot.getByRole("region", { name: "Expanded: Review proposal" }),
-      ).getByRole("button", { name: "Open in side pane" }),
+    pickMore(
+      within(slot.getByRole("region", { name: "Expanded: Review proposal" })),
+      "Open in side pane",
     );
     const pane = slot.getByRole("complementary", {
       name: "Preview: Review proposal",
@@ -1357,7 +1417,7 @@ describe("preview and native navigation", () => {
     );
     fireEvent.click(slot.getByRole("button", { name: "Chat here" }));
     const chat = slot.getByTestId("bb-thread-chat");
-    const done = slot.getByRole("button", { name: "Task done" });
+    const done = slot.getByRole("button", { name: "Done" });
     expect(done.closest(".wm-inline-detail")).toBe(
       chat.closest(".wm-inline-detail"),
     );
@@ -1392,7 +1452,7 @@ describe("preview and native navigation", () => {
     );
     expect(slot.getByRole("button", { name: "Save review" })).toBeTruthy();
     expect(settleRequests).toEqual([]);
-    fireEvent.click(slot.getByRole("button", { name: "Task done" }));
+    fireEvent.click(slot.getByRole("button", { name: "Done" }));
     await slot.findByRole("region", { name: "Settled today" });
     expect(settleRequests[0]).toMatchObject({
       action: "done",
@@ -1515,7 +1575,8 @@ describe("preview and native navigation", () => {
     options.tasks[0] = task({
       threadIds: ["thr_test"],
       updatedAt: "2026-09-17T14:00:00Z",
-      summary: "New information from the task",
+      ask: "New information from the task",
+      askFrom: "comment",
     });
     fireEvent.click(slot.getByRole("button", { name: "Refresh map" }));
     await slot.findByText("New information from the task");
@@ -1732,16 +1793,25 @@ describe("preview and native navigation", () => {
     await waitFor(() =>
       expect(trigger.getAttribute("aria-label")).not.toContain("Updated"),
     );
-    fireEvent.click(
-      within(detail).getByRole("button", { name: "Bring into focus" }),
+    pickMore(within(detail), "Bring into focus");
+    await waitFor(() =>
+      expect(
+        slot.inspection.rpcCalls.some(
+          (c) =>
+            c.method === "setPreference" &&
+            (c.input as { focus?: boolean }).focus === true,
+        ),
+      ).toBe(true),
     );
-    await within(detail).findByRole("button", { name: "In focus" });
+    await waitFor(() => {
+      fireEvent.click(within(detail).getByRole("button", { name: /^More on / }));
+      expect(within(detail).getByRole("menuitem", { name: "Remove focus" })).toBeTruthy();
+      fireEvent.keyDown(within(detail).getByRole("menuitem", { name: "Remove focus" }), { key: "Escape" });
+    });
     expect(order()).toEqual(before);
-    fireEvent.click(
-      within(detail).getByRole("button", { name: "Open in side pane" }),
-    );
+    pickMore(within(detail), "Open in side pane");
     expect(order()).toEqual(before);
-    fireEvent.click(slot.getByRole("button", { name: "Expand in map" }));
+    pickMore(slot, "Expand in map");
     expect(
       slot
         .getByRole("region", { name: "Expanded: Waiting 3" })
@@ -2230,7 +2300,7 @@ describe("preview and native navigation", () => {
     fireEvent.click(
       await slot.findByRole("button", { name: /Preview Review proposal/ }),
     );
-    fireEvent.click(slot.getByRole("button", { name: "Bring into focus" }));
+    pickMore(slot, "Bring into focus");
     await waitFor(() =>
       expect(
         slot.inspection.rpcCalls.some(
@@ -2488,7 +2558,7 @@ describe("preview and native navigation", () => {
     expect(
       slot.getByText(/Removing focus also unpins those sessions in BB/),
     ).toBeTruthy();
-    fireEvent.click(slot.getByRole("button", { name: "In focus" }));
+    pickMore(slot, "Remove focus");
     await waitFor(() =>
       expect(slot.inspection.sidebarActionCalls).toContainEqual({
         method: "setPinned",
@@ -3799,9 +3869,9 @@ describe("heat layout", () => {
     expect(card.classList).toContain("wm-heat-slot-open");
     const cover = card.querySelector(":scope > .wm-heat-tile")!;
     expect(cover.getAttribute("aria-expanded")).toBe("true");
-    expect(
-      card.querySelector(":scope > .wm-tile-acts .wm-tile-actions"),
-    ).toBeTruthy();
+    // An open card's acts live in its one action bar, not on its cover.
+    expect(card.querySelector(":scope > .wm-tile-acts")).toBeNull();
+    expect(detail.querySelector(".wm-settle-bar")).toBeTruthy();
     // The closed-card rule that grows the cover must not match an open card.
     const css = readFileSync(join(__dirname, "app.css"), "utf8");
     // A card's footer is its act row or, in tidy mode, its date fixes.
@@ -3977,6 +4047,200 @@ describe("map bookkeeping under load", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(slot.container.textContent).toContain("Newest step");
     expect(slot.container.textContent).not.toContain("Stale step");
+    slot.lifecycle.unmount();
+  });
+});
+
+describe("the opened task", () => {
+  const description =
+    "Why: the gate stays red.\n\nWhat happened:\n1. Step one ran.\n2. Step two failed.\n\n<script>alert(1)</script>\n\nNEXT STEP: choose a gate.";
+  const details = () => ({
+    task1: {
+      description,
+      comments: [
+        {
+          id: "c-old",
+          kind: "user" as const,
+          authorName: "You",
+          threadId: null,
+          body: "First word.",
+          createdAt: "2026-09-16T10:00:00Z",
+        },
+        {
+          id: "c-sys",
+          kind: "system" as const,
+          authorName: "cli",
+          threadId: null,
+          body: "Status changed to In Review by cli",
+          createdAt: "2026-09-16T11:00:00Z",
+        },
+        {
+          id: "c-agent",
+          kind: "agent" as const,
+          authorName: "",
+          threadId: "thr_worker",
+          threadTitle: "Gate worker",
+          body: "**Needs you:** pick gate A or B.",
+          createdAt: "2026-09-17T09:00:00Z",
+        },
+      ],
+      labels: [{ id: "l1", name: "gate", color: "#0af" }],
+    },
+  });
+  it("shows one action bar with no act twice, the ask once, the description as Markdown and the timeline newest first", async () => {
+    const slot = await mount({
+      tasks: [
+        task({
+          status: "in_review",
+          ask: "pick gate A or B.",
+          askFrom: "comment",
+          summary: "pick gate A or B.",
+        }),
+      ],
+      details: details(),
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    const detail = slot.getByRole("region", {
+      name: "Expanded: Review proposal",
+    });
+    const card = detail.closest(".wm-item-expanded") as HTMLElement;
+    // One bar: every act once, across the bar and its menu.
+    const bar = within(detail).getByRole("region", { name: "Act on this task" });
+    const labels = Array.from(
+      bar.querySelectorAll(".wm-settle-buttons button, .wm-settle-buttons a"),
+      (b) => b.getAttribute("aria-label") || b.textContent?.trim(),
+    );
+    expect(labels).toEqual([
+      "Agent decides",
+      "Done",
+      "Ready for review",
+      "Pause here",
+      "More on TEST-1",
+    ]);
+    fireEvent.click(within(bar).getByRole("button", { name: "More on TEST-1" }));
+    const menu = within(bar)
+      .getAllByRole("menuitem")
+      .map((e) => e.textContent?.replace(/Quiet for.*$/, "").trim());
+    expect(menu).toEqual([
+      "Snooze 7d",
+      "Bring into focus",
+      "Open in side pane",
+      "Open in Tasks ↗",
+    ]);
+    fireEvent.keyDown(within(bar).getAllByRole("menuitem")[0], { key: "Escape" });
+    expect(card.querySelectorAll(".wm-tile-acts")).toHaveLength(0);
+    expect(card.querySelectorAll(".wm-preview-actions")).toHaveLength(0);
+    const every = Array.from(card.querySelectorAll("button"), (b) => b.textContent?.trim());
+    for (const act of ["Agent decides", "Done", "Ready for review", "Pause here"])
+      expect(every.filter((t) => t === act)).toHaveLength(1);
+    // The ask once: in its block, not again on the cover or in a status section.
+    expect(within(card).getAllByText("pick gate A or B.")).toHaveLength(1);
+    expect(within(detail).getByRole("region", { name: "The ask" }).textContent).toContain("Needs you");
+    expect(within(detail).queryByRole("heading", { name: "Current status" })).toBeNull();
+    // The description, rendered and sanitised.
+    const text = await within(detail).findByRole("region", { name: "Description" });
+    expect(text.querySelectorAll("ol li")).toHaveLength(2);
+    expect(text.querySelector("script")).toBeNull();
+    expect(text.textContent).toContain("<script>alert(1)</script>");
+    // The timeline: newest first, author and session, history folded.
+    const rows = () =>
+      Array.from(detail.querySelectorAll<HTMLElement>(".wm-comment"));
+    expect(rows().map((r) => r.querySelector("strong")?.textContent)).toEqual([
+      "Gate worker",
+      "You",
+    ]);
+    expect(rows()[0].querySelector("a")?.getAttribute("href")).toBe("/threads/thr_worker");
+    fireEvent.click(within(detail).getByRole("button", { name: "History (1)" }));
+    expect(rows()).toHaveLength(3);
+    // The facts and the people on the side.
+    const facts = Array.from(detail.querySelectorAll(".wm-facts > div"), (d) =>
+      Array.from(d.children, (c) => c.textContent?.trim()).join(" "),
+    );
+    expect(facts[0]).toBe("Status In review");
+    expect(facts).toContain("Project Test project");
+    expect(facts).toContain("Labels gate");
+    expect(within(detail).getByRole("region", { name: "Connected sessions" })).toBeTruthy();
+    slot.lifecycle.unmount();
+  });
+  it("posts a comment in place, shows it at once, keeps the draft on failure, and hands a draft to Agent decides", async () => {
+    const commentRequests: { taskId: string; body: string }[] = [];
+    const delegateRequests: { requestId: string; taskId: string; note?: string }[] = [];
+    const options = {
+      tasks: [task({ status: "in_review" })],
+      details: details(),
+      commentRequests,
+      commentError: "",
+      delegateRequests,
+    };
+    const slot = await mount(options);
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    const detail = slot.getByRole("region", {
+      name: "Expanded: Review proposal",
+    });
+    const box = within(detail).getByRole("textbox", { name: "Comment on TEST-1" });
+    const post = within(detail).getByRole("button", { name: "Post comment" });
+    expect(post).toHaveProperty("disabled", true);
+    fireEvent.change(box, { target: { value: "Go with gate B." } });
+    options.commentError = "Tasks is away";
+    fireEvent.click(post);
+    const alert = await within(detail).findByRole("alert");
+    expect(alert.textContent).toBe("Tasks is away");
+    expect(commentRequests).toEqual([{ taskId: "task1", body: "Go with gate B." }]);
+    expect(box).toHaveProperty("value", "Go with gate B.");
+    // Escape with a draft leaves the box and keeps the task open; the draft stays.
+    box.focus();
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(slot.getByRole("region", { name: "Expanded: Review proposal" })).toBeTruthy();
+    expect(box).toHaveProperty("value", "Go with gate B.");
+    options.commentError = "";
+    fireEvent.keyDown(box, { key: "Enter", metaKey: true });
+    await waitFor(() =>
+      expect(
+        Array.from(detail.querySelectorAll(".wm-comment")).some((r) =>
+          r.textContent?.includes("Go with gate B."),
+        ),
+      ).toBe(true),
+    );
+    expect(detail.querySelectorAll(".wm-comment")[0].textContent).toContain("Go with gate B.");
+    expect(within(detail).queryByRole("alert")).toBeNull();
+    expect(box).toHaveProperty("value", "");
+    // A new draft rides with Agent decides as its note, and is cleared.
+    fireEvent.change(box, { target: { value: "Prefer the cheaper gate." } });
+    expect(detail.textContent).toContain("Agent decides sends it with the brief");
+    fireEvent.click(within(detail).getByRole("button", { name: "Agent decides" }));
+    await waitFor(() => expect(delegateRequests).toHaveLength(1));
+    expect(delegateRequests[0].note).toBe("Prefer the cheaper gate.");
+    await waitFor(() =>
+      expect(slot.queryByRole("textbox", { name: "Comment on TEST-1" })).toHaveProperty("value", ""),
+    );
+    slot.lifecycle.unmount();
+  });
+  it("folds the body to the ask and the sessions while chatting, and lays one column out on a phone and in the pane", async () => {
+    const slot = await mount({
+      tasks: [task({ threadIds: ["thr_test"], status: "in_review", ask: "Choose.", askFrom: "next" })],
+      details: details(),
+    });
+    fireEvent.click(
+      await slot.findByRole("button", { name: /^Preview Review proposal/ }),
+    );
+    const detail = slot.getByRole("region", { name: "Expanded: Review proposal" });
+    expect(detail.querySelector(".wm-task-body")).toBeTruthy();
+    fireEvent.click(within(detail).getByRole("button", { name: "Chat here" }));
+    expect(detail.querySelector(".wm-task-body-chat")).toBeTruthy();
+    expect(within(detail).queryByRole("region", { name: "Description" })).toBeNull();
+    expect(within(detail).getByRole("region", { name: "The ask" })).toBeTruthy();
+    expect(within(detail).getByRole("region", { name: "Connected sessions" })).toBeTruthy();
+    fireEvent.click(within(detail).getByRole("button", { name: "Back to summary" }));
+    expect(within(detail).getByRole("region", { name: "Description" })).toBeTruthy();
+    const css = readFileSync(join(__dirname, "app.css"), "utf8");
+    expect(css).toMatch(/\.wm-task-body \{\n  display: grid;\n  grid-template-columns: minmax\(0, 1fr\) minmax\(200px, 250px\);/);
+    expect(css).toMatch(/@container \(max-width: 520px\) \{\n  \.wm-task-body \{\n    grid-template-columns: minmax\(0, 1fr\);/);
+    expect(css).toMatch(/@media \(width <= 720px\) \{\n  \.wm-task-body \{\n    grid-template-columns: minmax\(0, 1fr\);/);
+    expect(css).toContain(".wm-task-detail {\n  container-type: inline-size;");
     slot.lifecycle.unmount();
   });
 });

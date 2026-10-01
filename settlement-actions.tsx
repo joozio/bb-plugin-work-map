@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useRpc, UrlLink } from "@get-bb/plugin-sdk/app";
 import type { MapTask, rpcContract } from "./server";
 import type { SettleInput, Settlement } from "./settlement-contract";
@@ -36,12 +36,18 @@ export function SettlementActions({
   task,
   thread,
   disabled,
+  bar,
   onBusy,
   onSettled,
 }: {
   task?: MapTask;
   thread?: { id: string; title: string; running: boolean; archived: boolean };
   disabled: boolean;
+  /**
+   * An opened task has one action bar: these acts sit in the same row as the
+   * settlements, the lead ahead of Done, the trail after Pause here.
+   */
+  bar?: { lead?: ReactNode; trail?: ReactNode };
   onBusy: (busy: boolean) => void;
   onSettled: (result: Settlement) => void;
 }) {
@@ -140,11 +146,11 @@ export function SettlementActions({
     }
   }
 
-  if (!openTask && !canArchive) return null;
+  if (!openTask && !canArchive && !bar) return null;
   return (
     <section
-      className="wm-settle wm-settle-compact"
-      aria-label="Settle this work"
+      className={`wm-settle wm-settle-compact ${bar ? "wm-settle-bar" : ""}`}
+      aria-label={bar ? "Act on this task" : "Settle this work"}
       aria-busy={busy}
       onKeyDown={(event) => {
         if (
@@ -168,18 +174,17 @@ export function SettlementActions({
         {openTask && <legend className="sr-only">Update task</legend>}
         {openTask && (
           <div className="wm-settle-buttons">
-            <Button
-              ref={pauseRef}
-              size="sm"
-              variant="ghost"
-              aria-expanded={intent === "pause"}
-              aria-controls={intent === "pause" ? handoffId : undefined}
-              onClick={() =>
-                intent === "pause" ? cancelHandoff() : setIntent("pause")
-              }
-            >
-              Pause here
-            </Button>
+            {bar?.lead}
+            {bar && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="wm-bar-done"
+                onClick={() => void settle("done")}
+              >
+                Done
+              </Button>
+            )}
             <Button
               ref={reviewRef}
               size="sm"
@@ -193,12 +198,33 @@ export function SettlementActions({
               Ready for review
             </Button>
             <Button
+              ref={pauseRef}
               size="sm"
-              variant="outline"
-              onClick={() => void settle("done")}
+              variant="ghost"
+              aria-expanded={intent === "pause"}
+              aria-controls={intent === "pause" ? handoffId : undefined}
+              onClick={() =>
+                intent === "pause" ? cancelHandoff() : setIntent("pause")
+              }
             >
-              Task done
+              Pause here
             </Button>
+            {!bar && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void settle("done")}
+              >
+                Done
+              </Button>
+            )}
+            {bar?.trail}
+          </div>
+        )}
+        {!openTask && bar && (
+          <div className="wm-settle-buttons">
+            {bar.lead}
+            {bar.trail}
           </div>
         )}
         {openTask && intent && (

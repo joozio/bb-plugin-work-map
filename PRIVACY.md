@@ -6,6 +6,7 @@ Work Map runs inside your BB instance. It has no independent analytics, telemetr
 
 - Tasks projects, folders, labels, task descriptions and metadata.
 - Task attachments and comment provenance, including the contributing session identifier when recorded by Tasks.
+- For the one task open on screen: its full description, its labels, its attachment names and its whole comment timeline, including comment bodies and author names, cached in memory for up to 20 seconds.
 - BB projects, session titles, pins, activity, unread state and bounded latest-response previews.
 
 Task data refreshes while the view is visible. Failed refreshes retain the last loaded data and display an error.
@@ -18,7 +19,7 @@ The view also uses browser session storage to recover a newly created session wh
 
 ## Changes
 
-Explicit actions can create or edit Tasks projects, create backlog tasks, connect sessions to tasks, pin or unpin sessions, create sessions through BB, change task status and descriptions, and archive or unarchive sessions. Project maintenance is also exposed through `bb work-map` commands.
+Explicit actions can create or edit Tasks projects, create backlog tasks, connect sessions to tasks, pin or unpin sessions, create sessions through BB, change task status and descriptions, post task comments in your name (without notifications), and archive or unarchive sessions. A comment draft handed over with **Agent decides** is appended to the handover comment and to the agent's brief. Project maintenance is also exposed through `bb work-map` commands.
 
 Opening a successfully loaded session preview marks only the displayed successful result read. When an existing session's native chat is open, BB owns read tracking and Work Map stops acknowledging its hidden summary. The chat uses that session's existing permissions; opening it sends no message. Removing task focus can unpin attached pinned sessions; the view describes that effect. Hiding an area changes visibility in Overview only. Search and attention filters still reach its work.
 

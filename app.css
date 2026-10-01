@@ -1382,7 +1382,7 @@
     width: 42%;
   }
 }
-@container (max-width: 680px) {
+@container (max-width: 520px) {
   .wm-spatial {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas: "core core" "west east" "north north" "south south";
@@ -1965,7 +1965,7 @@
   color: var(--wm-dim);
   font-size: 11px;
 }
-@container (max-width: 680px) {
+@container (max-width: 520px) {
   .wm-spatial.wm-expand-west {
     grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   }
@@ -3275,7 +3275,7 @@ i.wm-heat-key.wm-heat-focused {
   flex: none;
   text-decoration: underline;
 }
-@container (max-width: 680px) {
+@container (max-width: 520px) {
   .wm-bulk-picks {
     max-height: calc(2 * 24px + 2px);
   }
@@ -3424,5 +3424,531 @@ i.wm-heat-key.wm-heat-focused {
     position: static;
     opacity: 1;
     pointer-events: auto;
+  }
+}
+
+/* ---- The opened task: one action bar, then two columns ----
+   The main column is the work: the ask, the whole description, the timeline
+   with a box to write back. The side column is the facts and the people. The
+   bar merges every act the card and the details used to offer, each once. */
+.wm-task-detail {
+  container-type: inline-size;
+}
+.wm-task-detail > .wm-settle.wm-settle-bar {
+  margin: 0 0 14px;
+  padding: 0 0 12px;
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+}
+.wm-settle-bar .wm-settle-buttons {
+  margin-top: 0;
+  gap: 6px;
+}
+.wm-bar-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--wm-ink);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.wm-bar-act svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.wm-bar-lead {
+  background: var(--foreground);
+  color: var(--background);
+  border-color: transparent;
+  font-weight: 600;
+}
+.wm-bar-lead:not(:disabled):hover {
+  opacity: 0.88;
+}
+.wm-bar-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--wm-dim);
+}
+.wm-bar-quiet:not(:disabled):hover {
+  background: var(--accent);
+  color: var(--wm-ink);
+}
+.wm-bar-act:disabled {
+  opacity: 0.5;
+}
+.wm-bar-act:focus-visible {
+  outline: 2px solid var(--wm-blue);
+  outline-offset: 2px;
+}
+.wm-settle-bar .wm-bar-done {
+  font-weight: 600;
+}
+/* The weights part the groups: filled lead, outlined Done, quiet ghosts. */
+.wm-settle-bar .wm-settle-buttons > .wm-bar-done + * {
+  margin-left: 6px;
+}
+.wm-more-menu {
+  position: relative;
+}
+.wm-more-trigger {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--wm-dim);
+  font-size: 18px;
+  line-height: 1;
+  opacity: 1;
+}
+.wm-more-trigger:hover,
+.wm-more-trigger[aria-expanded="true"] {
+  background: var(--accent);
+  color: var(--wm-ink);
+}
+.wm-more-trigger:focus-visible {
+  outline: 2px solid var(--wm-blue);
+  outline-offset: 2px;
+}
+.wm-more-menu .wm-area-menu {
+  top: 38px;
+  z-index: 12;
+}
+.wm-more-menu .wm-area-menu a[role="menuitem"] {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  color: inherit;
+}
+.wm-more-menu .wm-area-menu a[role="menuitem"]:hover,
+.wm-more-menu .wm-area-menu a[role="menuitem"]:focus-visible {
+  background: var(--accent);
+}
+.wm-bar-error {
+  margin: 8px 0 0;
+}
+.wm-inline-link {
+  color: var(--wm-blue);
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.wm-task-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 250px);
+  gap: 20px 28px;
+  align-items: start;
+}
+.wm-task-main,
+.wm-task-side {
+  min-width: 0;
+}
+/* The facts and the sessions stay in view while the work column scrolls. */
+.wm-task-side {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.wm-task-main > section + section {
+  margin-top: 22px;
+}
+.wm-task-main > section > h3,
+.wm-task-comments .wm-section-heading h3 {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--wm-dim);
+  font-weight: 550;
+  margin: 0 0 8px;
+}
+.wm-task-comments .wm-section-heading {
+  margin-bottom: 6px;
+}
+.wm-task-comments .wm-section-heading h3 span {
+  letter-spacing: 0;
+  font-weight: 400;
+}
+/* The ask first, as the tile says it: a quiet blue block, orange when a
+   comment asked for you by name. */
+.wm-task-ask {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--wm-blue);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--wm-blue) 7%, var(--card));
+}
+.wm-task-ask h3 {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--wm-blue);
+  font-weight: 600;
+  margin: 0 0 5px;
+}
+.wm-task-ask[data-ask-from="comment"] {
+  border-color: var(--wm-orange);
+  background: color-mix(in srgb, var(--wm-orange) 8%, var(--card));
+}
+.wm-task-ask[data-ask-from="comment"] h3 {
+  color: var(--wm-orange);
+}
+.wm-task-ask p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+/* With no better ask the description's own lead is the summary: it is drawn
+   once, larger, where the description starts. */
+.wm-task-description-lead .wm-md > p:first-child {
+  font-size: 14px;
+  line-height: 1.55;
+  font-weight: 500;
+}
+.wm-task-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--wm-dim);
+}
+.wm-md {
+  font-size: 12.5px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.wm-md > * + * {
+  margin-top: 10px;
+}
+.wm-md p {
+  margin: 0;
+}
+.wm-md :is(h4, h5, h6) {
+  margin: 14px 0 4px;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.wm-md h5 {
+  font-size: 12.5px;
+}
+.wm-md h6 {
+  font-size: 12px;
+  color: var(--wm-dim);
+}
+.wm-md :is(h4, h5, h6):first-child {
+  margin-top: 0;
+}
+.wm-md ul,
+.wm-md ol {
+  margin: 0;
+  padding-left: 22px;
+}
+.wm-md ul {
+  list-style: disc;
+}
+.wm-md ol {
+  list-style: decimal;
+}
+.wm-md li {
+  margin: 3px 0;
+}
+.wm-md li > :is(ul, ol) {
+  margin-top: 3px;
+}
+.wm-md li.wm-md-task {
+  list-style: none;
+  margin-left: -18px;
+}
+.wm-md-box {
+  display: inline-block;
+  width: 18px;
+}
+.wm-md li[data-checked="true"] {
+  color: var(--wm-dim);
+}
+.wm-md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--wm-ink) 7%, transparent);
+}
+.wm-md pre {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--wm-ink) 4%, var(--card));
+  overflow-x: auto;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.wm-md pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+.wm-md blockquote {
+  margin: 0;
+  padding: 2px 12px;
+  border-left: 2px solid var(--border);
+  color: var(--wm-dim);
+}
+.wm-md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+.wm-md a {
+  color: var(--wm-blue);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--wm-blue) 40%, transparent);
+  text-underline-offset: 2px;
+}
+.wm-md-table {
+  overflow-x: auto;
+}
+.wm-md table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.wm-md :is(th, td) {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+  text-align: left;
+}
+.wm-md th {
+  background: color-mix(in srgb, var(--wm-blue) 7%, var(--card));
+  font-weight: 600;
+}
+/* Long text folds past a sensible height and fades out; Show all opens it. */
+.wm-fold-closed .wm-fold-body {
+  max-height: 320px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 56px), transparent);
+  mask-image: linear-gradient(#000 calc(100% - 56px), transparent);
+}
+.wm-comment .wm-fold-closed .wm-fold-body {
+  max-height: 200px;
+}
+.wm-fold-toggle {
+  margin-top: 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--wm-blue);
+}
+.wm-fold-toggle:hover {
+  text-decoration: underline;
+}
+.wm-history-toggle {
+  font-size: 11px;
+  color: var(--wm-dim);
+}
+.wm-history-toggle:hover,
+.wm-history-toggle[aria-pressed="true"] {
+  color: var(--wm-ink);
+}
+.wm-comment-box {
+  margin: 2px 0 14px;
+}
+.wm-comment-box textarea {
+  display: block;
+  width: 100%;
+  min-height: 58px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+  color: var(--wm-ink);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.wm-comment-box textarea::placeholder {
+  color: var(--wm-dim);
+}
+.wm-comment-box textarea:focus-visible {
+  outline: 2px solid var(--wm-blue);
+  outline-offset: 1px;
+}
+.wm-comment-submit {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+.wm-comment-hint {
+  font-size: 10.5px;
+  color: var(--wm-dim);
+}
+.wm-comment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.wm-comment {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.wm-comment-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 5px;
+  font-size: 11.5px;
+}
+.wm-comment-head strong {
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wm-comment-head time {
+  margin-left: auto;
+  color: var(--wm-dim);
+  white-space: nowrap;
+}
+.wm-comment-session {
+  font-size: 10.5px;
+  color: var(--wm-blue);
+  white-space: nowrap;
+}
+.wm-comment-agent .wm-comment-head strong::before {
+  content: "◆ ";
+  color: var(--wm-green);
+  font-size: 9px;
+  vertical-align: 1px;
+}
+.wm-comment-user .wm-comment-head strong::before {
+  content: "● ";
+  color: var(--wm-blue);
+  font-size: 8px;
+  vertical-align: 2px;
+}
+.wm-comment-system {
+  padding: 6px 0;
+}
+.wm-comment-system .wm-comment-head {
+  margin-bottom: 1px;
+  font-size: 11px;
+  color: var(--wm-dim);
+}
+.wm-comment-system .wm-comment-head strong {
+  font-weight: 500;
+}
+.wm-comment-system p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--wm-dim);
+}
+.wm-task-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 14px;
+  margin: 0;
+  font-size: 12px;
+}
+.wm-task-facts > div {
+  display: contents;
+}
+.wm-task-facts dt {
+  color: var(--wm-dim);
+}
+.wm-task-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.wm-task-facts dd em {
+  font-style: normal;
+  color: var(--wm-dim);
+  margin-left: 7px;
+}
+.wm-task-facts dd em.wm-fact-late {
+  color: var(--wm-orange);
+  font-weight: 600;
+}
+.wm-task-facts .wm-fact-fixes {
+  grid-column: 2;
+  margin-top: -2px;
+}
+.wm-fact-fixes .wm-date-fixes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.wm-fact-fixes .wm-date-fix {
+  padding: 0 8px;
+  font-size: 10.5px;
+}
+.wm-fact-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.wm-label {
+  --wm-label: var(--wm-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid color-mix(in srgb, var(--wm-label) 45%, var(--border));
+  background: color-mix(in srgb, var(--wm-label) 12%, transparent);
+}
+.wm-label::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wm-label);
+}
+.wm-fact-files {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.wm-fact-files a {
+  color: var(--wm-blue);
+}
+.wm-task-side > .wm-task-sessions {
+  margin-top: 0;
+}
+.wm-task-side .wm-session-options {
+  grid-template-columns: 1fr;
+}
+/* One column where the panel is narrow: the side pane, a squeezed open card. */
+@container (max-width: 520px) {
+  .wm-task-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* A phone: one column, and the bar's acts at a thumb's height. */
+@media (width <= 720px) {
+  .wm-task-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .wm-bar-act,
+  .wm-more-trigger,
+  .wm-settle-bar .wm-settle-buttons > button {
+    min-height: 36px;
+  }
+  .wm-more-trigger {
+    width: 36px;
   }
 }

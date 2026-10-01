@@ -77,6 +77,13 @@ Stop and do NOT act if the work would:
 ${HARD_STOPS}
 
 In any of those cases, do nothing irreversible, move the task back to Review, and leave one line saying which limit you hit. That is a complete and correct outcome, not a failure.`;
+/**
+ * What the owner typed on the task while handing it over. It narrows the
+ * decision; it never loosens the limits above, which the brief states first.
+ */
+export function delegationNote(note: string) {
+  return `The owner added this when handing the task over. It is part of the brief, and the limits above still hold:\n${note.trim()}`;
+}
 
 /**
  * The standing brief for an area's orchestrator. One click on a whole area

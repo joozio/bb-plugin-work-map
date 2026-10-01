@@ -108,6 +108,49 @@ const itemId = z
   .string()
   .regex(/^(task|project|thread):[A-Za-z0-9_-]+$/)
   .max(100);
+/** One entry of a task's timeline, as Tasks keeps it. */
+export const taskCommentSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["user", "agent", "system"]),
+  authorName: z.string(),
+  presetName: z.string().nullable().optional(),
+  threadId: z.string().nullable(),
+  threadTitle: z.string().nullable().optional(),
+  body: z.string(),
+  createdAt: z.string(),
+});
+export type TaskComment = z.infer<typeof taskCommentSchema>;
+/**
+ * The whole task, read when it opens: the snapshot carries only what a tile
+ * needs, and the full description and timeline are read for the one task on
+ * screen rather than for every task on every poll.
+ */
+export const taskDetailSchema = z.object({
+  taskId: z.string(),
+  description: z.string(),
+  createdAt: z.string().nullable(),
+  updatedAt: z.string(),
+  labels: z.array(
+    z.object({ id: z.string(), name: z.string(), color: z.string() }),
+  ),
+  attachments: z.array(
+    z.object({
+      id: z.string(),
+      fileName: z.string(),
+      mime: z.string(),
+      sizeBytes: z.number(),
+      isImage: z.boolean(),
+    }),
+  ),
+  comments: z.array(taskCommentSchema),
+  warnings: z.array(z.string()),
+});
+export type TaskDetail = z.infer<typeof taskDetailSchema>;
+/** A task comment posted in your name; the body is Markdown, never empty. */
+export const postCommentInput = z.object({
+  taskId: z.string().min(1),
+  body: z.string().trim().min(1).max(20000),
+});
 export const rpcContract = defineRpcContract({
   ...settlementContract,
   ...managementContract,
@@ -143,6 +186,14 @@ export const rpcContract = defineRpcContract({
       snoozedUntil: z.number().nonnegative().nullable().optional(),
     }),
     output: preferenceSchema,
+  },
+  taskDetail: {
+    input: z.object({ taskId: z.string().min(1), fresh: z.boolean().optional() }),
+    output: taskDetailSchema,
+  },
+  postComment: {
+    input: postCommentInput,
+    output: z.object({ comment: taskCommentSchema }),
   },
   previews: {
     input: z.object({
@@ -197,6 +248,160 @@ export default async function plugin(bb: BbPluginApi) {
     }
   >();
   const previews = new Map<string, SessionPreview & { at: number }>();
+  const details = new Map<string, TaskDetail & { at: number }>();
+  const labelsByProject = new Map<
+    string,
+    { at: number; labels: TaskDetail["labels"] }
+  >();
+  const rawComment = z.looseObject({
+    id: z.string().optional(),
+    kind: z.string(),
+    authorName: z.string().default(""),
+    presetName: z.string().nullable().optional(),
+    threadId: z.string().nullable().default(null),
+    threadTitle: z.string().nullable().optional(),
+    body: z.string().default(""),
+    createdAt: z.string(),
+  });
+  const shapeComment = (
+    raw: z.infer<typeof rawComment>,
+    index = 0,
+  ): TaskComment =>
+    taskCommentSchema.parse({
+      ...raw,
+      id: raw.id ?? `${raw.createdAt}-${index}`,
+      kind: ["user", "agent", "system"].includes(raw.kind) ? raw.kind : "user",
+    });
+  async function projectLabels(projectId: string) {
+    const cached = labelsByProject.get(projectId);
+    if (cached && Date.now() - cached.at < 300_000) return cached.labels;
+    const { labels } = await call(
+      "listLabels",
+      { projectId },
+      z.object({
+        labels: z.array(
+          z.looseObject({
+            id: z.string(),
+            name: z.string(),
+            color: z.string().default(""),
+          }),
+        ),
+      }),
+    );
+    const shaped = labels.map(({ id, name, color }) => ({ id, name, color }));
+    labelsByProject.set(projectId, { at: Date.now(), labels: shaped });
+    return shaped;
+  }
+  async function taskDetail({
+    taskId,
+    fresh,
+  }: {
+    taskId: string;
+    fresh?: boolean;
+  }): Promise<TaskDetail> {
+    const cached = details.get(taskId);
+    if (!fresh && cached && Date.now() - cached.at < 20_000) {
+      const { at: _at, ...detail } = cached;
+      return detail;
+    }
+    const warnings: string[] = [];
+    const { task } = await call(
+      "getTask",
+      { taskId },
+      z.object({
+        task: z
+          .looseObject({
+            id: z.string(),
+            projectId: z.string(),
+            description: z.string().default(""),
+            createdAt: z.string().nullable().optional(),
+            updatedAt: z.string(),
+            labelIds: z.array(z.string()).default([]),
+          })
+          .nullable(),
+      }),
+    );
+    if (!task) throw new Error("This task no longer exists. Refresh the map.");
+    let labels: TaskDetail["labels"] = [];
+    if (task.labelIds.length)
+      try {
+        const known = await projectLabels(task.projectId);
+        labels = task.labelIds.flatMap((id) => {
+          const label = known.find((row) => row.id === id);
+          return label ? [label] : [];
+        });
+      } catch {
+        warnings.push("Labels are unavailable.");
+      }
+    let attachments: TaskDetail["attachments"] = [];
+    try {
+      const result = await call(
+        "listAttachments",
+        { taskId },
+        z.object({
+          attachments: z.array(
+            z.looseObject({
+              id: z.string(),
+              fileName: z.string().default("file"),
+              mime: z.string().default(""),
+              sizeBytes: z.number().default(0),
+              isImage: z.boolean().default(false),
+            }),
+          ),
+        }),
+      );
+      attachments = result.attachments.map(
+        ({ id, fileName, mime, sizeBytes, isImage }) => ({
+          id,
+          fileName,
+          mime,
+          sizeBytes,
+          isImage,
+        }),
+      );
+    } catch {
+      warnings.push("Attachments are unavailable.");
+    }
+    let comments: TaskComment[] = [];
+    try {
+      const result = await call(
+        "listComments",
+        { taskId },
+        z.object({ comments: z.array(rawComment) }),
+      );
+      comments = result.comments.map((raw, index) => shapeComment(raw, index));
+    } catch {
+      warnings.push("The comments could not be read. Refresh to retry.");
+    }
+    const detail: TaskDetail = {
+      taskId,
+      description: task.description,
+      createdAt: task.createdAt ?? null,
+      updatedAt: task.updatedAt,
+      labels,
+      attachments,
+      comments,
+      warnings,
+    };
+    details.set(taskId, { ...detail, at: Date.now() });
+    if (details.size > 60)
+      for (const [id, value] of details)
+        if (Date.now() - value.at > 60_000) details.delete(id);
+    return detail;
+  }
+  async function postComment({ taskId, body }: z.infer<typeof postCommentInput>) {
+    const { comment } = await call(
+      "createComment",
+      { taskId, body, notify: false },
+      z.object({ comment: rawComment }),
+    );
+    // The comment may carry a new ask, so the next snapshot re-reads the
+    // task's history instead of trusting the closed-task cache.
+    details.delete(taskId);
+    commentCache.delete(taskId);
+    invalidate();
+    return { comment: shapeComment(comment) };
+  }
   async function collect(fresh = false): Promise<Snapshot> {
     const { projects } = await call(
       "listProjects",
@@ -517,6 +722,8 @@ export default async function plugin(bb: BbPluginApi) {
       return next;
     },
     snapshot,
+    taskDetail,
+    postComment,
     preferences: getPreferences,
     setPreference,
     layout: async () => {
@@ -635,6 +842,8 @@ export default async function plugin(bb: BbPluginApi) {
   });
   bb.onDispose(() => {
     previews.clear();
+    details.clear();
+    labelsByProject.clear();
     commentCache.clear();
     cache = null;
   });

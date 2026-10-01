@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, DragEvent } from "react";
+import type { CSSProperties, DragEvent, ReactNode } from "react";
 import {
   definePluginApp,
   experimental_useSidebarThreadActions,
@@ -17,6 +17,7 @@ import type {
   Preference,
   Snapshot,
   MapTask,
+  TaskDetail,
 } from "./server";
 import {
   buildMap,
@@ -48,6 +49,17 @@ import { SESSIONS_AREA, heatStats, type HeatArea } from "./heat";
 import { useHeatModel } from "./heat-memo";
 import { HeatMap } from "./heat-view";
 import { DateFixes } from "./date-fixes";
+import {
+  BarActs,
+  CommentBox,
+  CommentTimeline,
+  MoreMenu,
+  snoozeItem,
+  TaskAsk,
+  TaskDescription,
+  TaskFacts,
+  taskAsk,
+} from "./task-panel";
 import { useSessionLauncher } from "./session-launcher";
 import {
   SettlementActions,
@@ -190,6 +202,22 @@ function WorkMap() {
   // Tidy mode: the slipped dates are the work. It lives only in this
   // session and ends with Escape, the chip, or leaving Heat.
   const [tidy, setTidy] = useState(false);
+  // The opened task's full description and timeline, read for that one task.
+  const [detail, setDetail] = useState<{
+    taskId: string;
+    data: TaskDetail | null;
+    error: string;
+    loading: boolean;
+  }>({ taskId: "", data: null, error: "", loading: false });
+  const [detailNonce, setDetailNonce] = useState(0);
+  // A comment being written on a task; it survives the task closing and
+  // reopening, and rides with Agent decides as part of the brief.
+  const [commentDraft, setCommentDraft] = useState<{
+    taskId: string;
+    text: string;
+  } | null>(null);
+  const [posting, setPosting] = useState(false);
+  const [postError, setPostError] = useState("");
   const [settled, setSettled] = useState<Settlement[]>([]);
   // Snoozes made here: they live in preferences, not in settlement records.
   const [snoozes, setSnoozes] = useState<SnoozeRow[]>([]);
@@ -1113,11 +1141,15 @@ function WorkMap() {
     if (!item.task) return;
     if (action === "delegate") {
       const taskId = item.task.id;
+      const note =
+        commentDraft?.taskId === taskId ? commentDraft.text.trim() : "";
       const result = await rpc.call("delegate", {
         requestId: crypto.randomUUID(),
         taskId,
         expectedUpdatedAt: item.task.updatedAt,
+        ...(note ? { note } : {}),
       });
+      if (note) setCommentDraft(null);
       setHandedOver((current) => ({ ...current, [taskId]: Date.now() }));
       return `${result.taskKey} handed to an agent on ${result.preset}${result.movedFrom ? ", out of review" : ""}.`;
     }
@@ -1349,7 +1381,11 @@ function WorkMap() {
       setUndoing(null);
     }
   };
-  function settleControls(item?: WorkItem, createdThreadId?: string) {
+  function settleControls(
+    item?: WorkItem,
+    createdThreadId?: string,
+    bar?: { lead?: ReactNode; trail?: ReactNode },
+  ) {
     const threadId =
       createdThreadId ??
       (item?.kind === "thread" ||
@@ -1373,6 +1409,7 @@ function WorkMap() {
             : undefined
         }
         disabled={launcher.busy || undoing !== null}
+        bar={bar}
         onBusy={setSettling}
         onSettled={afterSettlement}
       />
@@ -1947,6 +1984,67 @@ function WorkMap() {
     ) : null;
   }
   const preview = previewId ? previews[previewId] : null;
+  const openTaskId = selected?.task?.id ?? "";
+  useEffect(() => {
+    if (!openTaskId) return;
+    let live = true;
+    setDetail((current) =>
+      current.taskId === openTaskId
+        ? { ...current, loading: true, error: "" }
+        : { taskId: openTaskId, data: null, error: "", loading: true },
+    );
+    rpc
+      .call("taskDetail", { taskId: openTaskId, fresh: detailNonce > 0 })
+      .then((data) => {
+        if (live)
+          setDetail({ taskId: openTaskId, data, error: "", loading: false });
+      })
+      .catch((cause: unknown) => {
+        if (live)
+          setDetail((current) => ({
+            taskId: openTaskId,
+            data: current.taskId === openTaskId ? current.data : null,
+            error: failureText(cause),
+            loading: false,
+          }));
+      });
+    return () => {
+      live = false;
+    };
+  }, [openTaskId, detailNonce, snapshot?.generatedAt]);
+  const postComment = async () => {
+    const task = selected?.task;
+    const text =
+      task && commentDraft?.taskId === task.id ? commentDraft.text.trim() : "";
+    if (!task || !text || posting) return;
+    setPosting(true);
+    setPostError("");
+    try {
+      const { comment } = await rpc.call("postComment", {
+        taskId: task.id,
+        body: text,
+      });
+      // The posted comment shows at once; the re-read confirms it.
+      setDetail((current) =>
+        current.taskId === task.id && current.data
+          ? {
+              ...current,
+              data: {
+                ...current.data,
+                comments: [...current.data.comments, comment],
+              },
+            }
+          : current,
+      );
+      setCommentDraft(null);
+      setDetailNonce((nonce) => nonce + 1);
+      void refresh(true);
+    } catch (cause) {
+      setPostError(failureText(cause));
+    } finally {
+      setPosting(false);
+    }
+  };
   function details(pane = false) {
     if (!selected) return null;
     const Element = pane ? "aside" : "section";
@@ -1978,6 +2076,77 @@ function WorkMap() {
             <h2>{selected.title}</h2>
           </>
         )}
+        {selected.task ? (
+          <>
+            {settleControls(
+              selected,
+              launcher.context?.id === selected.id
+                ? (launcher.threadId ?? undefined)
+                : undefined,
+              {
+                lead: (
+                  <BarActs
+                    item={selected}
+                    disabled={settling || launcher.busy || !!bulk}
+                    busy={acting?.id === selected.id ? acting.action : null}
+                    context={actionContext}
+                    onAct={(action, target) => void act(action, target)}
+                  />
+                ),
+                trail: (
+                  <>
+                    <MoreMenu
+                      label={`More on ${selected.task.key}`}
+                      items={[
+                        ...(() => {
+                          const snooze = snoozeItem(
+                            selected,
+                            actionContext,
+                            settling || launcher.busy || !!bulk || !!acting,
+                            (action, target) => void act(action, target),
+                          );
+                          return snooze ? [snooze] : [];
+                        })(),
+                        {
+                          key: "focus",
+                          label: selected.focus
+                            ? "Remove focus"
+                            : "Bring into focus",
+                          disabled: busy || !!focusedProject,
+                          onSelect: () =>
+                            void saveFocus(selected, !selected.focus),
+                        },
+                        {
+                          key: "pane",
+                          label: pane ? "Expand in map" : "Open in side pane",
+                          onSelect: () =>
+                            setPreviewMode(pane ? "inline" : "pane"),
+                        },
+                        {
+                          key: "open",
+                          label: "Open in Tasks ↗",
+                          href: `/plugins/tasks/tasks/task/${selected.task.key}`,
+                        },
+                      ]}
+                    />
+                  </>
+                ),
+              },
+            )}
+            {actError?.scope === "item" && actError.id === selected.id && (
+              <p className="wm-settle-error wm-bar-error" role="alert">
+                <span>{actError.message}</span>{" "}
+                <button
+                  type="button"
+                  className="wm-inline-link"
+                  onClick={() => setActError(null)}
+                >
+                  Dismiss
+                </button>
+              </p>
+            )}
+          </>
+        ) : (
         <div className="wm-preview-actions">
           {selected.kind === "project" && (
             <AreaTools
@@ -2015,15 +2184,8 @@ function WorkMap() {
             <Icon name="Pin" />
             {selected.focus ? "In focus" : "Bring into focus"}
           </Button>
-          {selected.task && (
-            <UrlLink
-              className="wm-task-link"
-              href={`/plugins/tasks/tasks/task/${selected.task.key}`}
-            >
-              Open task ↗
-            </UrlLink>
-          )}
         </div>
+        )}
         {selected.kind === "project" &&
           manager.inlineProjectId === selected.id.slice(8) &&
           manager.inline}
@@ -2065,59 +2227,77 @@ function WorkMap() {
           </>
         ) : (
           <>
-            {selected.task && (
-              <>
-                <section
-                  className="wm-detail-section wm-task-summary"
-                  aria-label="Task summary"
-                >
-                  {selected.summary &&
-                    selected.summary !== selected.nextAction && (
-                      <>
-                        <h3>Current status</h3>
-                        <p>{selected.summary}</p>
-                      </>
-                    )}
-                  {selected.nextAction && (
-                    <div className="wm-next">
-                      <h3>Next step</h3>
-                      <p>{selected.nextAction}</p>
+            {selected.task &&
+              (() => {
+                const task = selected.task;
+                const ask = taskAsk(task);
+                const data = detail.taskId === task.id ? detail.data : null;
+                const loading = detail.taskId === task.id && detail.loading;
+                const draft =
+                  commentDraft?.taskId === task.id ? commentDraft.text : "";
+                return (
+                  <div
+                    className={`wm-task-body ${chatOpen ? "wm-task-body-chat" : ""}`}
+                  >
+                    <div className="wm-task-main">
+                      {ask && ask.from !== "summary" && (
+                        <TaskAsk ask={ask.ask} from={ask.from} />
+                      )}
+                      {!chatOpen && (
+                        <>
+                          <TaskDescription
+                            text={data?.description ?? ""}
+                            lead={ask?.from === "summary"}
+                            loading={!data && loading}
+                          />
+                          <CommentTimeline
+                            comments={data?.comments ?? []}
+                            now={now}
+                            loading={loading}
+                            error={detail.taskId === task.id ? detail.error : ""}
+                            onRetry={() => setDetailNonce((nonce) => nonce + 1)}
+                          >
+                            <CommentBox
+                              taskKey={task.key}
+                              draft={draft}
+                              busy={posting}
+                              error={postError}
+                              onDraft={(text) => {
+                                setPostError("");
+                                setCommentDraft({ taskId: task.id, text });
+                              }}
+                              onPost={() => void postComment()}
+                            />
+                          </CommentTimeline>
+                        </>
+                      )}
                     </div>
-                  )}
-                  {!selected.summary && !selected.nextAction && (
-                    <p>No status summary recorded yet.</p>
-                  )}
-                </section>
-                <dl className="wm-facts">
-                  <div>
-                    <dt>Project</dt>
-                    <dd>{selected.scope}</dd>
-                  </div>
-                  <div>
-                    <dt>Priority</dt>
-                    <dd>{selected.task.priority}</dd>
-                  </div>
-                  {selected.task.dueDate && (
-                    <div>
-                      <dt>
-                        {selected.task.dateKind === "plan"
-                          ? "Planned date"
-                          : "Due date"}
-                      </dt>
-                      <dd>{selected.task.dueDate}</dd>
-                    </div>
-                  )}
-                  {selected.task.waitingOn &&
-                    selected.task.waitingOn.toLowerCase() !== "none" && (
-                      <div>
-                        <dt>Waiting on</dt>
-                        <dd>{selected.task.waitingOn}</dd>
-                      </div>
-                    )}
-                </dl>
-              </>
-            )}
-            {selected.task && (
+                    <aside className="wm-task-side">
+                      {!chatOpen && (
+                        <TaskFacts
+                          item={selected}
+                          task={task}
+                          detail={data}
+                          scope={selected.scope}
+                          now={now}
+                          dateFixes={
+                            <DateFixes
+                              task={task}
+                              now={now}
+                              disabled={settling || launcher.busy || !!bulk}
+                              onBusy={setSettling}
+                              onSettled={(result) => {
+                                captureLayout();
+                                recordSettlement(result);
+                                setNotice(
+                                  `${result.taskKey ?? "Task"}: ${result.dueDate ? `date moved to ${result.dueDate}` : "date cleared"}.`,
+                                );
+                                void refresh(true);
+                              }}
+                            />
+                          }
+                        />
+                      )}
               <section
                 className="wm-detail-section wm-connections wm-task-sessions"
                 aria-label="Connected sessions"
@@ -2188,7 +2368,10 @@ function WorkMap() {
                   </p>
                 )}
               </section>
-            )}
+                    </aside>
+                  </div>
+                );
+              })()}
             {previewId ? (
               <section className="wm-session-view">
                 <div className="wm-session-controls">
@@ -2360,13 +2543,6 @@ function WorkMap() {
                 )}
               </section>
             ) : null}
-            {selected.task &&
-              settleControls(
-                selected,
-                launcher.context?.id === selected.id
-                  ? (launcher.threadId ?? undefined)
-                  : undefined,
-              )}
           </>
         )}
       </Element>

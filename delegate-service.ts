@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   DELEGATION_COMMENT,
   DELEGATION_PROMPT,
+  delegationNote,
   orchestratorBrief,
   orchestratorComment,
   orchestratorTitle,
@@ -64,6 +65,8 @@ export const delegateInput = z.object({
   requestId: z.string().uuid(),
   taskId: z.string().min(1),
   expectedUpdatedAt: z.string().optional(),
+  /** Words you typed on the task when handing it over; they ride with the brief. */
+  note: z.string().trim().max(2000).optional(),
 });
 export const areaDelegationSchema = z.object({
   threadId: z.string(),
@@ -190,13 +193,19 @@ export function delegationService(bb: BbPluginApi, changed: () => void) {
     const preset = await resolvePreset();
     // Record the handover before dispatch: if the agent starts, the task
     // already says who asked for it and why it stopped waiting on you.
-    const commented = await commentOn(task.id, DELEGATION_COMMENT);
+    const note = input.note?.trim() ?? "";
+    const commented = await commentOn(
+      task.id,
+      note ? `${DELEGATION_COMMENT}\n\n${note}` : DELEGATION_COMMENT,
+    );
     const { threadId } = await call(
       "delegate",
       {
         taskId: task.id,
         presetId: preset.id,
-        extraInstructions: DELEGATION_PROMPT,
+        extraInstructions: note
+          ? `${DELEGATION_PROMPT}\n\n${delegationNote(note)}`
+          : DELEGATION_PROMPT,
       },
       z.object({ threadId: z.string() }),
     );

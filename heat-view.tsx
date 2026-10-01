@@ -864,13 +864,17 @@ function Tile({
   // title cannot hold facts either, so they keep exactly what they had.
   const inside = !!actions && !tiny && (flow || (height > 74 && width > 104));
   // A slipped card in tidy mode spends its footer on the date fixes.
-  const footer: "acts" | "fixes" | null = inside
-    ? fixes && tile.slipped && !closed
-      ? "fixes"
-      : "acts"
-    : fixRows
-      ? "fixes"
-      : null;
+  // An open card's acts and date fixes live in its one action bar and its
+  // facts below, so the cover carries none of them.
+  const footer: "acts" | "fixes" | null = open
+    ? null
+    : inside
+      ? fixes && tile.slipped && !closed
+        ? "fixes"
+        : "acts"
+      : fixRows
+        ? "fixes"
+        : null;
   const status = item.task?.nextAction || item.task?.summary || "";
   const attached = item.task?.sessionLinks?.length ?? item.threads.length;
   // The hue already says what the work needs; a fact repeats it only when it
@@ -944,7 +948,8 @@ function Tile({
       lines = 2;
       room -= TITLE_LINE;
     }
-    if (line && room >= LINE_ROW) {
+    // The open card's details say the summary once, below; the cover does not.
+    if (line && !open && room >= LINE_ROW) {
       lineRows = 1;
       room -= LINE_ROW;
     }
@@ -1013,7 +1018,7 @@ function Tile({
   }
   // The act row keeps its labels only where they fit whole: every tile of a
   // similar width reads the same, and a label is never cut to an ellipsis.
-  const acts = inside
+  const acts = inside && !open
     ? width >= ACTS_FULL
       ? "full"
       : width >= ACTS_LEAD
