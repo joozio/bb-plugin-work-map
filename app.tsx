@@ -58,7 +58,12 @@ import {
   SNOOZE_DAYS,
 } from "./delegation";
 import type { Settlement } from "./settlement-contract";
-import { AreaTools, ProjectDot, useAreaManager } from "./management-ui";
+import {
+  AreaTools,
+  ProjectDot,
+  useAreaManager,
+  type AreaMenuItem,
+} from "./management-ui";
 import type { ManagementResult } from "./management-contract";
 import { previewExcerpt, type SessionPreview } from "./preview";
 import { fitOverview } from "./overview-layout";
@@ -1725,6 +1730,54 @@ function WorkMap() {
     const actionable = heatArea.tiles
       .map((tile) => tile.item)
       .filter((item): item is WorkItem => !!item?.task);
+    // One row, so a small screen keeps its cards: the area's own buttons drop
+    // to their icons when the bar is too narrow for their words, names kept.
+    const lead = (
+      <>
+        <Button
+          size="sm"
+          // With acts in the bar, letting agents decide is the one primary.
+          variant={actionable.length ? "outline" : "default"}
+          className="wm-bar-lead"
+          aria-label="New session"
+          onClick={() => startSession(root)}
+          disabled={launcher.busy}
+        >
+          <Icon name="MessageCirclePlus" /> <span>New session</span>
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="wm-bar-lead"
+          aria-label="Collapse area"
+          onClick={close}
+        >
+          <Icon name="Minimize2" /> <span>Collapse area</span>
+        </Button>
+      </>
+    );
+    const tools = (extra: AreaMenuItem[]) => (
+      <AreaTools
+        title={root.title}
+        disabled={launcher.busy || manager.busy || settling}
+        focused={root.focus}
+        hidden={!!preferences[root.id]?.hidden}
+        extra={[
+          {
+            key: "pane",
+            label: "Open in side pane",
+            // A phone has no side pane to open into; the stylesheet drops it there.
+            className: "wm-heat-side-pane",
+            onSelect: () => {
+              setSelection(root);
+              setPreviewMode("pane");
+            },
+          },
+          ...extra,
+        ]}
+        onAction={(action) => manageArea(root, action)}
+      />
+    );
     return (
       <div
         className="wm-area-actions wm-heat-actions"
@@ -1735,40 +1788,11 @@ function WorkMap() {
         }
         tabIndex={-1}
       >
-        <Button
-          size="sm"
-          // With acts in the bar, letting agents decide is the one primary.
-          variant={actionable.length ? "outline" : "default"}
-          onClick={() => startSession(root)}
-          disabled={launcher.busy}
-        >
-          <Icon name="MessageCirclePlus" /> New session
-        </Button>
-        <Button size="sm" variant="outline" onClick={close}>
-          Collapse area
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          // A phone has no side pane to open into; the stylesheet drops this there.
-          className="wm-heat-side-pane"
-          onClick={() => {
-            setSelection(root);
-            setPreviewMode("pane");
-          }}
-        >
-          Open in side pane
-        </Button>
-        <AreaTools
-          title={root.title}
-          disabled={launcher.busy || manager.busy || settling}
-          focused={root.focus}
-          hidden={!!preferences[root.id]?.hidden}
-          onAction={(action) => manageArea(root, action)}
-        />
-        {actionable.length > 0 && (
+        {actionable.length > 0 ? (
           <AreaBulkActions
             title={heatArea.title}
+            lead={lead}
+            tools={tools}
             items={actionable}
             selected={picked.filter((id) =>
               actionable.some((item) => item.id === id),
@@ -1793,6 +1817,11 @@ function WorkMap() {
             onClearSelection={() => setPicked([])}
             onRun={(action, items) => void actAll(action, items, root)}
           />
+        ) : (
+          <div className="wm-bulk-row">
+            {lead}
+            {tools([])}
+          </div>
         )}
         {(manager.inlineProjectId === root.id.slice(8) ||
           launcher.context?.id === root.id) && (

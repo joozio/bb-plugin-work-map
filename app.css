@@ -2262,7 +2262,45 @@ i.wm-heat-key {
   max-height: 260px;
   overflow: auto;
 }
+/* One row on every desktop: the bar's height is the cards' loss. The area's
+   own buttons drop to their icons before anything wraps. */
+.wm-heat-actions {
+  container: wm-bar / inline-size;
+}
+.wm-heat-actions .wm-bulk-row {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.wm-heat-actions .wm-bulk-row > * {
+  flex: none;
+}
+.wm-heat-actions .wm-bulk-count {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@container wm-bar (max-width: 620px) {
+  .wm-bar-lead > span {
+    display: none;
+  }
+  .wm-bar-lead {
+    padding-inline: 6px;
+  }
+}
+/* Narrower still, the primary act keeps its words and gives up its icon, so
+   the task count is never cut. */
+@container wm-bar (max-width: 450px) {
+  .wm-bulk-primary > svg {
+    display: none;
+  }
+  .wm-bulk-primary,
+  .wm-bulk-picker {
+    padding-inline: 8px;
+  }
+}
 /* Anchor the area menu in the action row, not on the absolute area box. */
+.wm-bulk-row > .wm-area-tools,
 .wm-heat-actions > .wm-area-tools {
   position: relative;
   top: auto;

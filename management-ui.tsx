@@ -40,17 +40,32 @@ export function ProjectDot({ color }: { color?: string }) {
   );
 }
 
+/**
+ * An act an area's own bar moved into its menu to stay one row. It gets the
+ * menu button back, so a confirmation it opens can return focus there.
+ */
+export type AreaMenuItem = {
+  key: string;
+  label: string;
+  hint?: string;
+  className?: string;
+  disabled?: boolean;
+  onSelect: (trigger: HTMLButtonElement | null) => void;
+};
 export function AreaTools({
   title,
   disabled,
   focused,
   hidden,
+  extra = [],
   onAction,
 }: {
   title: string;
   disabled: boolean;
   focused: boolean;
   hidden: boolean;
+  /** Acts listed first in the Manage menu, ahead of the project's own. */
+  extra?: AreaMenuItem[];
   onAction: (
     action:
       | "createTask"
@@ -169,7 +184,27 @@ export function AreaTools({
             </>
           ) : (
             <>
-              <button role="menuitem" onClick={() => choose("editProject")}>
+              {extra.map((entry) => (
+                <button
+                  key={entry.key}
+                  role="menuitem"
+                  className={entry.className}
+                  disabled={entry.disabled}
+                  onClick={() => {
+                    setMenu(null);
+                    trigger.current?.focus();
+                    entry.onSelect(trigger.current);
+                  }}
+                >
+                  {entry.label}
+                  {entry.hint && <small>{entry.hint}</small>}
+                </button>
+              ))}
+              <button
+                role="menuitem"
+                className={extra.length ? "wm-menu-separated" : undefined}
+                onClick={() => choose("editProject")}
+              >
                 Edit project
               </button>
               <button role="menuitem" onClick={() => choose("focus")}>

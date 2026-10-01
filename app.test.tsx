@@ -2693,6 +2693,14 @@ describe("heat layout", () => {
       expect(slot.container.querySelector(".wm-bulk")).toBeTruthy(),
     );
   };
+  /** Snooze all and Mark all done live in the open area's Manage menu. */
+  const menuAct = (slot: Awaited<ReturnType<typeof mount>>, name: RegExp) => {
+    const bar = slot.container.querySelector<HTMLElement>(".wm-heat-actions")!;
+    fireEvent.click(
+      within(bar).getByRole("button", { name: "Manage Test project" }),
+    );
+    fireEvent.click(within(bar).getByRole("menuitem", { name }));
+  };
 
   it("offers acts on the tiles of an expanded area, not before", async () => {
     const slot = await mount({ ...heatFixture(), layout: "heat" });
@@ -2745,18 +2753,36 @@ describe("heat layout", () => {
     const slot = await mount({ ...heatFixture(), layout: "heat" });
     await expandProject(slot);
     const row = slot.container.querySelector<HTMLElement>(".wm-bulk-row")!;
+    // One row: the area's own buttons, the primary act, the picker, the
+    // count and the menus. Nothing else is a button there.
     const names = Array.from(row.querySelectorAll("button")).map(
-      (button) => button.textContent?.trim() ?? "",
+      (button) =>
+        button.getAttribute("aria-label") ?? button.textContent?.trim() ?? "",
     );
-    expect(names.slice(0, 3)).toEqual([
+    expect(names).toEqual([
+      "New session",
+      "Collapse area",
       "Let agents decide all",
-      "Snooze all",
-      "Mark all done",
+      "Pick tasks",
+      "Add to Test project",
+      "Manage Test project",
     ]);
     // Nothing is picked, so the hint has nothing to say; the count is enough.
     expect(row.textContent).toContain("3 tasks");
     expect(slot.container.querySelector(".wm-bulk-hint")).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: /^Mark all done/ }));
+    // Mark all done is last in the menu, after Snooze all and the side pane.
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Manage Test project" }),
+    );
+    const items = within(row)
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent ?? "");
+    expect(items.slice(0, 3)).toEqual([
+      "Open in side pane",
+      expect.stringMatching(/^Snooze all/),
+      expect.stringMatching(/^Mark all done/),
+    ]);
+    fireEvent.click(within(row).getByRole("menuitem", { name: /^Mark all done/ }));
     const confirm = await slot.findByRole("dialog");
     // Focus rests on the dialog, so Enter cannot close three tasks unread.
     expect(document.activeElement).toBe(confirm);
@@ -2958,7 +2984,7 @@ describe("heat layout", () => {
     const settleRequests: SettleInput[] = [];
     const slot = await mount({ ...heatFixture(), settleRequests });
     await expandProject(slot);
-    fireEvent.click(slot.getByRole("button", { name: /^Snooze all/ }));
+    menuAct(slot, /^Snooze all/);
     const confirm = await slot.findByRole("dialog");
     expect(confirm.textContent).toContain(
       "Snoozing hides the task from what needs you for 7 days and changes nothing in Tasks. Undo restores it.",
@@ -3015,7 +3041,7 @@ describe("heat layout", () => {
     const before = slot.inspection.rpcCalls.filter(
       (call) => call.method === "snapshot",
     ).length;
-    fireEvent.click(slot.getByRole("button", { name: /^Mark all done/ }));
+    menuAct(slot, /^Mark all done/);
     fireEvent.click(
       within(await slot.findByRole("dialog")).getByRole("button", {
         name: /^Mark \d+ tasks? done$/,
@@ -3080,7 +3106,7 @@ describe("heat layout", () => {
       settleError: true,
     });
     await expandProject(slot);
-    fireEvent.click(slot.getByRole("button", { name: /^Mark all done/ }));
+    menuAct(slot, /^Mark all done/);
     fireEvent.click(
       within(await slot.findByRole("dialog")).getByRole("button", {
         name: /^Mark \d+ tasks? done$/,

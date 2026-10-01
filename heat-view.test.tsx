@@ -656,3 +656,39 @@ it("names a fold by what it hides, in short words when the full ones do not fit"
   expect(foldHead(fold(3, 0, 3), 60)).toBe("+3 run");
   expect(foldHead(fold(9, 0, 0), 400)).toBe("+9 more");
 });
+
+it("gives every open-area card two whole title lines, with slack for rounding", () => {
+  // A 1024 laptop's open area: about 400 by 250 for cards once the bar is one row.
+  for (const [width, height] of [
+    [406, 300],
+    [600, 420],
+    [333, 260],
+  ]) {
+    frame(width, height);
+    const keys = Array.from({ length: 14 }, (_, i) => `DT-${i + 1}`);
+    const view = heat(
+      keys.map((key, i) =>
+        task({
+          id: `t${i}`,
+          key,
+          title: `Draft ${key}: a title long enough to need two lines`,
+          status: "in_review",
+        }),
+      ),
+      [],
+      { tileActions: () => <div className="wm-tile-actions" /> },
+      true,
+    );
+    const cards = Array.from(
+      view.container.querySelectorAll<HTMLElement>(
+        ".wm-heat-area-open .wm-heat-slot[data-acts]",
+      ),
+    );
+    expect(cards.length).toBe(14);
+    for (const card of cards)
+      expect(
+        Number(card.style.getPropertyValue("--wm-heat-lines")),
+      ).toBeGreaterThanOrEqual(2);
+    view.unmount();
+  }
+});

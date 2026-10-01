@@ -40,6 +40,8 @@ const ACT_ROW = 24 + 6 + 1;
 /** A card in an open area is never narrower than this; the grid scrolls instead. */
 const MIN_CARD_W = 150;
 const TITLE_LINE = 14.03;
+/** Pixels of slack on a card's minimum height against sub-pixel rounding. */
+const ROUNDING = 2;
 const LINE_ROW = 15.5;
 const LINE_MORE = 13.5;
 const FACTS_ROW = 14.8;
@@ -169,8 +171,12 @@ export function HeatMap({
       expandedWeights(ordered, expandedAreaId, share),
       UNIT,
     );
-    // Two title lines and the measured act row: the least a card can be.
-    const minCard = { w: MIN_CARD_W, h: CARD_CHROME + actRow + 2 * TITLE_LINE };
+    // Two title lines and the measured act row: the least a card can be,
+    // plus a margin so rounding never leaves the second line a hair short.
+    const minCard = {
+      w: MIN_CARD_W,
+      h: CARD_CHROME + actRow + 2 * TITLE_LINE + ROUNDING,
+    };
     return ordered.map((area) => {
       const rect = rects.get(area.id) ?? UNIT;
       const open = area.id === expandedAreaId;

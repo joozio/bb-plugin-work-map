@@ -1,4 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import type { AreaMenuItem } from "./management-ui";
 import type { WorkItem } from "./model";
 import {
   ACTION_LABEL,
@@ -8,6 +10,7 @@ import {
   confirmHeading,
   confirmNote,
   eligible,
+  SNOOZE_DAYS,
   type QuickAction,
 } from "./delegation";
 import { Button } from "./components/ui/button";
@@ -115,9 +118,17 @@ export function TileActions({
   );
 }
 
-/** Area-level acts: they always name their count and list what they will touch. */
+/**
+ * Area-level acts: they always name their count and list what they will touch.
+ * The bar is one row, so a small screen keeps its cards: `lead` (the area's
+ * own buttons), the primary handover, the picker and the count sit in it, and
+ * Snooze all and Mark all done move into the area menu `tools` draws. They
+ * open the same confirmation from there.
+ */
 export function AreaBulkActions({
   title,
+  lead,
+  tools,
   items,
   selected,
   disabled,
@@ -131,6 +142,8 @@ export function AreaBulkActions({
   onDismissError,
 }: {
   title: string;
+  lead?: ReactNode;
+  tools: (extra: AreaMenuItem[]) => ReactNode;
   items: WorkItem[];
   selected: string[];
   disabled: boolean;
@@ -145,9 +158,9 @@ export function AreaBulkActions({
   onDismissError?: () => void;
 }) {
   const [intent, setIntent] = useState<QuickAction | null>(null);
-  // Mark all done sits last: it is one click from closing everything here,
-  // so it is never the neighbour of the primary act.
-  const order: QuickAction[] = ["delegate", "snooze", "done"];
+  // Mark all done sits last in the menu: it is one click from closing
+  // everything here, so it is never the neighbour of the primary act.
+  const menuActs: QuickAction[] = ["snooze", "done"];
   // The picker stays shut by default: an expanded area is mostly for reading
   // its tiles, and a list of every task would take the room they need.
   const [picking, setPicking] = useState(false);
@@ -178,8 +191,8 @@ export function AreaBulkActions({
     setIntent(null);
     openerRef.current?.focus({ preventScroll: true });
   };
-  const open = (action: QuickAction, event: React.MouseEvent) => {
-    openerRef.current = event.currentTarget as HTMLButtonElement;
+  const open = (action: QuickAction, opener: HTMLButtonElement | null) => {
+    openerRef.current = opener;
     setIntent(action);
   };
   const offer = (action: QuickAction) =>
@@ -199,18 +212,19 @@ export function AreaBulkActions({
   return (
     <div className="wm-bulk">
       <div className="wm-bulk-row">
-        {order.filter(offer).map((action) => (
+        {lead}
+        {offer("delegate") && (
           <Button
-            key={action}
             size="sm"
-            variant={action === "delegate" ? "default" : "outline"}
+            variant="default"
+            className="wm-bulk-primary"
             disabled={disabled || !!running}
-            onClick={(event) => open(action, event)}
+            onClick={(event) => open("delegate", event.currentTarget)}
           >
-            <Icon name={ICON[action]} />
-            {running === action ? "Working…" : label(action)}
+            <Icon name={ICON.delegate} />
+            {running === "delegate" ? "Working…" : label("delegate")}
           </Button>
-        ))}
+        )}
         {selected.length > 0 && (
           <Button
             size="sm"
@@ -224,6 +238,7 @@ export function AreaBulkActions({
         <Button
           size="sm"
           variant="ghost"
+          className="wm-bulk-picker"
           aria-expanded={picking}
           disabled={disabled || !!running}
           onClick={() => setPicking((open) => !open)}
@@ -235,6 +250,19 @@ export function AreaBulkActions({
             ? `${selected.length} of ${items.length} picked`
             : `${items.length} ${items.length === 1 ? "task" : "tasks"}`}
         </span>
+        {tools(
+          menuActs.filter(offer).map((action) => ({
+            key: action,
+            label: running === action ? "Working…" : label(action),
+            hint:
+              action === "done"
+                ? "Asks first, listing what closes."
+                : `Asks first. Quiet ${SNOOZE_DAYS} days, Tasks unchanged.`,
+            className: action === "done" ? "wm-menu-separated" : undefined,
+            disabled: disabled || !!running,
+            onSelect: (trigger) => open(action, trigger),
+          })),
+        )}
       </div>
       {error && (
         <p className="wm-bulk-error" role="alert">
