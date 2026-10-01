@@ -127,9 +127,12 @@ export function tierCaps(n: number) {
  * work shrinks and an area holding Now tiles grows, so the map's big picture
  * reads at area level too.
  */
-export const TIER_GAIN: Record<Tier, number> = { now: 1, next: 0.6, later: 0.25 };
-/** Now tiles are the biggest on the map; Later tiles keep their size by pull. */
-export const TIER_SIZE: Record<Tier, number> = { now: 1.6, next: 1, later: 0.7 };
+export const TIER_GAIN: Record<Tier, number> = { now: 1, next: 0.6, later: 0.35 };
+/**
+ * Now tiles are the biggest on the map, by a margin and not by a landslide:
+ * five hot spots on a calm map, not a red continent. Later keeps its size by pull.
+ */
+export const TIER_SIZE: Record<Tier, number> = { now: 1.1, next: 1, later: 0.8 };
 const PRIORITY_RANK: Record<string, number> = {
   urgent: 0,
   high: 1,
@@ -381,8 +384,8 @@ const NOW_NEAR = 0.6;
 /** A long wait on you adds to that, up to the pull of a date a few days out. */
 const WAIT_NEAR = 0.3;
 const WAIT_SPAN = 60;
-/** Area weight grows with pull faster than one to one, so the hottest tile is several times the coldest. */
-export const SIZE_POWER = 1.4;
+/** Size grows with pull a little faster than one to one: the hottest tile is several times the coldest, not a continent. */
+export const SIZE_POWER = 1.2;
 const round = (value: number) => Math.round(value * 10000) / 10000;
 export function priorityPull(priority: string | undefined) {
   return PRIORITY[priority ?? "none"] ?? PRIORITY.none;

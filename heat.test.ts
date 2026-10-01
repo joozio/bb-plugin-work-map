@@ -728,7 +728,7 @@ describe("attention to colour", () => {
   it("still has a meaningful Now when nothing is overdue: due-soon work fills it", () => {
     const [area] = buildHeat(
       [project("p", Array.from({ length: 12 }, (_, i) =>
-        item({ id: `task:${i}`, attention: "review", task: task({ status: "in_review", priority: i % 3 ? "medium" : "high", dueDate: dueIn(i + 1) }) }),
+        item({ id: `task:${i}`, attention: "review", task: task({ status: "in_review", priority: i % 3 ? "medium" : "high", dueDate: dueIn(i + 1), dateKind: "deadline" }) }),
       ))],
       now,
     );
@@ -759,7 +759,7 @@ describe("attention to colour", () => {
     const cold = [tileOf("c", 1, "later"), tileOf("d", 1, "later")];
     expect(areaWeight(hot)).toBeCloseTo(TIER_GAIN.now + TIER_GAIN.next, 4);
     expect(areaWeight(cold)).toBeCloseTo(2 * TIER_GAIN.later, 4);
-    expect(areaWeight(hot) / areaWeight(cold)).toBeGreaterThan(3);
+    expect(areaWeight(hot) / areaWeight(cold)).toBeGreaterThan(2);
     // Before the tiers are known every tile lends its whole size.
     expect(areaWeight(cold, false)).toBeCloseTo(2, 4);
     // On a built map each area's weight follows the tiers and the area wears
@@ -871,7 +871,10 @@ describe("attention to colour", () => {
     const [withPins] = buildHeat(pinned, now);
     const [withoutPins] = buildHeat(plain, now);
     expect(withPins.id).toBe(SESSIONS_AREA);
-    expect(withPins.weight).toBeGreaterThan(withoutPins.weight * 2);
+    // Each pinned session is its own tile; the idle ones pile into one group.
+    expect(withPins.tiles.map((tile) => tile.id).sort()).toEqual(["thread:pin0", "thread:pin1", "thread:pin2"]);
+    expect(withoutPins.tiles.map((tile) => tile.id)).toEqual([`quiet:${SESSIONS_AREA}`]);
+    expect(withPins.weight).toBeGreaterThan(withoutPins.weight);
   });
 });
 

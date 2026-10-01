@@ -637,13 +637,13 @@ function Tile({
         ask: width < 118 ? "" : ask,
       });
   // In tidy mode a slipped tile wears its date-fix row where it has the room:
-  // one row of four from 160px, two rows of two from 92px; below that the
-  // area opens to its cards, which always have the room.
+  // one row of four whole labels from 240px, two rows of two from 100px;
+  // below that the area opens to its cards, which always have the room.
   const fixRows =
     fixes && tile.slipped && !tiny && !closed
-      ? width >= 160 && height >= 60
+      ? width >= 240 && height >= 60
         ? 1
-        : width >= 92 && height >= 86
+        : width >= 100 && height >= 86
           ? 2
           : 0
       : 0;

@@ -61,7 +61,7 @@ const tile = (view: ReturnType<typeof render>, title: string) =>
   view.getByRole("button", { name: new RegExp(`^Preview ${title}\\.`) });
 
 it("renders the whole key on a narrow tile and drops the label instead of cutting it", () => {
-  frame(360, 150);
+  frame(480, 90);
   const view = heat(
     ["DT-11", "DT-12", "DT-13", "DT-14", "DT-15", "DT-16"].map((key, index) =>
       task({
@@ -860,17 +860,18 @@ it("puts the date fixes on a slipped tile in tidy mode where they fit: one row, 
     view.unmount();
     return out;
   };
-  expect(slot(200, 80)).toEqual({ fixes: "row", footer: true, tidy: "true" });
+  expect(slot(280, 80)).toEqual({ fixes: "row", footer: true, tidy: "true" });
+  expect(slot(200, 80)).toEqual({ fixes: undefined, footer: false, tidy: "true" });
   expect(slot(120, 100)).toEqual({ fixes: "grid", footer: true, tidy: "true" });
   expect(slot(80, 50)).toEqual({ fixes: undefined, footer: false, tidy: "true" });
   // A date that has not slipped never gets them, however roomy the tile.
-  expect(slot(200, 80, { dueDate: due(-3) })).toEqual({
+  expect(slot(280, 80, { dueDate: due(-3) })).toEqual({
     fixes: undefined,
     footer: false,
     tidy: "true",
   });
   // Outside tidy mode the prop is ignored and the map is not marked.
-  expect(slot(200, 80, { tidy: false })).toEqual({
+  expect(slot(280, 80, { tidy: false })).toEqual({
     fixes: undefined,
     footer: false,
     tidy: undefined,
