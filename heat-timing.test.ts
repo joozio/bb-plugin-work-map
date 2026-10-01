@@ -4,7 +4,14 @@ import { buildMap, localDay } from "./model";
 import type { MapTask } from "./server";
 import type { WorkItem } from "./model";
 import { buildHeat, heatPull, heatStats } from "./heat";
-import { ageNear, dueNear, heatTiming, ramp } from "./heat-timing";
+import {
+  SLIPPED_DAYS,
+  SLIPPED_NEAR,
+  ageNear,
+  dueNear,
+  heatTiming,
+  ramp,
+} from "./heat-timing";
 
 const DAY = 86400000;
 const iso = (days: number) => new Date(now - days * DAY).toISOString();
@@ -13,7 +20,7 @@ const item = (fields: Partial<MapTask> = {}, at = now) =>
   buildMap(data([task(fields)]), [], {}, at)[0].children[0];
 
 describe("task timing drives Heat", () => {
-  it("increases size at two weeks, one week, three days, tomorrow and today, holds a week past due, then fades", () => {
+  it("increases size at two weeks, one week, three days, tomorrow and today, holds a week past due, then eases to the slipped mark", () => {
     const offsets = [21, 14, 7, 3, 1, 0, -1, -14];
     const items = offsets.map((days) =>
       item({ dueDate: due(days), dateKind: "deadline" }),
@@ -47,46 +54,49 @@ describe("task timing drives Heat", () => {
       "Due in 3d",
       "Due tomorrow",
       "Due today",
-      "1d overdue",
-      "14d overdue",
+      "1d late",
+      "14d late",
     ]);
   });
 
-  it("peaks overdue in its first week, then decays: a date long past is stale, not urgent", () => {
+  it("peaks overdue in its first week, eases to the slipped mark, then holds flat: a date long past is a date to tidy, not urgency", () => {
     const at = (days: number) =>
       heatTiming(item({ dueDate: due(days), dateKind: "deadline" }), now)!;
-    // The peak holds for the first week past due, then the pull fades.
+    // The peak holds for the first week past due, then eases to 85% at two weeks.
     expect(at(0).near).toBe(1);
     expect(at(-1).near).toBe(1);
     expect(at(-7).near).toBe(1);
     expect(at(-14).near).toBeCloseTo(0.85);
-    expect(at(-30).near).toBeCloseTo(0.6);
-    expect(at(-60).near).toBeCloseTo(0.36);
-    expect(at(-84).near).toBeCloseTo(0.26 + (0.1 * 6) / 30);
-    expect(at(-180).near).toBe(0.2);
-    expect(at(-400).near).toBe(0.2);
+    // Past two weeks the date has slipped: a flat pull, whatever the count.
+    for (const days of [15, 21, 30, 60, 84, 180, 400])
+      expect(at(-days).near).toBe(SLIPPED_NEAR);
+    expect(at(-84).near).toBe(at(-15).near);
+    expect(dueNear(-(SLIPPED_DAYS + 1))).toBe(SLIPPED_NEAR);
     // Fading never crosses: every day past due pulls at most what the day before did.
     for (let days = 1; days < 200; days++)
       expect(at(-days).near).toBeLessThanOrEqual(at(-days + 1).near);
-    // Stale overdue is still under a date this week and over a month-old undated task.
-    const undated30 = heatTiming(item({ createdAt: iso(30) }), now)!;
-    expect(at(-84).near).toBeLessThan(undated30.near);
-    expect(at(-60).near).toBeGreaterThan(undated30.near);
+    // A slipped date sits under a date this week and over a date a month out.
+    expect(at(-84).near).toBeLessThan(at(7).near);
+    expect(at(-84).near).toBeGreaterThan(at(30).near);
     expect(at(-84).near).toBeLessThan(at(0).near);
     expect(heatPull(item({ dueDate: due(-3) }), now)).toBeGreaterThan(
       heatPull(item({ dueDate: due(-84) }), now),
     );
-    expect([-1, -14, -15, -84].map((days) => at(days).late)).toEqual([
+    const undated30 = heatTiming(item({ createdAt: iso(30) }), now)!;
+    expect([-1, -14, -15, -84].map((days) => at(days).slipped)).toEqual([
       false,
       false,
       true,
       true,
     ]);
-    // Overdue keeps meaning past the date, and the label is unchanged.
+    // Overdue keeps meaning past the date; a slipped date says so and is not prominent.
     expect(at(-84).overdue).toBe(true);
-    expect(at(-84).label).toBe("84d overdue");
-    expect(at(0).late).toBe(false);
-    expect(undated30.late).toBe(false);
+    expect(at(-84).label).toBe("slipped 84d");
+    expect(at(-84).prominent).toBe(false);
+    expect(at(-14).label).toBe("14d late");
+    expect(at(-14).prominent).toBe(true);
+    expect(at(0).slipped).toBe(false);
+    expect(undated30.slipped).toBe(false);
   });
 
   it("uses the current date for recurring work regardless of creation, edits or review history", () => {
@@ -268,12 +278,21 @@ describe("compact timing labels", () => {
       const date = new Date(now + days * day);
       return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     };
-    const compact = (dueDate: string) =>
+    const timing = (dueDate: string) =>
       heatTiming(
         { task: { status: "todo", dueDate, dateKind: "deadline" } } as unknown as WorkItem,
         now,
-      )?.compact;
-    expect(compact(at(-38))).toBe("38d");
+      );
+    const compact = (dueDate: string) => timing(dueDate)?.compact;
+    expect([-1, -14, -15].map((days) => timing(at(days))?.label)).toEqual([
+      "1d late",
+      "14d late",
+      "slipped 15d",
+    ]);
+    expect(compact(at(-1))).toBe("1d late");
+    expect(compact(at(-14))).toBe("14d late");
+    expect(compact(at(-15))).toBe("slip 15d");
+    expect(compact(at(-38))).toBe("slip 38d");
     expect(compact(at(0))).toBe("today");
     expect(compact(at(1))).toBe("tmrw");
     expect(compact(at(3))).toBe("in 3d");

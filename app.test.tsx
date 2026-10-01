@@ -553,7 +553,11 @@ async function mount(
             reviewer: input.reviewer,
             checkAfter: input.checkAfter ?? null,
             dueDate: input.dueDate ?? null,
-            previousDueDate: null,
+            // A date fix reports the date it replaced, as Tasks does.
+            previousDueDate:
+              input.action === "date"
+                ? (tasks.find((row) => row.id === input.taskId)?.dueDate ?? null)
+                : null,
             taskUpdated: !!input.taskId,
             archivedThreadIds: input.threadId ? [input.threadId] : [],
             undone: false,
@@ -2599,24 +2603,29 @@ describe("heat layout", () => {
     const late = slot.getByRole("button", { name: /^Preview Late decision/ });
     const near = slot.getByRole("button", { name: /^Preview Near deadline/ });
     const backlog = slot.getByRole("button", { name: /^Preview Old idea/ });
-    expect(recurring.textContent).toContain("Due today");
+    // A coloured tile says why: the date in lower case, with its priority.
+    expect(recurring.textContent).toContain("due today · medium");
+    expect(recurring.getAttribute("aria-label")).toContain("Due today");
     expect(recurring.textContent).not.toContain("300d");
-    // Heat is rank across the map: the review due today is the hottest, the
-    // date just passed next, the dated quiet tasks in the warm middle, the
-    // fresh quiet ones at the bottom.
-    expect(recurring.getAttribute("data-step")).toBe("5");
+    // Tiers across the map: the review due today and the date just passed are
+    // Now, in that order; the date this week and the aged backlog fill Next;
+    // the fresh quiet ones are Later and say only their age.
+    expect(recurring.getAttribute("data-tier")).toBe("now");
     expect(recurring.querySelector(".wm-heat-rank")?.textContent).toBe("1");
-    expect(late.textContent).toContain("2d overdue");
-    expect(late.getAttribute("data-step")).toBe("4");
-    expect(near.textContent).toContain("Due in 3d");
-    expect(near.getAttribute("data-step")).toBe("3");
+    expect(late.textContent).toContain("2d late · medium");
+    expect(late.getAttribute("data-tier")).toBe("now");
+    expect(late.querySelector(".wm-heat-rank")?.textContent).toBe("2");
+    expect(near.textContent).toContain("due in 3d · medium");
+    expect(near.getAttribute("data-tier")).toBe("next");
+    expect(near.getAttribute("aria-label")).toContain("Next: due in 3d · medium");
     expect(backlog.textContent).toContain("90d old");
-    expect(backlog.getAttribute("data-step")).toBe("3");
-    expect(
-      slot.getByRole("button", { name: /^Preview New idea 0/ }).getAttribute(
-        "data-step",
-      ),
-    ).toBe("1");
+    expect(backlog.getAttribute("data-tier")).toBe("next");
+    const fresh = slot.getByRole("button", { name: /^Preview New idea 0/ });
+    expect(fresh.getAttribute("data-tier")).toBe("later");
+    expect(fresh.getAttribute("aria-label")).toContain(". Later.");
+    expect(fresh.querySelector(".wm-heat-meta > span + span")?.textContent).toBe(
+      "0d old",
+    );
     expect(backlog.getAttribute("aria-label")).toContain("no due date");
     slot.lifecycle.unmount();
   });
@@ -2996,6 +3005,159 @@ describe("heat layout", () => {
     await slot.findByText("Undone. Snooze cleared.");
     expect(slot.queryByRole("region", { name: "Settled today" })).toBeNull();
     expect(settleRequests).toHaveLength(0);
+    slot.lifecycle.unmount();
+  });
+
+  it("opens tidy mode from the slipped-dates chip and fixes a date in one click with Undo in Settled today", async () => {
+    const current = Date.now();
+    const days = (offset: number) => localDay(current + offset * 86400000);
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({
+      layout: "heat",
+      threads: [],
+      settleRequests,
+      tasks: [
+        task({
+          id: "slip",
+          key: "TEST-1",
+          title: "Slipped plan",
+          dateKind: "deadline",
+          dueDate: days(-20),
+        }),
+        task({
+          id: "soon",
+          key: "TEST-2",
+          title: "Tomorrow plan",
+          dateKind: "deadline",
+          dueDate: days(1),
+        }),
+      ],
+    });
+    await slot.findByRole("button", { name: /^Preview Slipped plan/ });
+    const map = () => slot.container.querySelector<HTMLElement>(".wm-heat")!;
+    const chip = slot.getByRole("button", { name: "1 slipped date" });
+    expect(chip.getAttribute("aria-pressed")).toBe("false");
+    expect(map().dataset.tidy).toBeUndefined();
+    // The slipped date is no longer urgency: it does not count as overdue.
+    expect(
+      Array.from(slot.container.querySelectorAll(".wm-heat-counts > div")).map(
+        (entry) => entry.textContent,
+      ),
+    ).toContain("0overdue");
+    fireEvent.click(chip);
+    await waitFor(() => expect(map().dataset.tidy).toBe("true"));
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    expect(slot.container.querySelector(".wm-heat-hint")?.textContent).toBe(
+      "Tidy mode · Fix a date in one click, Undo in Settled today · Escape leaves",
+    );
+    // Open the area so both tasks are cards with a footer.
+    fireEvent.click(
+      slot.getByRole("button", { name: /^Open project Test project/ }),
+    );
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat-area-open")).toBeTruthy(),
+    );
+    const card = (title: string) =>
+      slot
+        .getByRole("button", { name: new RegExp(`^Preview ${title}`) })
+        .closest<HTMLElement>(".wm-heat-slot")!;
+    await waitFor(() =>
+      expect(card("Slipped plan").querySelectorAll(".wm-date-fix")).toHaveLength(4),
+    );
+    // On the slipped card the fixes replace the act row; the other keeps it.
+    expect(card("Slipped plan").querySelector(".wm-tile-actions")).toBeNull();
+    expect(card("Tomorrow plan").querySelector(".wm-tile-actions")).toBeTruthy();
+    expect(card("Tomorrow plan").querySelector(".wm-date-fix")).toBeNull();
+    expect(
+      Array.from(
+        card("Slipped plan").querySelectorAll(".wm-date-fix"),
+        (button) => button.textContent,
+      ),
+    ).toEqual(["Today", "+1 week", "+1 month", "No date"]);
+    // A week ahead on the local calendar.
+    const at = new Date(current);
+    const week = localDay(
+      new Date(at.getFullYear(), at.getMonth(), at.getDate() + 7, 12).getTime(),
+    );
+    fireEvent.click(
+      within(card("Slipped plan")).getByRole("button", {
+        name: `Move TEST-1 to ${week}`,
+      }),
+    );
+    await waitFor(() => expect(settleRequests).toHaveLength(1));
+    expect(settleRequests[0]).toMatchObject({
+      action: "date",
+      taskId: "slip",
+      dueDate: week,
+    });
+    const strip = await slot.findByRole("region", { name: "Settled today" });
+    expect(strip.textContent).toContain(
+      `Date moved to ${week} · was ${days(-20)}`,
+    );
+    expect(within(strip).getByRole("button", { name: /Undo/ })).toBeTruthy();
+    // Escape steps back the area first, then leaves tidy mode.
+    fireEvent.keyDown(map(), { key: "Escape" });
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat-area-open")).toBeNull(),
+    );
+    expect(map().dataset.tidy).toBe("true");
+    fireEvent.keyDown(map(), { key: "Escape" });
+    await waitFor(() => expect(map().dataset.tidy).toBeUndefined());
+    expect(
+      slot.getByRole("button", { name: "1 slipped date" }).getAttribute("aria-pressed"),
+    ).toBe("false");
+    expect(slot.container.querySelector(".wm-heat-hint")?.textContent).toBe(
+      "Click to expand in place · Escape steps back",
+    );
+    // Leaving Heat leaves tidy mode too.
+    fireEvent.click(slot.getByRole("button", { name: "1 slipped date" }));
+    await waitFor(() => expect(map().dataset.tidy).toBe("true"));
+    fireEvent.click(slot.getByRole("button", { name: "Overview layout" }));
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat")).toBeNull(),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "Heat layout" }));
+    await waitFor(() => expect(slot.container.querySelector(".wm-heat")).toBeTruthy());
+    expect(map().dataset.tidy).toBeUndefined();
+    expect(
+      slot.getByRole("button", { name: "1 slipped date" }).getAttribute("aria-pressed"),
+    ).toBe("false");
+    slot.lifecycle.unmount();
+  });
+
+  it("offers no slipped-dates chip when nothing has slipped", async () => {
+    const current = Date.now();
+    const slot = await mount({
+      layout: "heat",
+      threads: [],
+      tasks: [
+        task({
+          id: "late",
+          key: "TEST-1",
+          title: "Two weeks late",
+          dateKind: "deadline",
+          // Calendar days, so a daylight-saving change never makes it 15.
+          dueDate: localDay(
+            new Date(
+              new Date(current).getFullYear(),
+              new Date(current).getMonth(),
+              new Date(current).getDate() - 14,
+              12,
+            ).getTime(),
+          ),
+        }),
+      ],
+    });
+    const late = await slot.findByRole("button", { name: /^Preview Two weeks late/ });
+    // Fourteen days past is still late, not slipped: overdue, and no tidying.
+    expect(late.dataset.slipped).toBeUndefined();
+    expect(
+      Array.from(slot.container.querySelectorAll(".wm-heat-counts > div")).map(
+        (entry) => entry.textContent,
+      ),
+    ).toContain("1overdue");
+    expect(slot.container.querySelector(".wm-heat-chip")).toBeNull();
+    expect(slot.queryByRole("button", { name: /slipped date/ })).toBeNull();
     slot.lifecycle.unmount();
   });
 
@@ -3517,13 +3679,19 @@ describe("heat layout", () => {
     expect(
       slot.getByRole("button", { name: /^Preview Live agent/ }).className,
     ).toContain("wm-heat-running");
-    expect(slot.getByText("44d old")).toBeTruthy();
+    // The age stays on the tile, inside the reason it wears Now for.
+    expect(tile.querySelector(".wm-heat-meta > span + span")?.textContent).toBe(
+      "needs your input · 44d old · medium",
+    );
+    expect(tile.getAttribute("aria-label")).toContain("Created 44 days ago");
     // The verb moves to the label line; the title keeps its words.
     expect(tile.querySelector(".wm-heat-ask")?.textContent).toBe("decide");
     expect(tile.querySelector(".wm-heat-title")?.textContent).toBe(
       "pick a direction",
     );
-    expect(tile.getAttribute("data-step")).toBe("5");
+    // A request for your hands fills Now before any date, and says so.
+    expect(tile.getAttribute("data-tier")).toBe("now");
+    expect(tile.getAttribute("aria-label")).toMatch(/Now(, \d of 3)?: needs your input/);
     expect(
       Array.from(slot.container.querySelectorAll(".wm-heat-counts > div")).map(
         (entry) => entry.textContent,
@@ -3532,32 +3700,31 @@ describe("heat layout", () => {
       "1need you",
       "1ready to read",
       "1agents running",
-      "0past date",
+      "0overdue",
       "1undated 30d+",
     ]);
+    // Nothing has slipped, so there is nothing to tidy and no chip offers it.
+    expect(slot.container.querySelector(".wm-heat-chip")).toBeNull();
     // One legend: a single row above the map, no footer repeating it.
     const legend = slot.container.querySelector(".wm-heat-legend")!;
-    // One heat bar, cold to hot, then the few shape signals; no edge or hatch chips.
+    // Three tiers, then the few shape signals, then the sentence that reads them.
     expect(Array.from(legend.children, (entry) => entry.textContent)).toEqual([
-      "coldhot",
+      "NowNextLater",
       "Needs your input",
       "Run failed",
       "Agent working",
       "In focus",
-      "Heat = pull rank · Pull = need × priority × date nearness · 1 2 3 = hottest",
+      "Red = now, at most 5 · Amber = next · Grey = later · The tile says why",
     ]);
-    // The five steps, coldest to hottest, drawn as chips in the legend.
     expect(
-      Array.from(legend.querySelectorAll(".wm-heat-ramp i"), (chip) =>
-        chip.getAttribute("data-step"),
+      Array.from(legend.querySelectorAll(".wm-heat-tiers i.wm-heat-key"), (chip) =>
+        chip.getAttribute("data-tier"),
       ),
-    ).toEqual(["1", "2", "3", "4", "5"]);
+    ).toEqual(["now", "next", "later"]);
     expect(legend.getAttribute("title")).toContain(
-      "Pull = what it needs × priority × how near the date is",
+      "Red = now (at most 5 on the whole map)",
     );
-    expect(legend.getAttribute("title")).toContain(
-      "Colour and size are heat: pull rank across the map",
-    );
+    expect(legend.getAttribute("title")).toContain("slipped");
     expect(slot.container.querySelector(".wm-footer")).toBeNull();
     expect(slot.container.querySelector(".wm-heat-hint")?.textContent).toBe(
       "Click to expand in place · Escape steps back",
@@ -3597,11 +3764,12 @@ describe("heat layout", () => {
     ).toBeTruthy();
     // The closed-card rule that grows the cover must not match an open card.
     const css = readFileSync(join(__dirname, "app.css"), "utf8");
+    // A card's footer is its act row or, in tidy mode, its date fixes.
     expect(css).toContain(
-      ".wm-heat-slot:not(.wm-heat-slot-open):has(.wm-tile-actions) > .wm-heat-tile {\n  flex: 1 1 auto;",
+      ".wm-heat-slot:not(.wm-heat-slot-open):has(.wm-tile-actions, .wm-tile-fixes) > .wm-heat-tile {\n  flex: 1 1 auto;",
     );
     expect(css).not.toMatch(
-      /\n\.wm-heat-slot:has\(\.wm-tile-actions\) > \.wm-heat-tile \{/,
+      /\n\.wm-heat-slot:has\(\.wm-tile-actions(, \.wm-tile-fixes)?\) > \.wm-heat-tile \{/,
     );
     expect(css).toMatch(
       /\.wm-heat-slot-open \.wm-session-view > \.wm-live-session \{\n  flex: 1 1 0;/,
