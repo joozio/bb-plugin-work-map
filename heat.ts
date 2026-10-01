@@ -177,24 +177,38 @@ const LABEL_GAP = 5;
 const RUN_DOT = 11;
 /**
  * What a tile's label row can say at this width. The key is identity and is
- * never cut; "running" is a word or only the dot, never a clipped word; the
- * timing label shows only when it fits whole beside the lead, otherwise the
- * edge, hatch and accessible description carry it.
+ * never cut; "running" is a word or only the dot, never a clipped word. The
+ * ask tag ("· draft") and the timing label share what is left, each whole or
+ * not at all, in this order: both with the full label, both with the compact
+ * one ("38d" for "38d overdue"), then the label alone, full or compact, then
+ * the ask alone. What drops is still on the edge, hatch, title and
+ * accessible description.
  */
 export function labelRow(
   width: number,
   lead: string,
   label: string,
   running: boolean,
-): { lead: string; label: string } {
+  options: { compact?: string; ask?: string } = {},
+): { lead: string; label: string; ask: string } {
   const room = width - LABEL_CHROME;
   const word =
     lead === "running" && RUN_DOT + labelWidth(lead) > room ? "" : lead;
   const used = (running ? RUN_DOT : 0) + labelWidth(word);
-  return {
-    lead: word,
-    label: label && used + LABEL_GAP + labelWidth(label) <= room ? label : "",
-  };
+  const ask = options.ask ?? "";
+  // The tag is drawn as "· draft" a gap after the key.
+  const askWidth = ask ? LABEL_GAP + labelWidth(`· ${ask}`) : 0;
+  const fits = (withAsk: boolean, text: string) =>
+    used + (withAsk ? askWidth : 0) + (text ? LABEL_GAP + labelWidth(text) : 0) <=
+    room;
+  const labels = [label, options.compact ?? label].filter(
+    (text, index, all) => text && all.indexOf(text) === index,
+  );
+  for (const withAsk of ask ? [true, false] : [false])
+    for (const text of labels)
+      if (fits(withAsk, text))
+        return { lead: word, label: text, ask: withAsk ? ask : "" };
+  return { lead: word, label: "", ask: ask && fits(true, "") ? ask : "" };
 }
 /** Whether a card this wide holds the word "agent running" whole. */
 export function fitsWord(width: number, word: string) {

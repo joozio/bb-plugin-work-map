@@ -715,11 +715,13 @@ describe("tile label row", () => {
     expect(labelRow(160, "DT-11", "35d overdue", false)).toEqual({
       lead: "DT-11",
       label: "35d overdue",
+      ask: "",
     });
     // Too narrow for "47d overdue" beside the key: the key stays whole.
     expect(labelRow(90, "DT-11", "47d overdue", false)).toEqual({
       lead: "DT-11",
       label: "",
+      ask: "",
     });
     expect(labelRow(40, "WIZ-110", "2d overdue", false).lead).toBe("WIZ-110");
     const threshold = 22 + labelWidth("DT-11") + 5 + labelWidth("47d overdue");
@@ -731,6 +733,34 @@ describe("tile label row", () => {
     );
   });
 
+  it("budgets the ask tag and falls back to the compact label before dropping anything", () => {
+    // The round-two case: "38d overdue" beside "DT-19 · draft" in a 130px tile.
+    const row = (width: number) =>
+      labelRow(width, "DT-19", "38d overdue", false, {
+        compact: "38d",
+        ask: "draft",
+      });
+    const full = 22 + labelWidth("DT-19") + 5 + labelWidth("· draft") + 5 + labelWidth("38d overdue");
+    expect(row(full)).toEqual({ lead: "DT-19", label: "38d overdue", ask: "draft" });
+    // A pixel short: the compact label, the tag kept.
+    expect(row(full - 1)).toEqual({ lead: "DT-19", label: "38d", ask: "draft" });
+    expect(row(130)).toEqual({ lead: "DT-19", label: "38d", ask: "draft" });
+    // Narrower: the tag yields before the date does.
+    const bare = 22 + labelWidth("DT-19") + 5 + labelWidth("38d");
+    expect(row(bare)).toEqual({ lead: "DT-19", label: "38d", ask: "" });
+    expect(row(bare - 1).label).toBe("");
+    expect(row(bare - 1).lead).toBe("DT-19");
+    // Whatever it picks, key, tag and label fit the room together.
+    for (let width = 40; width <= 200; width++) {
+      const pick = row(width);
+      const used =
+        labelWidth(pick.lead) +
+        (pick.ask ? 5 + labelWidth(`· ${pick.ask}`) : 0) +
+        (pick.label ? 5 + labelWidth(pick.label) : 0);
+      if (pick.ask || pick.label) expect(used).toBeLessThanOrEqual(width - 22);
+    }
+  });
+
   it("says running whole or leaves only the green dot, never a clipped word", () => {
     expect(labelRow(120, "running", "", true).lead).toBe("running");
     expect(labelRow(60, "running", "", true).lead).toBe("");
@@ -738,6 +768,7 @@ describe("tile label row", () => {
     expect(labelRow(90, "running", "12d", true)).toEqual({
       lead: "running",
       label: "",
+      ask: "",
     });
     expect(fitsWord(120, "agent running")).toBe(true);
     expect(fitsWord(80, "agent running")).toBe(false);

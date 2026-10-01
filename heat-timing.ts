@@ -10,6 +10,8 @@ export interface HeatTiming {
   weight: number;
   level: 1 | 2 | 3 | 4;
   label: string;
+  /** The label in fewest letters, for a tile too narrow for the full one. */
+  compact: string;
   description: string;
   overdue: boolean;
   /** Past due by more than two weeks: stale rather than urgent. */
@@ -49,6 +51,7 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
       kind: "snooze",
       days,
       label: `snoozed ${days}d`,
+      compact: `snoozed ${days}d`,
       description: `Snoozed until ${localDay(item.snoozedUntil)}${task.dueDate ? `; due ${task.dueDate}` : ""}`,
       weight: 1,
       level: 1,
@@ -77,6 +80,14 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
       kind: "due",
       days,
       label,
+      compact:
+        days < 0
+          ? `${-days}d`
+          : days === 0
+            ? "today"
+            : days === 1
+              ? "tmrw"
+              : `in ${days}d`,
       description: `${label} (${task.dueDate})`,
       // Overdue pulls hardest in its first week, then decays: a date long
       // past is stale, not urgent, and must not bury this week's.
@@ -130,6 +141,7 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
     kind: "age",
     days,
     label: `${days}d old`,
+    compact: `${days}d old`,
     description: `Created ${days} ${days === 1 ? "day" : "days"} ago; no due date`,
     weight:
       days >= 90

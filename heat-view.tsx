@@ -595,7 +595,13 @@ function Tile({
         : "";
   // The key never gives way; the label shows whole or not at all, and the
   // accessible description keeps it either way.
-  const row = open ? { lead, label } : labelRow(width, lead, label, working);
+  // The ask tag is hidden on a narrow tile (below 118px), so it is not budgeted there.
+  const row = open
+    ? { lead, label, ask }
+    : labelRow(width, lead, label, working, {
+        compact: tile.timing?.compact,
+        ask: width < 118 ? "" : ask,
+      });
   // Past due up to two weeks is urgent; longer past due reads as stale.
   const late = !!tile.timing?.overdue && tile.timing.late;
   const overdue = !!tile.timing?.overdue && !late;
@@ -708,7 +714,7 @@ function Tile({
         onDragStart={(event) => onDragStart(event, item)}
         onDragEnd={onDragEnd}
         onClick={() => onOpen(item)}
-        title={label && !row.label ? label : undefined}
+        title={label && row.label !== label ? label : undefined}
         aria-label={[
           `Preview ${item.title}`,
           closed
@@ -734,7 +740,7 @@ function Tile({
         <span className="wm-heat-meta">
           <span>
             {row.lead && <span className="wm-heat-key-text">{row.lead}</span>}
-            {ask && <em className="wm-heat-ask">{ask}</em>}
+            {row.ask && <em className="wm-heat-ask">{row.ask}</em>}
           </span>
           {row.label && <span>{row.label}</span>}
         </span>

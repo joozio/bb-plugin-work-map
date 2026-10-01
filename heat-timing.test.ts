@@ -240,3 +240,22 @@ describe("a snooze label", () => {
     expect(heatTiming(item, at + 6 * 86400000)?.label).toBe("snoozed 1d");
   });
 });
+
+describe("compact timing labels", () => {
+  it("keeps the number and drops the words a narrow tile cannot hold", () => {
+    const day = 86400000;
+    const at = (days: number) => {
+      const date = new Date(now + days * day);
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    };
+    const compact = (dueDate: string) =>
+      heatTiming(
+        { task: { status: "todo", dueDate, dateKind: "deadline" } } as unknown as WorkItem,
+        now,
+      )?.compact;
+    expect(compact(at(-38))).toBe("38d");
+    expect(compact(at(0))).toBe("today");
+    expect(compact(at(1))).toBe("tmrw");
+    expect(compact(at(3))).toBe("in 3d");
+  });
+});
