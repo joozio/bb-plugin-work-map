@@ -147,6 +147,8 @@ export interface Prospect {
   priority: string;
   /** Closed or snoozed work never enters Now or Next. */
   resting: boolean;
+  /** A task, or a standalone session (which has no date or priority to tier by). */
+  task: boolean;
 }
 /** Due today or tomorrow, or late by a week at most: a date that is current. */
 const dueNow = (p: Prospect) =>
@@ -186,11 +188,15 @@ export interface Tiered {
  * most), by priority; then the highest pull. Next, from what is left: due
  * this week or late within the fortnight, then high or urgent priority, then
  * what follows by pull. Everything else is Later. Closed and snoozed work
- * stays Later whatever it pulls.
+ * stays Later whatever it pulls, and so does a standalone session unless it
+ * asks for your hands or failed: a pinned running agent is not your focus,
+ * its green outline already says what it is.
  */
 export function assignTiers(prospects: readonly Prospect[]): Map<string, Tiered> {
   const caps = tierCaps(prospects.length);
-  const open = prospects.filter((p) => !p.resting);
+  const open = prospects.filter(
+    (p) => !p.resting && (p.task || p.tone === "input" || p.tone === "error"),
+  );
   const now = fill(open, caps.now, [
     [(p) => p.focus, byPull],
     [(p) => p.tone === "input" || p.tone === "error", byPull],
@@ -869,6 +875,7 @@ export function withTiers(areas: readonly HeatArea[], tidy = false): HeatArea[] 
           priority: tile.item.task?.priority ?? "none",
           resting:
             !!closedStatus(tile.item) || tile.timing?.kind === "snooze",
+          task: !!tile.item.task,
         });
   const tiers = assignTiers([...prospects.values()]);
   return areas.map((area) => {
@@ -921,6 +928,8 @@ const runningIn = (tile: HeatTile) =>
  * then a result to read, then quiet work. The quietest folds first.
  */
 function loudness(tile: HeatTile) {
+  // A Now tile is the point of the map: it folds after everything else.
+  if (tile.tier === "now") return 4;
   if (needsYou(tile.tone)) return 3;
   if (runningIn(tile)) return 2;
   return tile.tone === "unread" ? 1 : 0;

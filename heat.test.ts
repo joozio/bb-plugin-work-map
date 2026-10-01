@@ -3,6 +3,7 @@ import { now, task, thread } from "./fixtures";
 import type { WorkItem } from "./model";
 import { buildMap } from "./model";
 import { areaState } from "./heat-view";
+import { heatTiming } from "./heat-timing";
 import { data } from "./fixtures";
 import {
   type HeatArea,
@@ -25,12 +26,17 @@ import {
   heatPull,
   heatStats,
   heatSize,
-  rankSteps,
-  stepAt,
   SIZE_POWER,
-  STEP_GAIN,
+  TIER_GAIN,
+  TIER_SIZE,
+  NOW_CAP,
+  NEXT_CAP,
+  tierCaps,
+  assignTiers,
+  tileReason,
   areaWeight,
-  type Step,
+  type Tier,
+  type Prospect,
   heatTone,
   needsYou,
   partition,
@@ -564,89 +570,242 @@ describe("attention to colour", () => {
       pull(highThisWeek),
     );
   });
-  it("maps rank to five steps so any data has a top, a middle and a bottom", () => {
-    const weighted = (weights: number[]) =>
-      weights.map((weight, index) => ({ id: `t${index}`, weight }));
-    const steps = (weights: number[]) =>
-      [...rankSteps(weighted(weights)).entries()]
-        .sort((a, b) => Number(a[0].slice(1)) - Number(b[0].slice(1)))
-        .map(([, step]) => step);
-    // Shares: hottest tenth 5, next 15% 4, next quarter 3, three tenths 2,
-    // the coldest fifth 1: only the top half carries a colour.
-    expect(stepAt(0)).toBe(5);
-    expect(stepAt(0.099)).toBe(5);
-    expect(stepAt(0.1)).toBe(4);
-    expect(stepAt(0.25)).toBe(3);
-    expect(stepAt(0.5)).toBe(2);
-    expect(stepAt(0.8)).toBe(1);
-    // A flat band of nearly equal weights still spreads over every step.
-    const flat = Array.from({ length: 40 }, (_, i) => 7 + i * 0.01);
-    const spread = steps(flat);
-    expect(new Set(spread)).toEqual(new Set([1, 2, 3, 4, 5]));
-    expect(spread.filter((s) => s === 5).length).toBe(4);
-    expect(spread.filter((s) => s === 1).length).toBe(8);
-    // Half the tiles, the cold half, wear the two steps with no colour fill.
-    expect(spread.filter((s) => s <= 2).length).toBe(20);
-    // The heaviest is always 5 and the lightest always 1, from two tiles up.
-    expect(steps([1, 2])).toEqual([1, 5]);
-    expect(steps([3, 1, 2])).toEqual([5, 1, 2]);
-    expect(steps([5])).toEqual([5]);
-    // Identical weights share one step: the same work never reads as two depths.
-    expect(steps([2, 2, 2, 1])).toEqual([5, 5, 5, 1]);
-    expect(new Set(steps(Array(12).fill(3))).size).toBe(1);
-  });
-  it("weighs an area by what its tiles lend it through their steps, and wears its hottest step", () => {
-    // Gain falls with the step, so an area of cold work shrinks and one
-    // holding the hot spots grows; the hottest step lends its whole size.
-    expect(STEP_GAIN[5]).toBe(1);
-    for (const step of [5, 4, 3, 2] as const)
-      expect(STEP_GAIN[step]).toBeGreaterThan(STEP_GAIN[(step - 1) as Step]);
-    expect(STEP_GAIN[1]).toBeLessThan(0.25);
-    const tileOf = (id: string, pull: number, step: Step): HeatTile => ({
+  const dueIn = (days: number) =>
+    new Date(now + days * DAY).toISOString().slice(0, 10);
+  const prospect = (
+    id: string,
+    pull: number,
+    overrides: Partial<Prospect> & { due?: number } = {},
+  ): Prospect => {
+    const { due, ...rest } = overrides;
+    const timing =
+      due === undefined
+        ? null
+        : heatTiming(
+            item({ task: task({ dueDate: dueIn(due), dateKind: "deadline" }) }),
+            now,
+          );
+    return {
       id,
-      weight: heatSize(pull),
       pull,
+      focus: false,
       tone: "review",
-      item: item({ id, attention: "review" }),
-      members: [],
-      stale: 0,
-      waited: 0,
-      step,
-      timing: null,
+      timing,
+      priority: "medium",
+      resting: false,
+      task: true,
+      ...rest,
+    };
+  };
+  const tiersOf = (prospects: Prospect[]) =>
+    Object.fromEntries(
+      [...assignTiers(prospects)].map(([id, t]) => [id, t.rank ? `${t.tier}${t.rank}` : t.tier]),
+    );
+  it("caps Now at five and Next at eight on the whole map, a third each at most, and Now is never empty", () => {
+    expect(NOW_CAP).toBe(5);
+    expect(NEXT_CAP).toBe(8);
+    expect(tierCaps(37)).toEqual({ now: 5, next: 8 });
+    expect(tierCaps(15)).toEqual({ now: 5, next: 5 });
+    expect(tierCaps(6)).toEqual({ now: 2, next: 2 });
+    expect(tierCaps(3)).toEqual({ now: 1, next: 1 });
+    expect(tierCaps(2)).toEqual({ now: 1, next: 0 });
+    expect(tierCaps(1)).toEqual({ now: 1, next: 0 });
+    // Forty equal reviews, all due today: five red, eight amber, the rest grey.
+    const forty = Array.from({ length: 40 }, (_, i) => prospect(`t${String(i).padStart(2, "0")}`, 1, { due: 0 }));
+    const tiers = [...assignTiers(forty).values()];
+    expect(tiers.filter((t) => t.tier === "now").length).toBe(5);
+    expect(tiers.filter((t) => t.tier === "next").length).toBe(8);
+    expect(tiers.filter((t) => t.tier === "later").length).toBe(27);
+    expect(tiers.filter((t) => t.rank).map((t) => t.rank)).toEqual([1, 2, 3]);
+    // One tile alone is Now; two are Now and Later.
+    expect(tiersOf([prospect("a", 0.1)])).toEqual({ a: "now1" });
+    expect(tiersOf([prospect("a", 0.1), prospect("b", 0.2)])).toEqual({ a: "later", b: "now1" });
+  });
+  it("fills Now in order: focus, a request for your hands, current dates by priority, then pull; Next: due soon, high priority, then pull", () => {
+    const tiers = tiersOf([
+      prospect("pull", 9, { due: 30 }),
+      prospect("focus", 0.1, { focus: true, due: 40, priority: "low" }),
+      prospect("input", 0.25, { tone: "input" }),
+      prospect("failed", 0.2, { tone: "error" }),
+      prospect("today-none", 0.5, { due: 0, priority: "none" }),
+      prospect("tomorrow-high", 0.4, { due: 1, priority: "high" }),
+      prospect("late5-urgent", 0.3, { due: -5, priority: "urgent" }),
+      prospect("late8-medium", 0.9, { due: -8 }),
+      prospect("week", 0.6, { due: 6 }),
+      prospect("high-undated", 0.45, { priority: "high" }),
+      prospect("slipped-high", 0.48, { due: -30, priority: "high" }),
+      prospect("month", 0.2, { due: 25 }),
+      prospect("later1", 0.1, { due: 50 }),
+      prospect("later2", 0.1, { due: 60 }),
+      prospect("later3", 0.1, { due: 70 }),
+    ]);
+    // 15 tiles: five Now, five Next. Focus first, then the hands, then the
+    // current dates by priority (urgent, high, none), then pull takes over.
+    expect(tiers).toMatchObject({
+      focus: "now1",
+      input: "now2",
+      failed: "now3",
+      "late5-urgent": "now",
+      "tomorrow-high": "now",
+      // Next: the current dates left (today, late 8d, this week) by pull,
+      // then the high priorities by pull, nearer date first on a tie.
+      "today-none": "next",
+      "late8-medium": "next",
+      week: "next",
+      "slipped-high": "next",
+      "high-undated": "next",
+      pull: "later",
+      month: "later",
+      later1: "later",
     });
-    const hot = [tileOf("a", 1, 5), tileOf("b", 1, 4)];
-    const cold = [tileOf("c", 1, 1), tileOf("d", 1, 2)];
-    expect(areaWeight(hot)).toBeCloseTo(STEP_GAIN[5] + STEP_GAIN[4], 4);
-    expect(areaWeight(cold)).toBeCloseTo(STEP_GAIN[1] + STEP_GAIN[2], 4);
-    expect(areaWeight(hot) / areaWeight(cold)).toBeGreaterThan(4);
-    // Before the ranking every tile lends its whole size.
+    // The highest pull is the last stage of Now: without the dated ones it gets in.
+    expect(tiersOf([prospect("pull", 9, { due: 30 }), prospect("a", 1, { due: 40 }), prospect("b", 1, { due: 41 })])).toMatchObject({ pull: "now1" });
+    // Closed and snoozed work never enters Now or Next whatever it pulls.
+    expect(tiersOf([prospect("closed", 9, { resting: true }), prospect("open", 0.1)])).toEqual({ closed: "later", open: "now1" });
+    // A standalone session is Later even pinned and running; it is Now only
+    // when it asks for your hands or failed.
+    expect(tiersOf([prospect("pinned", 9, { task: false, focus: true, tone: "working" }), prospect("open", 0.1)])).toEqual({ pinned: "later", open: "now1" });
+    expect(tiersOf([prospect("asks", 0.2, { task: false, tone: "input" }), prospect("open", 0.1)])).toEqual({ asks: "now1", open: "later" });
+    // Equal pulls break by the nearer date: 19 days past before 40 days past.
+    const [a, b] = [prospect("x-40", 0.48, { due: -40 }), prospect("y-19", 0.48, { due: -19 })];
+    expect(tiersOf([a, b])).toEqual({ "x-40": "later", "y-19": "now1" });
+  });
+  it("says why on every coloured tile: the drivers and the priority, low and none silent", () => {
+    const reason = (p: Prospect) => tileReason(p).reason;
+    expect(reason(prospect("a", 1, { due: 1, priority: "high" }))).toBe("due tomorrow · high");
+    expect(reason(prospect("a", 1, { due: -2 }))).toBe("2d late · medium");
+    expect(reason(prospect("a", 1, { due: 0, priority: "none" }))).toBe("due today");
+    expect(reason(prospect("a", 1, { due: 5, priority: "low" }))).toBe("due in 5d");
+    expect(reason(prospect("a", 1, { due: -21, priority: "high" }))).toBe("slipped 21d · high");
+    expect(reason(prospect("a", 1, { focus: true, priority: "low" }))).toBe("in focus");
+    expect(reason(prospect("a", 1, { tone: "input", priority: "urgent" }))).toBe("needs your input · urgent");
+    expect(reason(prospect("a", 1, { tone: "error", due: 0 }))).toBe("run failed · due today · medium");
+    expect(reason(prospect("a", 1, { focus: true, due: 1, priority: "high" }))).toBe("in focus · due tomorrow · high");
+    // An undated task names its age only once it is aged.
+    const aged = heatTiming(item({ task: task({ createdAt: new Date(now - 40 * DAY).toISOString() }) }), now);
+    const fresh = heatTiming(item({ task: task({ createdAt: new Date(now - 3 * DAY).toISOString() }) }), now);
+    expect(reason(prospect("a", 1, { timing: aged, priority: "high" }))).toBe("40d old · high");
+    expect(reason(prospect("a", 1, { timing: fresh, priority: "high" }))).toBe("high");
+    // The compact form says the same in fewer letters.
+    expect(tileReason(prospect("a", 1, { focus: true, tone: "input", due: 1, priority: "high" })).compact).toBe("focus · input · tmrw · high");
+    expect(tileReason(prospect("a", 1, { due: -21, priority: "high" })).compact).toBe("slip 21d · high");
+  });
+  it("treats a date more than two weeks past as slipped: flat pull by priority and need, and never a Now driver", () => {
+    const review = (priority: string, due: number) =>
+      item({ attention: "review", task: task({ status: "in_review", priority, dueDate: dueIn(due) }) });
+    // Flat: 15, 30 and 90 days past pull the same; 14 days past still pulls as a date.
+    expect(heatPull(review("high", -15), now)).toBe(heatPull(review("high", -90), now));
+    expect(heatPull(review("high", -14), now)).toBeGreaterThan(heatPull(review("high", -15), now) * 2);
+    // Priority and need alone decide between slipped dates.
+    expect(heatPull(review("high", -30), now)).toBeGreaterThan(heatPull(review("medium", -16), now));
+    expect(heatPull(item({ attention: "input", task: task({ priority: "medium", dueDate: dueIn(-30) }) }), now)).toBeGreaterThan(heatPull(review("high", -30), now));
+    // Under a date this week, over a date a month out.
+    expect(heatPull(review("medium", -30), now)).toBeLessThan(heatPull(review("medium", 5), now));
+    expect(heatPull(review("medium", -30), now)).toBeGreaterThan(heatPull(review("medium", 30), now));
+    // On the map: the slipped tile says so, is not Now beside current work, and a
+    // slipped quiet task folds into the quiet pile like any other quiet task.
+    const [area] = buildHeat(
+      [project("p", [
+        item({ id: "task:slipped", attention: "review", task: task({ status: "in_review", priority: "high", dueDate: dueIn(-21) }) }),
+        item({ id: "task:today", attention: "review", task: task({ status: "in_review", priority: "medium", dueDate: dueIn(0) }) }),
+        item({ id: "task:week", attention: "review", task: task({ status: "in_review", priority: "medium", dueDate: dueIn(4) }) }),
+        ...Array.from({ length: 7 }, (_, i) => item({ id: `task:quiet${i}`, task: task({ status: "backlog", priority: "none", dueDate: dueIn(-40 - i) }) })),
+      ])],
+      now,
+    );
+    const slipped = area.tiles.find((t) => t.id === "task:slipped")!;
+    expect(slipped.slipped).toBe(true);
+    expect(slipped.timing?.label).toBe("slipped 21d");
+    expect(slipped.tier).not.toBe("now");
+    // Seven drawn tiles: two Now, two Next. The current dates take Now; the
+    // slipped high-priority task is Next on its priority, not its date.
+    expect(area.tiles.find((t) => t.id === "task:today")!.tier).toBe("now");
+    expect(area.tiles.find((t) => t.id === "task:week")!.tier).toBe("now");
+    expect(slipped.tier).toBe("next");
+    expect(area.tiles.find((t) => t.id === "quiet:project:p")!.members.length).toBe(3);
+    expect(heatStats([area], now)).toMatchObject({ overdue: 0, slipped: 8 });
+  });
+  it("still has a meaningful Now when nothing is overdue: due-soon work fills it", () => {
+    const [area] = buildHeat(
+      [project("p", Array.from({ length: 12 }, (_, i) =>
+        item({ id: `task:${i}`, attention: "review", task: task({ status: "in_review", priority: i % 3 ? "medium" : "high", dueDate: dueIn(i + 1) }) }),
+      ))],
+      now,
+    );
+    const by = (tier: Tier) => area.tiles.filter((t) => t.tier === tier).map((t) => t.id).sort();
+    // Twelve tiles: four Now, four Next. Tomorrow's high task leads; then the
+    // highest pulls, all inside the week, with the high priorities ahead.
+    expect(by("now")).toEqual(["task:0", "task:1", "task:3", "task:6"]);
+    expect(area.tiles.find((t) => t.id === "task:0")!.rank).toBe(1);
+    expect(by("next").length).toBe(4);
+    expect(by("later").length).toBe(4);
+    for (const tile of area.tiles.filter((t) => t.tier !== "later"))
+      expect(tile.timing!.days).toBeLessThanOrEqual(10);
+    expect(area.tiles.find((t) => t.id === "task:0")!.reason).toBe("due tomorrow · high");
+    expect(area.tiles.find((t) => t.id === "task:1")!.reason).toBe("due in 2d · medium");
+    expect(heatStats([area], now)).toMatchObject({ overdue: 0, slipped: 0 });
+  });
+  it("weighs an area by what its tiles lend it through their tiers, sizes Now biggest, and wears its hottest tier", () => {
+    expect(TIER_GAIN.now).toBe(1);
+    expect(TIER_GAIN.next).toBeLessThan(TIER_GAIN.now);
+    expect(TIER_GAIN.later).toBeLessThan(TIER_GAIN.next);
+    expect(TIER_SIZE.now).toBeGreaterThan(TIER_SIZE.next);
+    expect(TIER_SIZE.later).toBeLessThan(TIER_SIZE.next);
+    const tileOf = (id: string, pull: number, tier: Tier): HeatTile => ({
+      id, weight: heatSize(pull), pull, tone: "review", item: item({ id, attention: "review" }),
+      members: [], stale: 0, waited: 0, tier, reason: "", compact: "", slipped: false, timing: null,
+    });
+    const hot = [tileOf("a", 1, "now"), tileOf("b", 1, "next")];
+    const cold = [tileOf("c", 1, "later"), tileOf("d", 1, "later")];
+    expect(areaWeight(hot)).toBeCloseTo(TIER_GAIN.now + TIER_GAIN.next, 4);
+    expect(areaWeight(cold)).toBeCloseTo(2 * TIER_GAIN.later, 4);
+    expect(areaWeight(hot) / areaWeight(cold)).toBeGreaterThan(3);
+    // Before the tiers are known every tile lends its whole size.
     expect(areaWeight(cold, false)).toBeCloseTo(2, 4);
-    // On a built map each area's weight follows the ranked steps and the
-    // area wears the step of its hottest tile.
-    const today = new Date(now).toISOString().slice(0, 10);
+    // On a built map each area's weight follows the tiers and the area wears
+    // the tier of its hottest tile.
     const areas = buildHeat(
       [
         project("p1", [
-          item({ id: "task:u", attention: "review", task: task({ status: "in_review", priority: "urgent", dueDate: today }) }),
-          item({ id: "task:m", attention: "review", task: task({ status: "in_review", priority: "medium", dueDate: today }) }),
+          item({ id: "task:u", attention: "review", task: task({ status: "in_review", priority: "urgent", dueDate: dueIn(0) }) }),
+          item({ id: "task:m", attention: "review", task: task({ status: "in_review", priority: "medium", dueDate: dueIn(0) }) }),
+          item({ id: "task:n", attention: "review", task: task({ status: "in_review", priority: "medium", dueDate: dueIn(5) }) }),
         ]),
         project("p2", [
-          item({ id: "task:l1", attention: "review", task: task({ status: "in_review", priority: "low" }) }),
-          item({ id: "task:l2", attention: "review", task: task({ status: "in_review", priority: "low" }) }),
+          item({ id: "task:l1", attention: "review", task: task({ status: "in_review", priority: "low", dueDate: dueIn(-40) }) }),
+          item({ id: "task:l2", attention: "review", task: task({ status: "in_review", priority: "low", dueDate: dueIn(-50) }) }),
+          item({ id: "task:l3", attention: "review", task: task({ status: "in_review", priority: "low", dueDate: dueIn(-60) }) }),
         ]),
       ],
       now,
     );
     const hotArea = areas.find((area) => area.id === "project:p1")!;
     const coldArea = areas.find((area) => area.id === "project:p2")!;
-    expect(hotArea.step).toBe(5);
-    expect(coldArea.step).toBeLessThanOrEqual(3);
-    // The map floors and caps area weights after the ranking; the order the
-    // steps give still holds, and the cold pair cannot catch the hot pair.
+    expect(hotArea.tier).toBe("now");
+    expect(hotArea.tiers.get("task:u")).toBe("now");
+    expect(coldArea.tier).not.toBe("now");
     expect(hotArea.weight).toBeGreaterThan(coldArea.weight);
-    expect(areaWeight(hotArea.tiles)).toBeGreaterThan(
-      areaWeight(coldArea.tiles) * 3,
-    );
+  });
+  it("in tidy mode draws every slipped date on its own, grows it and shrinks the rest", () => {
+    const roots = [project("p", [
+      item({ id: "task:today", attention: "review", task: task({ status: "in_review", priority: "high", dueDate: dueIn(0) }) }),
+      ...Array.from({ length: 6 }, (_, i) => item({ id: `task:slip${i}`, task: task({ status: "backlog", priority: "none", dueDate: dueIn(-30 - i) }) })),
+    ])];
+    const [plain] = buildHeat(roots, now);
+    const [tidy] = buildHeat(roots, now, { tidy: true });
+    // Plainly the quiet slipped tasks beyond the first four pile up; in tidy mode each is a tile.
+    expect(plain.tiles.some((t) => t.id === "quiet:project:p")).toBe(true);
+    expect(tidy.tiles.some((t) => t.id === "quiet:project:p")).toBe(false);
+    expect(tidy.tiles.filter((t) => t.slipped).length).toBe(6);
+    const todayPlain = plain.tiles.find((t) => t.id === "task:today")!.weight;
+    const todayTidy = tidy.tiles.find((t) => t.id === "task:today")!.weight;
+    expect(todayTidy).toBeLessThan(todayPlain);
+    const slip = tidy.tiles.find((t) => t.id === "task:slip0")!;
+    expect(slip.weight).toBeGreaterThanOrEqual(todayTidy * 0.5 - 1e-6);
+    // The current date still leads in tidy mode; growing a slipped tile is
+    // room for its date-fix row, not heat.
+    expect(tidy.tiles.find((t) => t.id === "task:today")!.tier).toBe("now");
+    expect(tidy.tiles.find((t) => t.id === "task:today")!.rank).toBe(1);
   });
   it("curves size with pull so the hottest tile is several times the coldest", () => {
     expect(SIZE_POWER).toBeGreaterThan(1);
@@ -674,9 +833,9 @@ describe("attention to colour", () => {
     expect(Math.max(...weights) / Math.min(...weights)).toBeGreaterThan(3);
     expect(area.tiles[0].id).toBe("task:hot");
     expect(area.tiles[0].rank).toBe(1);
-    expect(area.tiles[0].step).toBe(5);
-    expect(area.tiles.at(-1)!.step).toBe(1);
-    expect(area.steps.get("task:hot")).toBe(5);
+    expect(area.tiles[0].tier).toBe("now");
+    expect(area.tiles.at(-1)!.tier).toBe("later");
+    expect(area.tiers.get("task:hot")).toBe("now");
   });
   it("moves a known leading verb out of the title and leaves everything else alone", () => {
     expect(tileText("Review draft: The Screen That Lies")).toEqual({
@@ -789,6 +948,7 @@ describe("areas", () => {
       running: 1,
       stale: 1,
       overdue: 0,
+      slipped: 0,
       aged: 0,
     });
   });
@@ -829,12 +989,12 @@ describe("what an area header says", () => {
     scope: "TEST",
     root: null,
     weight: 1,
-    step: 1,
+    tier: "later",
     waiting: 0,
     running: 0,
     orchestrator: null,
     items: [],
-    steps: new Map(),
+    tiers: new Map(),
     tiles: [],
     ...overrides,
   });
@@ -995,7 +1155,10 @@ describe("folding tiles too small to read", () => {
     stale: 0,
     waited: null,
     pull: 0,
-    step: 1,
+    tier: "later",
+    reason: "",
+    compact: "",
+    slipped: false,
     timing: null,
   });
   const size = { w: 300, h: 200 };
@@ -1283,7 +1446,10 @@ describe("folding keeps the heaviest tiles on screen", () => {
     stale: 0,
     waited: null,
     pull: 0,
-    step: 1,
+    tier: "later",
+    reason: "",
+    compact: "",
+    slipped: false,
     timing: null,
   });
   it("folds the lightest half at a time, so a crowded area still shows its heaviest work", () => {
@@ -1310,7 +1476,7 @@ describe("folding keeps the heaviest tiles on screen", () => {
 describe("the fold tile itself", () => {
   const tile = (id: string, weight: number): HeatTile => ({
     id, weight, tone: "review", item: { id, title: id } as WorkItem, members: [],
-    stale: 0, waited: null, pull: 0, step: 1, timing: null,
+    stale: 0, waited: null, pull: 0, tier: "later", reason: "", compact: "", slipped: false, timing: null,
   });
   it("is never a sliver: below the minimum it absorbs the next lightest tile", () => {
     // One heavy tile and many light ones in a short, narrow area: the light
@@ -1340,7 +1506,10 @@ describe("a fold never hides running work behind quiet work", () => {
     stale: 0,
     waited: null,
     pull: 0,
-    step: tone === "review" ? 3 : 1,
+    tier: tone === "review" ? "next" : "later",
+    reason: "",
+    compact: "",
+    slipped: false,
     timing: null,
     running,
   });
