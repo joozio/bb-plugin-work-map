@@ -61,13 +61,14 @@ const tile = (view: ReturnType<typeof render>, title: string) =>
   view.getByRole("button", { name: new RegExp(`^Preview ${title}\\.`) });
 
 it("renders the whole key on a narrow tile and drops the label instead of cutting it", () => {
-  frame(260, 150);
+  frame(360, 150);
   const view = heat(
     ["DT-11", "DT-12", "DT-13", "DT-14", "DT-15", "DT-16"].map((key, index) =>
       task({
         id: `t${index}`,
         key,
         title: `Draft ${key}`,
+        status: "in_review",
         dateKind: "deadline",
         dueDate: due(-47),
       }),
@@ -80,19 +81,27 @@ it("renders the whole key on a narrow tile and drops the label instead of cuttin
     (entry) => entry.querySelector(".wm-heat-key-text")?.textContent,
   );
   expect(keys).toEqual(["DT-11", "DT-12", "DT-13", "DT-14", "DT-15", "DT-16"]);
+  // A coloured tile says why; a Later tile keeps the plain date.
+  const full = (entry: HTMLElement) =>
+    entry.dataset.tier === "later" ? "slipped 47d" : "slipped 47d · medium";
+  // Whatever shows is one whole form of the label, never a cut one.
+  for (const entry of tiles) {
+    const shown = entry.querySelector(".wm-heat-meta > span + span")?.textContent;
+    if (shown)
+      expect(["slipped 47d · medium", "slip 47d · medium", "slipped 47d", "slip 47d"]).toContain(shown);
+  }
   const bare = tiles.filter(
-    (entry) =>
-      !entry.querySelector(".wm-heat-meta")!.textContent!.includes("overdue"),
+    (entry) => !entry.querySelector(".wm-heat-meta")!.textContent!.includes("47d"),
   );
-  // At this width at least one tile cannot hold "47d overdue" beside its key.
+  // At this width at least one tile cannot hold even "slip 47d" beside its key.
   expect(bare.length).toBeGreaterThan(0);
   for (const entry of bare) {
-    expect(entry.getAttribute("aria-label")).toContain("47d overdue");
-    expect(entry.getAttribute("title")).toBe("47d overdue");
+    expect(entry.getAttribute("aria-label")).toContain("slipped 47d");
+    expect(entry.getAttribute("title")).toBe(full(entry));
   }
 });
 
-it("lets the label and the heat speak for a date: no edge, no hatch, whatever its age", () => {
+it("lets the label and the tier speak for a date: no edge, no hatch, whatever its age", () => {
   frame(1200, 700);
   const view = heat([
     task({
@@ -114,12 +123,17 @@ it("lets the label and the heat speak for a date: no edge, no hatch, whatever it
     expect(tile(view, title).className).not.toMatch(/wm-heat-(overdue|stale|aged)/);
     expect(tile(view, title).querySelector(".wm-heat-flag")).toBeNull();
   }
-  expect(tile(view, "Fresh").textContent).toContain("3d overdue");
-  expect(tile(view, "Old").textContent).toContain("84d overdue");
-  // The fresher date pulls harder and wears the hotter step.
-  expect(Number(tile(view, "Fresh").getAttribute("data-step"))).toBeGreaterThan(
-    Number(tile(view, "Old").getAttribute("data-step")),
-  );
+  expect(tile(view, "Fresh").textContent).toContain("3d late · medium");
+  // A small Later tile may say its date in the compact form, never cut.
+  expect(
+    tile(view, "Old").querySelector(".wm-heat-meta > span + span")!.textContent,
+  ).toMatch(/^slip(ped)? 84d$/);
+  expect(tile(view, "Old").getAttribute("aria-label")).toContain("slipped 84d");
+  // The fresh date is current and wears Now; the slipped one is a date to tidy.
+  expect(tile(view, "Fresh").dataset.tier).toBe("now");
+  expect(tile(view, "Old").dataset.tier).toBe("later");
+  expect(tile(view, "Old").dataset.slipped).toBe("true");
+  expect(tile(view, "Fresh").dataset.slipped).toBeUndefined();
 });
 
 it("keeps a request for your hands and a failed run loud by shape: a glyph ahead of the key", () => {
@@ -140,16 +154,16 @@ it("keeps a request for your hands and a failed run loud by shape: a glyph ahead
   expect(tile(view, "Review").querySelector(".wm-heat-flag")).toBeNull();
 });
 
-it("gives every area its hottest step: a swatch by the name and the step on the section", () => {
+it("gives every area its hottest tier: a swatch by the name and the tier on the section", () => {
   frame(1200, 700);
   const view = heat([
     task({ id: "hot", key: "T-1", title: "Hot", priority: "urgent", dateKind: "deadline", dueDate: due(0) }),
     task({ id: "cold", key: "T-2", title: "Cold", priority: "low" }),
   ]);
   const area = view.container.querySelector<HTMLElement>(".wm-heat-area")!;
-  expect(area.dataset.step).toBe("5");
+  expect(area.dataset.tier).toBe("now");
   const swatch = area.querySelector<HTMLElement>(".wm-heat-name .wm-heat-swatch")!;
-  expect(swatch.dataset.step).toBe("5");
+  expect(swatch.dataset.tier).toBe("now");
   expect(swatch.getAttribute("aria-hidden")).toBe("true");
 });
 
@@ -670,7 +684,10 @@ it("names a fold by what it hides, in short words when the full ones do not fit"
       stale: 0,
       waited: 0,
       pull: 0,
-      step: 1,
+      tier: "later",
+      reason: "",
+      compact: "",
+      slipped: false,
       timing: null,
       overflow: true,
       waiting,
@@ -718,4 +735,144 @@ it("gives every open-area card two whole title lines, with slack for rounding", 
       ).toBeGreaterThanOrEqual(2);
     view.unmount();
   }
+});
+
+it("says why a Now tile is red in its label row and in its accessible name", () => {
+  frame(1200, 700);
+  const view = heat([
+    task({ id: "soon", key: "T-1", title: "Soon", status: "in_review", priority: "high", dateKind: "deadline", dueDate: due(1) }),
+  ]);
+  const soon = tile(view, "Soon");
+  expect(soon.dataset.tier).toBe("now");
+  expect(soon.querySelector(".wm-heat-rank")?.textContent).toBe("1");
+  expect(soon.querySelector(".wm-heat-meta > span + span")?.textContent).toBe(
+    "due tomorrow · high",
+  );
+  expect(soon.getAttribute("aria-label")).toContain(
+    "Now, 1 of 3: due tomorrow · high",
+  );
+});
+
+it("falls back to the compact reason, then the compact date, on a narrow Now tile, and never cuts the key", () => {
+  const shown = (width: number) => {
+    // One area holding one tile: the tile is the frame less the header and padding.
+    frame(width, 140);
+    const view = heat([
+      task({ id: "soon", key: "T-1", title: "Soon", status: "in_review", priority: "high", dateKind: "deadline", dueDate: due(1) }),
+    ]);
+    const soon = tile(view, "Soon");
+    const out = {
+      key: soon.querySelector(".wm-heat-key-text")?.textContent,
+      label: soon.querySelector(".wm-heat-meta > span + span")?.textContent ?? "",
+      title: soon.getAttribute("title"),
+      name: soon.getAttribute("aria-label"),
+    };
+    view.unmount();
+    return out;
+  };
+  expect(shown(400).label).toBe("due tomorrow · high");
+  for (const [width, label] of [
+    [150, "tmrw · high"],
+    [106, "tmrw"],
+    [70, ""],
+  ] as const) {
+    const out = shown(width);
+    expect(out.key).toBe("T-1");
+    expect(out.label).toBe(label);
+    // What the row drops is still on the title and the accessible name.
+    expect(out.title).toBe("due tomorrow · high");
+    expect(out.name).toContain("Now, 1 of 3: due tomorrow · high");
+  }
+});
+
+it("gives a Later tile its plain date and no reason, and marks a slipped one", () => {
+  frame(1200, 700);
+  const view = heat([
+    task({ id: "a", key: "T-1", title: "Tomorrow", status: "in_review", priority: "high", dateKind: "deadline", dueDate: due(1) }),
+    task({ id: "b", key: "T-2", title: "This week", status: "in_review", dateKind: "deadline", dueDate: due(3) }),
+    task({ id: "c", key: "T-3", title: "Slipped", status: "in_review", dateKind: "deadline", dueDate: due(-21) }),
+  ]);
+  const slipped = tile(view, "Slipped");
+  expect(slipped.dataset.tier).toBe("later");
+  expect(slipped.dataset.slipped).toBe("true");
+  expect(slipped.querySelector(".wm-heat-meta > span + span")?.textContent).toBe(
+    "slipped 21d",
+  );
+  expect(slipped.querySelector(".wm-heat-rank")).toBeNull();
+  const name = slipped.getAttribute("aria-label")!;
+  expect(name).toContain(". Later.");
+  expect(name).not.toMatch(/Now|Next:/);
+  expect(tile(view, "This week").dataset.tier).toBe("next");
+  expect(tile(view, "This week").getAttribute("aria-label")).toContain(
+    "Next: due in 3d",
+  );
+  expect(tile(view, "This week").dataset.slipped).toBeUndefined();
+});
+
+it("puts the date fixes on a slipped tile in tidy mode where they fit: one row, two rows, or none", () => {
+  const fixes = (item: { id: string }) => (
+    <div className="wm-date-fixes" data-for={item.id} />
+  );
+  // One area holding one tile: the tile is the frame less 6px across and 37px down.
+  const slot = (
+    width: number,
+    height: number,
+    options: { dueDate?: string; tidy?: boolean } = {},
+  ) => {
+    frame(width + 6, height + 37);
+    const tidy = options.tidy ?? true;
+    const areas = buildHeat(
+      buildMap(
+        data([
+          task({
+            id: "late",
+            key: "T-1",
+            title: "Late",
+            dateKind: "deadline",
+            dueDate: options.dueDate ?? due(-21),
+          }),
+        ]),
+        [],
+        {},
+        now,
+      ),
+      now,
+      { tidy },
+    );
+    const view = render(
+      <HeatMap
+        areas={areas}
+        now={now}
+        onOpenArea={() => {}}
+        onOpen={() => {}}
+        onDragStart={() => {}}
+        onDragEnd={() => {}}
+        tidy={tidy}
+        dateFixes={fixes}
+      />,
+    );
+    const at = tile(view, "Late").closest<HTMLElement>(".wm-heat-slot")!;
+    const out = {
+      fixes: at.dataset.fixes,
+      footer: !!at.querySelector(".wm-tile-fixes .wm-date-fixes"),
+      tidy: view.container.querySelector<HTMLElement>(".wm-heat")!.dataset.tidy,
+    };
+    view.unmount();
+    return out;
+  };
+  expect(slot(200, 80)).toEqual({ fixes: "row", footer: true, tidy: "true" });
+  expect(slot(120, 100)).toEqual({ fixes: "grid", footer: true, tidy: "true" });
+  expect(slot(80, 50)).toEqual({ fixes: undefined, footer: false, tidy: "true" });
+  // A date that has not slipped never gets them, however roomy the tile.
+  expect(slot(200, 80, { dueDate: due(-3) })).toEqual({
+    fixes: undefined,
+    footer: false,
+    tidy: "true",
+  });
+  // Outside tidy mode the prop is ignored and the map is not marked.
+  expect(slot(200, 80, { tidy: false })).toEqual({
+    fixes: undefined,
+    footer: false,
+    tidy: undefined,
+  });
 });
