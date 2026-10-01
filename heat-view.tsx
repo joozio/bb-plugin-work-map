@@ -391,8 +391,10 @@ function GroupTile({
       : `quiet task${count === 1 ? "" : "s"}`;
   const head = tile.overflow ? `+${count} more` : `${count} ${noun}`;
   const names = members.map((member) => member.task?.key ?? member.title);
-  // Rows need a key and a few words beside the dot; below that, the head alone.
-  const fit = tiny || width < 96 ? 0 : groupRows(height, count);
+  // Rows need a key beside the dot, and a few words of title from 110px;
+  // narrower than 60px, the head alone.
+  const keysOnly = width < 110;
+  const fit = tiny || width < 60 ? 0 : groupRows(height, count);
   const shown = fit >= count ? members : members.slice(0, Math.max(0, fit - 1));
   const rest = count - shown.length;
   // A project opens as its card grid. The Sessions area has no grid, so its
@@ -422,7 +424,7 @@ function GroupTile({
           </span>
         </button>
         {shown.length > 0 && (
-          <ul className="wm-heat-rows">
+          <ul className={`wm-heat-rows ${keysOnly ? "wm-heat-rows-keys" : ""}`}>
             {shown.map((member) => (
               <li key={member.id}>
                 <button
@@ -438,7 +440,9 @@ function GroupTile({
                     aria-hidden="true"
                   />
                   {member.task?.key ? <b>{member.task.key}</b> : null}
-                  <span>{member.title}</span>
+                  {(!keysOnly || !member.task?.key) && (
+                    <span>{member.title}</span>
+                  )}
                 </button>
               </li>
             ))}

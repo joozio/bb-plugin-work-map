@@ -2652,6 +2652,13 @@ i.wm-heat-key.wm-heat-late {
   font-weight: 600;
   opacity: 0.75;
 }
+.wm-heat-rows-keys .wm-heat-row b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
+}
 .wm-heat-dots {
   display: flex;
   flex-wrap: wrap;

@@ -843,7 +843,8 @@ describe("folding tiles too small to read", () => {
       "e",
       "f",
     ]);
-    expect(more.weight).toBeCloseTo(0.9);
+    // Their summed weight, or more when that alone would draw it as a sliver.
+    expect(more.weight).toBeGreaterThanOrEqual(0.9);
     expect(
       shown.filter((tile) => !tile.overflow).map((tile) => tile.id),
     ).toEqual(["a", "b", "c"]);
@@ -1113,5 +1114,23 @@ describe("folding keeps the heaviest tiles on screen", () => {
       const cell = rects.get(t.id)!;
       if (!t.overflow) expect(cell.w >= MIN_TILE.w && cell.h >= MIN_TILE.h).toBe(true);
     }
+  });
+});
+
+describe("the fold tile itself", () => {
+  const tile = (id: string, weight: number): HeatTile => ({
+    id, weight, tone: "review", item: { id, title: id } as WorkItem, members: [],
+    stale: 0, waited: null, level: 1, timing: null,
+  });
+  it("is never a sliver: below the minimum it absorbs the next lightest tile", () => {
+    // One heavy tile and many light ones in a short, narrow area: the light
+    // ones fold, and the fold tile keeps growing until it can be read.
+    const tiles = [tile("big", 40), ...Array.from({ length: 6 }, (_, i) => tile(`s${i}`, 0.4 + i * 0.1))];
+    const shown = foldSmall(tiles, { w: 160, h: 90 }, { id: "a" });
+    const rect = { x: 0, y: 0, w: 160, h: 90 };
+    const rects = place(partition(shown, rect), expandedWeights(shown, undefined, 0.78), rect);
+    const more = shown.find((t) => t.overflow)!;
+    const cell = rects.get(more.id)!;
+    expect(cell.w >= MIN_TILE.w && cell.h >= MIN_TILE.h).toBe(true);
   });
 });

@@ -657,18 +657,37 @@ export function foldSmall(
   const rect = { x: 0, y: 0, w: size.w, h: size.h };
   let shown = heatOrder(tiles);
   let folded: HeatTile[] = [];
-  for (let pass = 0; pass <= tiles.length; pass++) {
+  let bumps = 0;
+  for (let pass = 0; pass <= tiles.length + 8; pass++) {
     const rects = place(
       partition(shown, rect),
       expandedWeights(shown, options.keep, options.share ?? 0.78),
       rect,
     );
-    const small = shown.filter((tile) => {
-      if (tile.id === moreId || tile.id === options.keep) return false;
-      const cell = rects.get(tile.id);
+    const under = (id: string) => {
+      const cell = rects.get(id);
       return !cell || cell.w < min.w || cell.h < min.h;
-    });
-    if (!small.length) break;
+    };
+    const small = shown.filter(
+      (tile) => tile.id !== moreId && tile.id !== options.keep && under(tile.id),
+    );
+    if (!small.length) {
+      // The fold tile must be readable too. When it is the one below the
+      // minimum it grows by weight, taking room from every tile in proportion
+      // rather than swallowing a readable one.
+      if (folded.length && under(moreId) && bumps < 8) {
+        bumps++;
+        shown = heatOrder(
+          shown.map((tile) =>
+            tile.id === moreId
+              ? { ...tile, weight: round(tile.weight * 1.6 + 0.1) }
+              : tile,
+          ),
+        );
+        continue;
+      }
+      break;
+    }
     // Fold the lightest half first: once they are out of the way the rest
     // usually fit, and an area keeps its heaviest tiles instead of showing
     // nothing but "+N more".
@@ -676,9 +695,13 @@ export function foldSmall(
       .sort((a, b) => a.weight - b.weight)
       .slice(0, Math.max(1, Math.ceil(small.length / 2)));
     folded = [...folded, ...lightest];
+    const current = shown.find((tile) => tile.id === moreId);
+    const next = moreTile(moreId, folded);
     shown = heatOrder([
       ...shown.filter((tile) => tile.id !== moreId && !lightest.includes(tile)),
-      moreTile(moreId, folded),
+      current && current.weight > next.weight
+        ? { ...next, weight: current.weight }
+        : next,
     ]);
   }
   return shown;
