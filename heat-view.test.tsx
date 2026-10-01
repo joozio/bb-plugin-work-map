@@ -12,6 +12,7 @@ import {
   foldHead,
   groupRows,
   neededHeight,
+  sameWords,
 } from "./heat-view";
 
 const DAY = 86400000;
@@ -1177,4 +1178,19 @@ it("shows a card's acts on hover and focus by CSS only, keeps them in the tree, 
   const late = tile(view, "Late").parentElement!;
   expect(late.querySelector(":scope > .wm-tile-acts.wm-tile-fixes .wm-date-fixes")).not.toBeNull();
   expect(late.querySelector(":scope > .wm-tile-acts:not(.wm-tile-fixes)")).toBeNull();
+});
+
+describe("sameWords", () => {
+  it("treats a cut ask and the full description it came from as one text", () => {
+    const full =
+      "Apple sometimes holds your iMessages to Wiz until the Mini itself sends something. chat.db shows 5 holds over 5 minutes since April, the worst 12.5 h on 04-26. Last night's message landed late.";
+    const ask =
+      "Apple sometimes holds your iMessages to Wiz until the Mini itself sends something. chat.db shows 5 holds over 5 minutes since April, the worst 12.5 h on 04-26.";
+    expect(sameWords(full, ask)).toBe(true);
+    expect(sameWords("Disk hit 19.4%  free overnight...", "disk hit 19.4% free overnight")).toBe(true);
+  });
+  it("keeps a latest word that says something else", () => {
+    expect(sameWords("The pack blocker is closed.", "NEXT STEP rewritten at 16:00")).toBe(false);
+    expect(sameWords("", "anything")).toBe(false);
+  });
 });

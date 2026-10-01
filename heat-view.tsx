@@ -79,6 +79,19 @@ const TIGHT = 200;
 const BODY_PAD = 6;
 /** The gap between rows of the bulk bar. */
 const BULK_GAP = 6;
+/**
+ * Two texts say the same thing when one opens with the other: the ask is cut
+ * from the same description the latest word falls back to.
+ */
+export function sameWords(a: string, b: string): boolean {
+  const norm = (text: string) =>
+    text.replace(/\s+/g, " ").replace(/(\.\.\.|…)$/, "").trim().toLowerCase();
+  const x = norm(a);
+  const y = norm(b);
+  if (!x || !y) return false;
+  const n = Math.min(x.length, y.length, 80);
+  return x.slice(0, n) === y.slice(0, n);
+}
 /** The ask a tile shows: the task's own, else its next step, else its summary. */
 function askOf(item: WorkItem) {
   return (item.task?.ask || item.nextAction || item.summary || "").trim();
@@ -922,7 +935,7 @@ function Tile({
     // three lines, the ask up to three, the agent's latest word, the facts.
     lines = 3;
     askLines = Math.min(3, askNeeds);
-    lineRows = line && line !== askText ? 2 : 0;
+    lineRows = line && !sameWords(line, askText) ? 2 : 0;
     showFacts = facts.length > 0;
   } else if (inside) {
     let room =
