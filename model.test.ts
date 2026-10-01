@@ -7,6 +7,7 @@ import {
   buildMap,
   arrangeMap,
   activityLabel,
+  commentAsk,
   describeTask,
   dueLabel,
   isWorking,
@@ -574,9 +575,108 @@ describe("attention rules", () => {
       lifecycle: "in_review",
       checkAfter: "",
       nextAction: "Review it.",
+      ask: "Review it.",
+      askFrom: "next",
       dateKind: "plan",
       waitingOn: "none",
     });
+  });
+});
+
+describe("task ask", () => {
+  it("takes the line after a heading-like NEXT STEP marker", () => {
+    const result = describeTask(
+      "**STATE 2026-09-18 16:00 CEST · exp1 is merged.**\n\n**NEXT STEP (rewritten 2026-09-18 dayshift 16:00, replacing the 13:00 one it completed).**\n\nThe pack blocker is closed. exp2 is spawn-ready. Spawn it after the 17:00 check.\nWhy: the run needs a slot.",
+    );
+    expect(result.ask).toBe("The pack blocker is closed. exp2 is spawn-ready.");
+    expect(result.askFrom).toBe("next");
+  });
+  it("reads a NEXT ACTION line, bold or not, and skips none", () => {
+    expect(describeTask("NEXT ACTION: Review it.")).toMatchObject({
+      ask: "Review it.",
+      askFrom: "next",
+    });
+    expect(
+      describeTask("**NEXT ACTION:** Send the invoice to the client today."),
+    ).toMatchObject({
+      ask: "Send the invoice to the client today.",
+      askFrom: "next",
+    });
+    expect(
+      describeTask("Waiting on a reply.\nNEXT ACTION: none\nWAITING: Ania"),
+    ).toMatchObject({ ask: "Waiting on a reply.", askFrom: "summary" });
+  });
+  it("falls back to the Why line", () => {
+    expect(
+      describeTask(
+        "STATE 2026-10-01 · Disk alert.\n**Why:** the Mini's disk alert fired for the 6th time.",
+      ),
+    ).toMatchObject({
+      ask: "the Mini's disk alert fired for the 6th time.",
+      askFrom: "why",
+    });
+  });
+  it("falls back to the first two sentences of the summary", () => {
+    expect(
+      describeTask(
+        "Proposal is drafted. It needs a [title](https://x.test)! Then we ship. Later more.\nSecond line.",
+      ),
+    ).toMatchObject({
+      ask: "Proposal is drafted. It needs a title!",
+      askFrom: "summary",
+    });
+  });
+  it("has no ask for an empty description", () => {
+    const result = describeTask("");
+    expect(result.ask).toBeUndefined();
+    expect(result.askFrom).toBeUndefined();
+  });
+  it("cuts a long sentence at a word boundary under 280 characters", () => {
+    const long = `${"word ".repeat(80).trim()}.`;
+    expect(long.length).toBeGreaterThan(395);
+    const { ask } = describeTask(`NEXT ACTION: ${long}`);
+    expect(ask!.length).toBeLessThanOrEqual(280);
+    expect(ask).toMatch(/ word…$/);
+    expect(long.startsWith(ask!.slice(0, -1))).toBe(true);
+  });
+  it("picks the latest Needs you comment, ignoring system and unprefixed ones", () => {
+    const at = (h: number) => `2026-09-17T${String(h).padStart(2, "0")}:00:00Z`;
+    expect(
+      commentAsk([
+        {
+          kind: "agent",
+          body: "Needs you: approve the old plan.",
+          createdAt: at(9),
+        },
+        {
+          kind: "agent",
+          body: "**Needs you:** pick a title",
+          createdAt: at(11),
+        },
+        {
+          kind: "system",
+          body: "Needs you: status changed",
+          createdAt: at(12),
+        },
+        { kind: "agent", body: "Progress: half done.", createdAt: at(13) },
+        { kind: "user", createdAt: at(14) },
+      ]),
+    ).toBe("pick a title");
+    expect(
+      commentAsk([
+        {
+          kind: "agent",
+          body: "✅ _needs you_: merge it. Then tag. Later.",
+          createdAt: at(9),
+        },
+      ]),
+    ).toBe("merge it. Then tag.");
+    expect(
+      commentAsk([
+        { kind: "system", body: "Needs you: no", createdAt: at(9) },
+        { kind: "agent", body: "Done.", createdAt: at(10) },
+      ]),
+    ).toBe("");
   });
 });
 

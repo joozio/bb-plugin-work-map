@@ -21,9 +21,12 @@ export function describeTask(description: string) {
     "",
   );
   const next = field("NEXT ACTION");
+  const { ask, askFrom } = descriptionAsk(description, summary);
   return {
     summary: summary.slice(0, 500),
     nextAction: /^(none|n\/a)$/i.test(next) ? "" : next.slice(0, 700),
+    ask,
+    askFrom,
     dateKind: field("DATE KIND"),
     waitingOn: field("WAITING"),
     lifecycle: (description.match(/^LIFECYCLE:[ \t]*(.*)$/im)?.[1] ?? "")
@@ -31,6 +34,69 @@ export function describeTask(description: string) {
       .toLowerCase(),
     checkAfter: field("CHECK AFTER"),
   };
+}
+export type AskSource = "comment" | "next" | "why" | "summary";
+const ASK_MAX = 280;
+/** The first two sentences of plain text, cut at a word under 280 characters. */
+export function askText(text: string): string {
+  const sentences = plainText(text).split(/(?<=[.!?])\s+/);
+  const two = sentences.slice(0, 2).join(" ").trim();
+  if (two.length <= ASK_MAX) return two;
+  const head = two.slice(0, ASK_MAX - 1);
+  const space = head.lastIndexOf(" ");
+  return `${(space > 0 ? head.slice(0, space) : head).replace(/[\s,;:–-]+$/, "")}…`;
+}
+const emptyAsk = (text: string) => /^(none|n\/a)\.?$/i.test(text);
+/** A structured field line such as "DATE KIND: plan", which is not prose. */
+const fieldLine = (line: string) => /^[A-Z][A-Z ]{2,}:/.test(plainText(line));
+function descriptionAsk(
+  description: string,
+  summary: string,
+): { ask: string | undefined; askFrom: AskSource | undefined } {
+  const lines = description.split("\n");
+  const marker = (pattern: RegExp) => {
+    for (let i = 0; i < lines.length; i++) {
+      const match = plainText(lines[i]).match(pattern);
+      if (match) return { rest: match[1].trim(), after: lines.slice(i + 1) };
+    }
+  };
+  const next = marker(
+    /^NEXT (?:STEP|ACTION)\b(?:\s*\([^)]*\))?\s*[:.]\s*(.*)$/i,
+  );
+  if (next && !emptyAsk(next.rest)) {
+    // A heading-like marker ("NEXT STEP (rewritten …).") puts the step on the
+    // following line; a short real ask followed by a field line stays put.
+    const following = next.after.find((line) => line.trim());
+    const text =
+      next.rest.length < 12 && following && !fieldLine(following)
+        ? following
+        : next.rest;
+    const ask = askText(text);
+    if (ask) return { ask, askFrom: "next" };
+  }
+  const why = marker(/^Why:\s*(.*)$/i);
+  if (why?.rest && !emptyAsk(why.rest))
+    return { ask: askText(why.rest), askFrom: "why" };
+  const lead = askText(summary);
+  return lead
+    ? { ask: lead, askFrom: "summary" }
+    : { ask: undefined, askFrom: undefined };
+}
+/** The latest non-system comment that starts "Needs you:", as its ask. */
+export function commentAsk(
+  comments: { kind: string; body?: string; createdAt: string }[],
+): string {
+  let best: { at: string; ask: string } | undefined;
+  for (const comment of comments) {
+    if (comment.kind === "system" || !comment.body) continue;
+    if (best && comment.createdAt <= best.at) continue;
+    const match = plainText(comment.body)
+      .replace(/^[^\p{L}\p{N}]+/u, "")
+      .match(/^needs you\s*:\s*(.*)$/i);
+    const ask = match ? askText(match[1]) : "";
+    if (ask) best = { at: comment.createdAt, ask };
+  }
+  return best?.ask ?? "";
 }
 export type Signal = "waiting" | "unread" | "working" | "inactive";
 export type Attention = "input" | "error" | "review" | "followup" | "unread";

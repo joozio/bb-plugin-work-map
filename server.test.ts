@@ -11,6 +11,7 @@ async function host(
     missingComments?: boolean;
     closed?: boolean;
     review?: boolean;
+    needsYou?: boolean;
   } = {},
 ) {
   let output = "First response";
@@ -80,6 +81,17 @@ async function host(
                   threadTitle: null,
                   createdAt: "2026-09-17T12:00:00Z",
                 },
+                ...(options.needsYou
+                  ? [
+                      {
+                        kind: "agent",
+                        body: "**Needs you:** pick a title. Two are in the doc.",
+                        threadId: "thr_comment",
+                        threadTitle: "Planning session",
+                        createdAt: "2026-09-17T13:00:00Z",
+                      },
+                    ]
+                  : []),
               ],
             };
           } else throw new Error(`Unexpected ${method}`);
@@ -101,6 +113,32 @@ async function host(
   };
 }
 describe("backend coverage and preferences", () => {
+  it("ships the ask from a Needs you comment over the description's next action, also from closed-task cache", async () => {
+    const fixture = await host({ needsYou: true, closed: true });
+    for (const _ of [0, 1]) {
+      const result = (await fixture.harness.behavior.callRpc(
+        "snapshot",
+        null,
+      )) as { tasks: { ask?: string; askFrom?: string }[] };
+      expect(result.tasks[0]).toMatchObject({
+        ask: "pick a title. Two are in the doc.",
+        askFrom: "comment",
+      });
+    }
+    expect(fixture.getCommentReads()).toBe(1);
+    await fixture.harness.lifecycle.dispose();
+  });
+  it("ships the description's ask without a Needs you comment", async () => {
+    const { harness } = await host();
+    const result = (await harness.behavior.callRpc("snapshot", null)) as {
+      tasks: { ask?: string; askFrom?: string }[];
+    };
+    expect(result.tasks[0]).toMatchObject({
+      ask: "Choose a direction.",
+      askFrom: "next",
+    });
+    await harness.lifecycle.dispose();
+  });
   it("returns review age from status history without turning system events into session links", async () => {
     const { harness } = await host({ review: true });
     const result = (await harness.behavior.callRpc("snapshot", null)) as {
