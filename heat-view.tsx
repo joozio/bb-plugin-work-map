@@ -18,6 +18,8 @@ import {
   needsYou,
   partition,
   place,
+  priorityGroup,
+  priorityOrder,
   tileText,
   toneRank,
   type HeatArea,
@@ -54,6 +56,21 @@ const RUNNING = "agent running";
 const RANK_W = 19;
 /** One row of date fixes: 24px buttons, 3px padding each side, a 1px edge. */
 const FIX_ROW = 24 + 6 + 1;
+/** Slot and tile padding and the label row: what a map tile spends before its title. */
+const TILE_CHROME = 27;
+/** The ask on a tile: 10.5px text, line height 1.3; the first line also pays the row gap. */
+const ASK_LINE = 13.65;
+const ASK_GAP = 2;
+/** The most lines of the ask a tile shows; past that the words are in the open card. */
+const ASK_MAX = 6;
+/** Below this width the words of an ask do not fit; the tile keeps its title. */
+const ASK_MIN_W = 120;
+/** One line of context under the ask: sessions, waiting on, the agent's state. */
+const CONTEXT_ROW = 13.5;
+const REASON_ROW = 16;
+/** An open area's cards: this wide when the room allows, never under MIN_CARD_W. */
+const CARD_TARGET_W = 250;
+const CARD_GAP = 4;
 /** The area header and the body padding are not available to the tiles. */
 const HEADER = 31;
 /** Below this area width the header keeps only the name and an orchestrator. */
@@ -198,23 +215,26 @@ export function HeatMap({
           (open ? actionsHeight : 0),
       );
       const bodyWidth = Math.max(1, (rect.w / 100) * size.width - BODY_PAD);
-      // An open area with nothing expanded inside it is a grid of cards in
-      // rank order, each at least readable; the body scrolls past that.
+      // An open area with nothing expanded inside it is a flow of cards in
+      // priority order, each the height of what it says and no taller; the
+      // body scrolls past what fits. Columns come from the width alone.
       if (open && !expandedItemId) {
-        // Columns are chosen as if the picker were shut, so opening it
-        // scrolls the cards rather than narrowing them into icon-only acts.
-        const grid = cardLayout(
-          ranked.map((tile) => tile.id),
-          { w: bodyWidth, h: bodyHeight + transient },
-          minCard,
+        const cols = Math.max(
+          1,
+          Math.min(
+            Math.max(1, ranked.length),
+            Math.floor((bodyWidth + CARD_GAP) / (CARD_TARGET_W + CARD_GAP)),
+            Math.floor((bodyWidth + CARD_GAP) / (MIN_CARD_W + CARD_GAP)),
+          ),
         );
         return {
           area,
           rect,
-          tiles: ranked,
-          inner: grid.rects,
-          bodyHeight: grid.height,
-          scroll: grid.height > bodyHeight + 0.5,
+          tiles: priorityOrder(ranked),
+          inner: new Map<string, Rect>(),
+          bodyHeight,
+          scroll: true,
+          flow: { cols, cardWidth: (bodyWidth - CARD_GAP * (cols - 1)) / cols },
         };
       }
       // Every tile in an expanded area is a card to read and act on, so the
@@ -232,7 +252,7 @@ export function HeatMap({
         expandedWeights(tiles, keep, TILE_SHARE),
         UNIT,
       );
-      return { area, rect, tiles, inner, bodyHeight, scroll: false };
+      return { area, rect, tiles, inner, bodyHeight, scroll: false, flow: null };
     });
   }, [
     ordered,
@@ -256,10 +276,20 @@ export function HeatMap({
         } as CSSProperties
       }
     >
-      {layout.map(({ area, rect, tiles, inner, bodyHeight, scroll }) => {
+      {layout.map(({ area, rect, tiles, inner, bodyHeight, scroll, flow }) => {
         const open = area.id === expandedAreaId;
         const width = (rect.w / 100) * size.width;
         const height = (rect.h / 100) * size.height;
+        // Quiet labels over each run of cards sharing a priority, when the
+        // area holds more than one priority: a reader scans by them.
+        const groupOf = (tile: HeatTile) =>
+          !tile.item
+            ? ""
+            : closedStatus(tile.item)
+              ? "Closed"
+              : priorityGroup(tile.item.task?.priority);
+        const groups = new Set(tiles.map(groupOf).filter(Boolean));
+        const labelled = !!flow && groups.size > 1;
         return (
           <section
             key={area.id}
@@ -306,18 +336,42 @@ export function HeatMap({
               className={`wm-heat-body ${scroll ? "wm-heat-body-scroll" : ""}`}
             >
               <div
-                className="wm-heat-cards"
-                style={scroll ? { height: bodyHeight } : undefined}
+                className={`wm-heat-cards ${flow ? "wm-heat-flow" : ""}`}
+                style={
+                  flow
+                    ? {
+                        gridTemplateColumns: `repeat(${flow.cols}, minmax(0, 1fr))`,
+                      }
+                    : scroll
+                      ? { height: bodyHeight }
+                      : undefined
+                }
               >
-                {tiles.map((tile) => {
+                {tiles.map((tile, index) => {
                   const cell = inner.get(tile.id) ?? UNIT;
-                  return (
+                  const group = groupOf(tile);
+                  const heading =
+                    labelled &&
+                    group &&
+                    (index === 0 || groupOf(tiles[index - 1]) !== group) ? (
+                      <div
+                        key={`group:${group}`}
+                        className="wm-heat-group-label"
+                        role="heading"
+                        aria-level={4}
+                      >
+                        {group}
+                      </div>
+                    ) : null;
+                  return [
+                    heading,
                     <Tile
                       key={tile.id}
                       tile={tile}
                       rect={cell}
-                      width={(cell.w / 100) * Math.max(0, width - BODY_PAD)}
-                      height={(cell.h / 100) * bodyHeight}
+                      flow={!!flow}
+                      width={flow ? flow.cardWidth : (cell.w / 100) * Math.max(0, width - BODY_PAD)}
+                      height={flow ? 0 : (cell.h / 100) * bodyHeight}
                       area={area}
                       now={now}
                       open={open && tile.id === expandedItemId}
@@ -331,8 +385,8 @@ export function HeatMap({
                       picked={!!selected?.includes(tile.item?.id ?? "")}
                       actRow={actRow}
                       fixes={tidy ? dateFixes : undefined}
-                    />
-                  );
+                    />,
+                  ];
                 })}
               </div>
             </div>
@@ -423,6 +477,7 @@ function GroupTile({
   area,
   now,
   tiny,
+  flow,
   onOpen,
   onOpenArea,
 }: {
@@ -433,6 +488,8 @@ function GroupTile({
   area: HeatArea;
   now: number;
   tiny: boolean;
+  /** In a flow of cards the slot has no rectangle; the grid places it. */
+  flow?: boolean;
   onOpen: (item: WorkItem) => void;
   onOpenArea: (area: HeatArea) => void;
 }) {
@@ -469,7 +526,11 @@ function GroupTile({
       ? onOpenArea(area)
       : onOpen(members[0]);
   return (
-    <div className="wm-heat-slot" data-layout-id={tile.id} style={box(rect)}>
+    <div
+      className="wm-heat-slot"
+      data-layout-id={tile.id}
+      style={flow ? undefined : box(rect)}
+    >
       <div
         className={`wm-heat-tile wm-heat-${tile.overflow ? tile.tone : "quiet"} wm-heat-group ${tile.overflow ? "wm-heat-more" : ""} ${tile.running ? "wm-heat-running" : ""} ${shown.length ? "wm-heat-group-list" : ""}`}
         data-tier={tile.overflow ? tile.tier : undefined}
@@ -553,10 +614,12 @@ function Tile({
   picked,
   actRow,
   fixes,
+  flow,
 }: {
   tile: HeatTile;
   rect: Rect;
   width: number;
+  /** 0 in a flow of cards: the card is as tall as what it says. */
   height: number;
   area: HeatArea;
   now: number;
@@ -572,12 +635,14 @@ function Tile({
   actRow: number;
   /** In tidy mode, the date-fix row a slipped tile wears. */
   fixes?: (item: WorkItem) => ReactNode;
+  /** A card in an open area's flow: content-sized, placed by the grid. */
+  flow?: boolean;
 }) {
   const item = tile.item;
   // Title from 30px of height; a key alone down to 30px of width; below that, colour only.
-  const tiny = !open && (width < 52 || height < 30);
-  const sliver = !open && (width < 44 || height < 18);
-  const roomy = open || (height > 92 && width > 150);
+  const tiny = !open && !flow && (width < 52 || height < 30);
+  const sliver = !open && !flow && (width < 44 || height < 18);
+  const roomy = open || flow || (height > 92 && width > 150);
   if (!item)
     return (
       <GroupTile
@@ -588,6 +653,7 @@ function Tile({
         area={area}
         now={now}
         tiny={tiny}
+        flow={flow}
         onOpen={onOpen}
         onOpenArea={onOpenArea}
       />
@@ -651,7 +717,7 @@ function Tile({
   // Inside an expanded area a tile is a small card: it spends its room on the
   // state of the work rather than on empty fill. Tiles too small to hold a
   // title cannot hold facts either, so they keep exactly what they had.
-  const inside = !!actions && !tiny && height > 74 && width > 104;
+  const inside = !!actions && !tiny && (flow || (height > 74 && width > 104));
   // A slipped card in tidy mode spends its footer on the date fixes.
   const footer: "acts" | "fixes" | null = inside
     ? fixes && tile.slipped && !closed
@@ -674,7 +740,8 @@ function Tile({
     ? [
         closed ?? "",
         reason,
-        item.task && item.task.priority !== "none"
+        // In a flow the group label over the card already names the priority.
+        item.task && item.task.priority !== "none" && !flow
           ? `${item.task.priority} priority`
           : "",
         closed
@@ -694,10 +761,45 @@ function Tile({
   // The card is budgeted in whole rows from its real height, so nothing is
   // ever cut mid-line: two title lines first, then the latest word, then the
   // facts, then a third title line if room is left.
+  // What needs to be done, from the task itself: its ask, else its next
+  // step, else its summary. A session's summary is its latest word.
+  const askText = (item.task?.ask || item.nextAction || item.summary || "").trim();
+  // How many lines the ask would fill at this width, so a short ask never
+  // reserves blank rows that the title or the context could use instead.
+  const askNeeds = askText
+    ? Math.max(
+        1,
+        Math.ceil(
+          (labelWidth(askText) * (10.5 / 9.5)) / Math.max(40, width - 16),
+        ),
+      )
+    : 0;
+  const context = tiny || closed
+    ? []
+    : [
+        working
+          ? RUNNING
+          : attached
+            ? `${attached} session${attached === 1 ? "" : "s"}`
+            : "",
+        item.task?.waitingOn && item.task.waitingOn !== "none"
+          ? `waiting on ${item.task.waitingOn}`
+          : "",
+      ].filter(Boolean);
   let lines = 1;
   let lineRows = 0;
+  let askLines = 0;
   let showFacts = false;
-  if (inside) {
+  let showReason = false;
+  let showContext = false;
+  if (flow) {
+    // A card in a flow is as tall as what it says: the whole title up to
+    // three lines, the ask up to three, the agent's latest word, the facts.
+    lines = 3;
+    askLines = Math.min(3, askNeeds);
+    lineRows = line && line !== askText ? 2 : 0;
+    showFacts = facts.length > 0;
+  } else if (inside) {
     let room =
       height - CARD_CHROME - (footer === "fixes" ? FIX_ROW : actRow) - TITLE_LINE;
     if (room >= TITLE_LINE) {
@@ -728,9 +830,48 @@ function Tile({
       room -= cost;
     }
   } else {
-    // Clamp the title to the lines that actually fit, so nothing is cut mid-word.
-    const spent = 27 + (roomy ? 16 : 0) + fixHeight;
-    lines = Math.max(1, Math.min(4, Math.floor((height - spent) / 14)));
+    // A map tile is budgeted in whole rows from its real height, so text
+    // fills it and nothing is cut mid-line: the title first (two lines), then
+    // the reason, then the ask, then one line of context, then more title and
+    // more of the ask while room is left. A bigger tile shows more of the work.
+    let room = height - TILE_CHROME - fixHeight - TITLE_LINE;
+    if (room >= TITLE_LINE) {
+      lines = 2;
+      room -= TITLE_LINE;
+    }
+    const reasonText = closed ? closed : item.reason;
+    if (roomy && reasonText && room >= REASON_ROW) {
+      showReason = true;
+      room -= REASON_ROW;
+    }
+    const askable = !tiny && width >= ASK_MIN_W && askNeeds > 0;
+    for (const row of [
+      "ask",
+      "ask",
+      "title",
+      "ask",
+      "context",
+      "ask",
+      "title",
+      "ask",
+      "ask",
+    ] as const) {
+      const cost =
+        row === "ask"
+          ? ASK_LINE + (askLines ? 0 : ASK_GAP)
+          : row === "title"
+            ? TITLE_LINE
+            : CONTEXT_ROW;
+      if (row === "ask" && (!askable || askLines >= Math.min(ASK_MAX, askNeeds)))
+        continue;
+      if (row === "title" && lines >= 4) continue;
+      if (row === "context" && (showContext || !context.length)) continue;
+      if (room < cost) continue;
+      if (row === "ask") askLines += 1;
+      else if (row === "title") lines += 1;
+      else showContext = true;
+      room -= cost;
+    }
   }
   // The act row keeps its labels only where they fit whole: every tile of a
   // similar width reads the same, and a label is never cut to an ellipsis.
@@ -749,9 +890,10 @@ function Tile({
       data-fixes={footer === "fixes" ? (fixRows === 2 ? "grid" : "row") : undefined}
       style={
         {
-          ...box(rect),
+          ...(flow ? {} : box(rect)),
           "--wm-heat-lines": lines,
           "--wm-heat-line-rows": lineRows,
+          "--wm-heat-ask-lines": askLines,
         } as CSSProperties
       }
     >
@@ -814,10 +956,18 @@ function Tile({
           {row.label && <span>{row.label}</span>}
         </span>
         {!tiny && <span className="wm-heat-title">{title}</span>}
-        {roomy && !inside && (
+        {showReason && (
           <span className="wm-heat-reason">
             {closed ? (closed === "done" ? "Done" : "Canceled") : item.reason}
           </span>
+        )}
+        {askLines > 0 && (
+          <span className="wm-heat-ask-text" data-ask-from={item.task?.askFrom}>
+            {askText}
+          </span>
+        )}
+        {showContext && (
+          <span className="wm-heat-context">{context.join(" · ")}</span>
         )}
         {showFacts && (
           <span className="wm-heat-facts">

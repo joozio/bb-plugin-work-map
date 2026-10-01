@@ -1057,6 +1057,95 @@ export function foldSmall(
   }
   return shown;
 }
+/**
+ * The most of the map the Now tiles may take together. Five hot spots that
+ * each hold the title, the reason and the ask need about a quarter of a
+ * 1440px map; past that they are empty fill, and the room comes out of the
+ * Next tiles and the areas that were squeezed beside them.
+ */
+export const NOW_SHARE_CAP = 0.28;
+/** The scale of the Now tiles never drops under this: they stay the biggest. */
+const NOW_SCALE_FLOOR = 0.4;
+const NOW_SCALE_STEP = 0.94;
+/**
+ * The share of the map the Now tiles take: each area's share of the whole,
+ * times the Now tiles' share of that area. Areas and tiles both fill their
+ * rectangles in proportion to weight, so this mirrors the drawn map.
+ */
+export function nowShare(areas: readonly HeatArea[]) {
+  const whole = total(areas);
+  if (!whole) return 0;
+  return round(
+    areas.reduce((sum, area) => {
+      const inside = total(area.tiles);
+      if (!inside) return sum;
+      const now = area.tiles
+        .filter((tile) => tile.tier === "now")
+        .reduce((acc, tile) => acc + Math.max(0, tile.weight), 0);
+      return sum + (area.weight / whole) * (now / inside);
+    }, 0),
+  );
+}
+/**
+ * Shrink every Now tile by the same factor until the Now tiles together take
+ * at most `cap` of the map as `finish` lays it out. Size still says what is
+ * important: the factor never drops under NOW_SCALE_FLOOR, and the Now tiles
+ * keep their weight order. The room given back goes to Next and to the areas
+ * that were squeezed beside the hot ones.
+ */
+export function capNowShare(
+  areas: readonly HeatArea[],
+  finish: (areas: readonly HeatArea[]) => HeatArea[],
+  cap = NOW_SHARE_CAP,
+): HeatArea[] {
+  let scale = 1;
+  let current = [...areas];
+  for (let pass = 0; pass < 40; pass++) {
+    if (nowShare(finish(current)) <= cap + 1e-6) break;
+    const next = scale * NOW_SCALE_STEP;
+    if (next < NOW_SCALE_FLOOR) break;
+    scale = next;
+    current = areas.map((area) => {
+      const tiles = area.tiles.map((tile) =>
+        tile.tier === "now" && tile.item
+          ? { ...tile, weight: round(tile.weight * scale) }
+          : tile,
+      );
+      return { ...area, tiles, weight: areaWeight(tiles) };
+    });
+  }
+  return current;
+}
+/**
+ * The order of the cards in an open area: priority first (urgent, high,
+ * medium, then low and unset), closed work last, then by weight within a
+ * priority so colour and size still carry the pull. A session has no
+ * priority and reads with the unset ones.
+ */
+export function priorityOrder<T extends Pick<HeatTile, "id" | "weight" | "item">>(
+  tiles: readonly T[],
+): T[] {
+  const rank = (tile: T) =>
+    PRIORITY_RANK[tile.item?.task?.priority ?? "none"] ?? 3;
+  const closed = (tile: T) => (tile.item && closedStatus(tile.item) ? 1 : 0);
+  return [...tiles].sort(
+    (a, b) =>
+      closed(a) - closed(b) ||
+      rank(a) - rank(b) ||
+      b.weight - a.weight ||
+      a.id.localeCompare(b.id),
+  );
+}
+/** The quiet label over a run of cards sharing a priority in an open area. */
+export function priorityGroup(priority: string | undefined) {
+  return priority === "urgent"
+    ? "Urgent"
+    : priority === "high"
+      ? "High"
+      : priority === "medium"
+        ? "Medium"
+        : "Low / none";
+}
 /** The least an area can be and still say its name over a row of tiles. */
 export const MIN_AREA = { w: 120, h: 31 + 6 + MIN_TILE.h };
 /**
@@ -1136,11 +1225,15 @@ export function buildHeat(
         tidy,
       ),
     );
-  return heatOrder(
-    withCeiling(withFloor(heatOrder(withTiers(areas, tidy)), AREA_FLOOR), (area) =>
-      areaCeiling(area.tiles.length),
-    ),
-  );
+  const finish = (ranked: readonly HeatArea[]) =>
+    heatOrder(
+      withCeiling(withFloor(heatOrder(ranked), AREA_FLOOR), (area) =>
+        areaCeiling(area.tiles.length),
+      ),
+    );
+  // Tidy mode has its own sizes: the slipped tiles are the work there.
+  const tiered = withTiers(areas, tidy);
+  return finish(tidy ? tiered : capNowShare(tiered, finish));
 }
 export function heatStats(areas: readonly HeatArea[], now: number) {
   const items = areas.flatMap((area) => area.items);
