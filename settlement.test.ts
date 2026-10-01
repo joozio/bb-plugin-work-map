@@ -130,6 +130,9 @@ async function setup(
     patches,
     methods,
     current: () => current,
+    deleteTask: () => {
+      current = null as unknown as typeof current;
+    },
     edit: (patch: Partial<typeof original>) => {
       current = { ...current, ...patch };
     },
@@ -196,6 +199,17 @@ describe("settling user work", () => {
     expect(await f.harness.behavior.callRpc("settledToday", null)).toEqual([
       result,
     ]);
+    await f.harness.lifecycle.dispose();
+  });
+  it("forgets a receipt whose task was deleted since", async () => {
+    const f = await setup();
+    const result = await f.settle({ nextAction: "Check the draft" });
+    expect(await f.harness.behavior.callRpc("settledToday", null)).toEqual([
+      result,
+    ]);
+    f.deleteTask();
+    expect(await f.harness.behavior.callRpc("settledToday", null)).toEqual([]);
+    expect(await f.bb.storage.kv.get(`settled:${result.id}`)).toBeUndefined();
     await f.harness.lifecycle.dispose();
   });
   it("moves only the task and viewed session, preserves history, and restores them with Undo", async () => {

@@ -269,16 +269,36 @@ export function settlementService(bb: BbPluginApi, changed: () => void) {
             row.result.warning = `Recovery unavailable: ${cause instanceof Error ? cause.message : String(cause)}`;
           }
         }
-      return rows
-        .filter(
-          (r): r is Receipt =>
-            !!r &&
-            localDay(r.result.at) === localDay(Date.now()) &&
-            !r.result.undone &&
-            (r.result.taskUpdated ||
-              r.result.archivedThreadIds.length > 0 ||
-              (r.finished && r.result.action === "pause" && !r.result.warning)),
-        )
+      const today = rows.filter(
+        (r): r is Receipt =>
+          !!r &&
+          localDay(r.result.at) === localDay(Date.now()) &&
+          !r.result.undone &&
+          (r.result.taskUpdated ||
+            r.result.archivedThreadIds.length > 0 ||
+            (r.finished && r.result.action === "pause" && !r.result.warning)),
+      );
+      // A receipt for a task that was deleted since cannot be undone or opened:
+      // forget it. A failed lookup is not proof of deletion, so it stays.
+      const gone = await Promise.all(
+        today.map(async (r) => {
+          if (!r.result.taskId) return false;
+          try {
+            const { task } = await call(
+              "getTask",
+              { taskId: r.result.taskId },
+              z.object({ task: taskState.nullable() }),
+            );
+            if (task) return false;
+            await bb.storage.kv.delete(`settled:${r.result.id}`);
+            return true;
+          } catch {
+            return false;
+          }
+        }),
+      );
+      return today
+        .filter((_, i) => !gone[i])
         .map((r) => r.result)
         .sort((a, b) => b.at - a.at);
     },
