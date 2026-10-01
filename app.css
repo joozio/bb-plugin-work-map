@@ -2169,19 +2169,44 @@
 .wm-heat-sense {
   opacity: 0.7;
 }
-/* The five depths in a row, coldest to hottest, so the ramp is read at a glance. */
-.wm-heat-ramp {
-  gap: 1px !important;
+/* The three tiers, each a chip and its word, so the scale is read at a glance. */
+.wm-heat-tiers {
+  gap: 10px !important;
 }
-.wm-heat-ramp i.wm-heat-key:first-of-type {
-  margin-left: 4px;
+.wm-heat-tiers em {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-style: normal;
 }
-.wm-heat-ramp i.wm-heat-key:last-of-type {
-  margin-right: 4px;
+/* The slipped-dates chip switches tidy mode; pressed, it wears the tidy blue. */
+.wm-heat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--wm-ink);
+  font-size: 10.5px;
+  white-space: nowrap;
 }
-.wm-heat-ramp i.wm-heat-key {
-  width: 13px;
-  border-radius: 2px;
+.wm-heat-chip b {
+  font-size: 12px;
+  font-weight: 700;
+}
+.wm-heat-chip:not(:disabled):hover {
+  background: var(--accent);
+}
+.wm-heat-chip[aria-pressed="true"] {
+  border-color: var(--wm-blue);
+  background: color-mix(in srgb, var(--wm-blue) 18%, var(--card));
+}
+.wm-heat-chip:focus-visible {
+  outline: 2px solid var(--wm-blue);
+  outline-offset: 1px;
 }
 /* Only a phone folds the legend; wider screens always show it. */
 .wm-heat-legend-toggle {
@@ -2474,85 +2499,90 @@ i.wm-heat-key {
 .wm-heat-sliver .wm-heat-meta {
   display: none;
 }
-/* Heat: colour is importance. data-step (1 coldest to 5 hottest) is where
-   the tile ranks by pull across the whole map, drawn on one heat scale that
-   changes hue, not just lightness: red, orange, soft amber, then the plain
-   card, then near-background. Only the top half carries a colour, so the eye
-   lands on a few hot spots on a mostly dark map; the same scale sits on white
-   in the light theme. Text follows the heat: the hottest titles brightest and
-   boldest, the coldest dimmed and still readable. What the work needs no
+/* Heat: colour is one of three tiers, and the tile says why. Now (red, white
+   bold text, at most five on the whole map) is your focus; Next (a soft
+   amber, clearly lighter than Now, dark ink, at most eight more) is what
+   follows; Later (a neutral card, no fill, dimmer text) is the rest, and most
+   of the map. Red = now, amber = next, grey = later, with no legend needed.
+   The reason line in the label row names what drove the colour: the date,
+   the priority, a focus, a request for your hands. What the work needs no
    longer colours the tile: it is the marker before the key and the words on
    the tile. A request for your hands or a failed run keeps its shape on top
-   of the heat: a ring and a glyph. */
+   of the tier: a ring and a glyph. The amber is a warm orange-amber mixed
+   high on the card so it never reads olive on dark; the light theme runs the
+   same two hues on white. */
 .wm-root {
-  --wm-heat-5: #d9372b;
-  --wm-heat-4: #f28a2e;
-  --wm-heat-3: #f0c24a;
+  --wm-heat-now: #d9372b;
+  --wm-heat-next: #f0a63a;
 }
-/* Zero specificity, so a data-step on the element always wins. */
+/* Zero specificity, so a data-tier on the element always wins. */
 :where(.wm-heat-tile, i.wm-heat-key) {
   background: var(--card);
   border-color: var(--border);
 }
-.wm-heat-tile[data-step="1"],
-i.wm-heat-key[data-step="1"],
-.wm-heat-row-dot[data-step="1"] {
-  background: color-mix(in srgb, var(--wm-ink) 2%, var(--background));
-  border-color: color-mix(in srgb, var(--border) 60%, transparent);
-}
-/* The card may share the background's colour: the neutral step lifts off it by a little ink. */
-.wm-heat-tile[data-step="2"],
-i.wm-heat-key[data-step="2"],
-.wm-heat-row-dot[data-step="2"] {
-  background: color-mix(in srgb, var(--wm-ink) 7%, var(--card));
+.wm-heat-tile[data-tier="later"],
+i.wm-heat-key[data-tier="later"],
+.wm-heat-row-dot[data-tier="later"] {
+  background: color-mix(in srgb, var(--wm-ink) 5%, var(--card));
   border-color: var(--border);
 }
-.wm-heat-tile[data-step="3"],
-i.wm-heat-key[data-step="3"],
-.wm-heat-row-dot[data-step="3"] {
-  background: color-mix(in srgb, var(--wm-heat-3) 28%, var(--card));
-  border-color: color-mix(in srgb, var(--wm-heat-3) 40%, var(--border));
+.wm-heat-tile[data-tier="next"],
+i.wm-heat-key[data-tier="next"],
+.wm-heat-row-dot[data-tier="next"] {
+  background: color-mix(in srgb, var(--wm-heat-next) 80%, var(--card));
+  border-color: color-mix(in srgb, var(--wm-heat-next) 70%, #000);
 }
-.wm-heat-tile[data-step="4"],
-i.wm-heat-key[data-step="4"],
-.wm-heat-row-dot[data-step="4"] {
-  background: var(--wm-heat-4);
-  border-color: color-mix(in srgb, var(--wm-heat-4) 70%, #000);
+.wm-heat-tile[data-tier="now"],
+i.wm-heat-key[data-tier="now"],
+.wm-heat-row-dot[data-tier="now"] {
+  background: var(--wm-heat-now);
+  border-color: color-mix(in srgb, var(--wm-heat-now) 70%, #000);
 }
-.wm-heat-tile[data-step="5"],
-i.wm-heat-key[data-step="5"],
-.wm-heat-row-dot[data-step="5"] {
-  background: var(--wm-heat-5);
-  border-color: color-mix(in srgb, var(--wm-heat-5) 70%, #000);
+/* Text follows the tier: Later dimmed and still readable, Now white and bold. */
+.wm-heat-tile[data-tier="later"] {
+  color: color-mix(in srgb, var(--wm-ink) 62%, var(--wm-dim));
 }
-/* Text contrast follows heat too. */
-.wm-heat-tile[data-step="1"] {
-  color: color-mix(in srgb, var(--wm-ink) 40%, var(--wm-dim));
-}
-.wm-heat-tile[data-step="2"] {
-  color: color-mix(in srgb, var(--wm-ink) 72%, var(--wm-dim));
-}
-.wm-heat-tile[data-step="3"] .wm-heat-meta,
-.wm-heat-tile[data-step="3"] .wm-heat-reason {
-  opacity: 0.95;
-}
-.wm-heat-tile[data-step="4"] {
+.wm-heat-tile[data-tier="next"] {
   color: #2a1a06;
 }
-.wm-heat-tile[data-step="4"] .wm-heat-title {
+.wm-heat-tile[data-tier="next"] .wm-heat-title {
   font-weight: 650;
 }
-.wm-heat-tile[data-step="5"] {
+.wm-heat-tile[data-tier="now"] {
   color: #fff;
 }
-.wm-heat-tile[data-step="5"] .wm-heat-title {
+.wm-heat-tile[data-tier="now"] .wm-heat-title {
   font-weight: 700;
 }
-.wm-heat-tile[data-step="5"] .wm-heat-meta,
-.wm-heat-tile[data-step="5"] .wm-heat-reason {
-  opacity: 0.95;
+/* The reason line is the point of a coloured tile: full strength, a little bolder. */
+.wm-heat-tile[data-tier="now"] .wm-heat-meta,
+.wm-heat-tile[data-tier="next"] .wm-heat-meta,
+.wm-heat-tile[data-tier="now"] .wm-heat-reason,
+.wm-heat-tile[data-tier="next"] .wm-heat-reason {
+  opacity: 1;
 }
-/* A pile of quiet work reads as the coldest step. */
+.wm-heat-tile[data-tier="now"] .wm-heat-meta > span + span,
+.wm-heat-tile[data-tier="next"] .wm-heat-meta > span + span {
+  font-weight: 600;
+}
+/* A slipped date is an aside, not urgency: the label goes quiet and italic. */
+.wm-heat-tile[data-slipped] .wm-heat-meta > span + span {
+  font-style: italic;
+  font-weight: 500;
+  opacity: 0.8;
+}
+/* Tidy mode: the slipped dates are the work. Everything else steps back. */
+.wm-heat[data-tidy] .wm-heat-tile:not([data-slipped]),
+.wm-heat[data-tidy] .wm-heat-group {
+  opacity: 0.28;
+}
+.wm-heat[data-tidy] .wm-heat-head {
+  opacity: 0.6;
+}
+.wm-heat[data-tidy] .wm-heat-tile[data-slipped] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wm-blue) 60%, transparent);
+}
+/* A pile of quiet work reads as Later. */
 .wm-heat-quiet {
   background: color-mix(in srgb, var(--wm-ink) 2%, var(--background));
   border-color: color-mix(in srgb, var(--border) 60%, transparent);
@@ -2581,17 +2611,17 @@ i.wm-heat-key[data-step="5"],
 }
 /* A request for your hands or a failed run: a ring in its own hue and a
    glyph ahead of the key, on any heat. */
-.wm-heat-tile.wm-heat-input[data-step],
+.wm-heat-tile.wm-heat-input[data-tier],
 .wm-heat-tile.wm-heat-input,
 i.wm-heat-key.wm-heat-input {
   border: 2px solid var(--wm-hot);
 }
-.wm-heat-tile.wm-heat-error[data-step],
+.wm-heat-tile.wm-heat-error[data-tier],
 .wm-heat-tile.wm-heat-error,
 i.wm-heat-key.wm-heat-error {
   border: 2px solid var(--destructive);
 }
-.wm-heat-tile[data-step="5"].wm-heat-error {
+.wm-heat-tile[data-tier="now"].wm-heat-error {
   border-color: #fff;
 }
 /* The rank numeral (1 2 3 on the map's three hottest) and the flag glyph:
@@ -2644,8 +2674,8 @@ i.wm-heat-key.wm-heat-focused {
   outline: 2px solid var(--wm-focus);
   outline-offset: -2px;
 }
-/* The area wears its hottest step: a swatch by its name and, for the two
-   hottest steps, an edge in that heat, so the big picture reads at area level. */
+/* The area wears its hottest tier: a swatch by its name and, for Now and
+   Next, an edge in that hue, so the big picture reads at area level. */
 .wm-heat-swatch {
   width: 9px;
   height: 9px;
@@ -2653,14 +2683,13 @@ i.wm-heat-key.wm-heat-focused {
   align-self: center;
   flex: none;
 }
-.wm-heat-area[data-step="5"] {
-  border-color: color-mix(in srgb, var(--wm-heat-5) 55%, var(--border));
+.wm-heat-area[data-tier="now"] {
+  border-color: color-mix(in srgb, var(--wm-heat-now) 55%, var(--border));
 }
-.wm-heat-area[data-step="4"] {
-  border-color: color-mix(in srgb, var(--wm-heat-4) 45%, var(--border));
+.wm-heat-area[data-tier="next"] {
+  border-color: color-mix(in srgb, var(--wm-heat-next) 45%, var(--border));
 }
-.wm-heat-area[data-step="1"] .wm-heat-name strong,
-.wm-heat-area[data-step="2"] .wm-heat-name strong {
+.wm-heat-area[data-tier="later"] .wm-heat-name strong {
   color: color-mix(in srgb, var(--wm-ink) 70%, var(--wm-dim));
 }
 .wm-heat-tile:hover {
@@ -2944,12 +2973,12 @@ i.wm-heat-key.wm-heat-focused {
 }
 /* The act row is the card's footer: one shape, inside the same slot. A closed
    card's cover grows over the slot; an open card's does not (see below). */
-.wm-heat-slot:has(.wm-tile-actions) {
+.wm-heat-slot:has(.wm-tile-actions, .wm-tile-fixes) {
   display: flex;
   flex-direction: column;
   gap: 0;
 }
-.wm-heat-slot:not(.wm-heat-slot-open):has(.wm-tile-actions) > .wm-heat-tile {
+.wm-heat-slot:not(.wm-heat-slot-open):has(.wm-tile-actions, .wm-tile-fixes) > .wm-heat-tile {
   flex: 1 1 auto;
   height: auto;
   min-height: 0;
@@ -3038,6 +3067,29 @@ i.wm-heat-key.wm-heat-focused {
 }
 .wm-tile-action:disabled {
   opacity: 0.5;
+}
+/* The date-fix row is the tidy-mode footer: the act row's shape, four
+   fixes sharing the width whole; a narrow tile stacks them two by two. */
+.wm-tile-fixes .wm-date-fixes {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px 4px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  background: color-mix(in srgb, var(--card) 88%, var(--muted));
+  overflow: hidden;
+}
+.wm-tile-fixes .wm-date-fix {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 4px;
+}
+[data-fixes="grid"] .wm-tile-fixes .wm-date-fixes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
 }
 /* Green is the map's agent channel: this act hands the work to one. */
 .wm-tile-delegate {

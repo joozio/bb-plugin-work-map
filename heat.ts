@@ -100,63 +100,153 @@ export function staleDays(item: WorkItem, now: number) {
   const days = waitDays(item, now);
   return days > STALE_DAYS ? days : 0;
 }
-/** The five depths a tile can wear, coldest to hottest. */
-export type Step = 1 | 2 | 3 | 4 | 5;
+/** The three tiers a tile can wear: your focus now, what comes next, the rest. */
+export type Tier = "now" | "next" | "later";
+const TIER_ORDER: Tier[] = ["now", "next", "later"];
+export function tierRank(tier: Tier) {
+  return TIER_ORDER.indexOf(tier);
+}
+/** Absolute caps: at most five Now tiles on the whole map, at most eight Next. */
+export const NOW_CAP = 5;
+export const NEXT_CAP = 8;
 /**
- * Where each step starts, as a share of the map's tiles ranked by pull: the
- * hottest tenth wears 5, the next 15% 4, the next quarter 3, then three
- * tenths at 2 and the coldest fifth at 1. Rank, not an absolute score, so a
- * map where every date is past still has a visible top, middle and bottom.
- * Only the top half carries a colour; the eye lands on a few hot spots.
+ * How many tiles the two hot tiers may hold on a map of `n` drawn tiles: a
+ * third each at most, under the absolute caps, and Now is never empty. Three
+ * tiles read one of each; a map of 37 reads five and eight. If everything is
+ * important, nothing is: most of the map is Later whatever the data says.
  */
-export const STEP_SHARES: readonly [Step, number][] = [
-  [5, 0.1],
-  [4, 0.25],
-  [3, 0.5],
-  [2, 0.8],
-];
-/**
- * How much of its size a tile lends to its area, by step: an area of cold
- * work shrinks and an area holding the hot spots grows, so the map's big
- * picture reads at area level too.
- */
-export const STEP_GAIN: Record<Step, number> = {
-  5: 1,
-  4: 0.8,
-  3: 0.5,
-  2: 0.25,
-  1: 0.15,
-};
-/** The step for a place `at` (0 = hottest, 1 = coldest) in the ranking. */
-export function stepAt(at: number): Step {
-  for (const [step, share] of STEP_SHARES) if (at < share) return step;
-  return 1;
+export function tierCaps(n: number) {
+  const third = Math.floor(n / 3);
+  return {
+    now: Math.min(NOW_CAP, Math.max(1, third)),
+    next: Math.min(NEXT_CAP, third),
+  };
 }
 /**
- * Steps for `weights` by rank: the heaviest is always 5, the lightest 1,
- * and a tie shares one step, so identical work never reads as two depths.
- * One tile alone is the hottest thing on the map.
+ * How much of its size a tile lends to its area, by tier: an area of Later
+ * work shrinks and an area holding Now tiles grows, so the map's big picture
+ * reads at area level too.
  */
-export function rankSteps(
-  weights: readonly Weighted[],
-): Map<string, Step> {
-  const ordered = heatOrder(weights);
-  const out = new Map<string, Step>();
-  const n = ordered.length;
-  let index = 0;
-  while (index < n) {
-    let end = index;
-    while (end + 1 < n && ordered[end + 1].weight === ordered[index].weight)
-      end++;
-    const at = n === 1 ? 0 : (index + end) / 2 / (n - 1);
-    // The first place is 5 and the last 1 even when the shares would not
-    // reach them: a map of three tiles still reads hottest, middle, coldest.
-    const step: Step =
-      index === 0 ? 5 : end === n - 1 && n > 1 ? 1 : stepAt(at);
-    for (let i = index; i <= end; i++) out.set(ordered[i].id, step);
-    index = end + 1;
-  }
+export const TIER_GAIN: Record<Tier, number> = { now: 1, next: 0.6, later: 0.25 };
+/** Now tiles are the biggest on the map; Later tiles keep their size by pull. */
+export const TIER_SIZE: Record<Tier, number> = { now: 1.6, next: 1, later: 0.7 };
+const PRIORITY_RANK: Record<string, number> = {
+  urgent: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  none: 3,
+};
+/** What the tier rules read about one tile. */
+export interface Prospect {
+  id: string;
+  pull: number;
+  focus: boolean;
+  tone: HeatTone;
+  timing: HeatTiming | null;
+  priority: string;
+  /** Closed or snoozed work never enters Now or Next. */
+  resting: boolean;
+}
+/** Due today or tomorrow, or late by a week at most: a date that is current. */
+const dueNow = (p: Prospect) =>
+  p.timing?.kind === "due" && p.timing.days >= -7 && p.timing.days <= 1;
+/** Due within the week, or late within the fortnight: not slipped. */
+const dueSoon = (p: Prospect) =>
+  p.timing?.kind === "due" && !p.timing.slipped && p.timing.days <= 7;
+const hotPriority = (p: Prospect) =>
+  p.priority === "urgent" || p.priority === "high";
+const byPull = (a: Prospect, b: Prospect) =>
+  b.pull - a.pull || a.id.localeCompare(b.id);
+const byPriority = (a: Prospect, b: Prospect) =>
+  (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3) ||
+  byPull(a, b);
+type Stage = [(p: Prospect) => boolean, (a: Prospect, b: Prospect) => number];
+/** Takes from `pool` stage by stage, each stage in its own order, up to `cap`. */
+function fill(pool: readonly Prospect[], cap: number, stages: Stage[]) {
+  const taken: Prospect[] = [];
+  for (const [test, order] of stages)
+    for (const p of pool.filter((p) => !taken.includes(p) && test(p)).sort(order)) {
+      if (taken.length >= cap) return taken;
+      taken.push(p);
+    }
+  return taken;
+}
+export interface Tiered {
+  tier: Tier;
+  /** 1, 2 or 3 on the first three Now tiles; unset elsewhere. */
+  rank?: number;
+}
+/**
+ * Now, in fill order: what you put in focus; a request for your hands or a
+ * failed run; a date that is current (today, tomorrow, or late by a week at
+ * most), by priority; then the highest pull. Next, from what is left: due
+ * this week or late within the fortnight, then high or urgent priority, then
+ * what follows by pull. Everything else is Later. Closed and snoozed work
+ * stays Later whatever it pulls.
+ */
+export function assignTiers(prospects: readonly Prospect[]): Map<string, Tiered> {
+  const caps = tierCaps(prospects.length);
+  const open = prospects.filter((p) => !p.resting);
+  const now = fill(open, caps.now, [
+    [(p) => p.focus, byPull],
+    [(p) => p.tone === "input" || p.tone === "error", byPull],
+    [dueNow, byPriority],
+    [() => true, byPull],
+  ]);
+  const rest = open.filter((p) => !now.includes(p));
+  const next = fill(rest, caps.next, [
+    [dueSoon, byPull],
+    [hotPriority, byPull],
+    [() => true, byPull],
+  ]);
+  const out = new Map<string, Tiered>();
+  for (const p of prospects) out.set(p.id, { tier: "later" });
+  now.forEach((p, index) =>
+    out.set(p.id, { tier: "now", ...(index < 3 ? { rank: index + 1 } : {}) }),
+  );
+  for (const p of next) out.set(p.id, { tier: "next" });
   return out;
+}
+/** The priority word a reason line carries; low and unset stay silent. */
+export const PRIORITY_WORD: Record<string, string> = {
+  urgent: "urgent",
+  high: "high",
+  medium: "medium",
+};
+/** The date in the reason's words: due tomorrow, 2d late, slipped 21d; an age only once it is aged. */
+function timingWords(timing: HeatTiming | null, compact: boolean) {
+  if (!timing) return "";
+  if (timing.kind === "due")
+    return compact
+      ? timing.compact
+      : timing.label.replace(/^(Due|Planned) /, (word) => word.toLowerCase());
+  if (timing.kind === "age") return timing.aged ? timing.compact : "";
+  return "";
+}
+/**
+ * Why a tile wears its colour, in words, on the tile: "due tomorrow · high",
+ * "2d late · medium", "in focus", "needs your input". Every factor that
+ * drove the tier is named, priority included, so the colour has no hidden
+ * cause. `compact` says the same in fewer letters for a narrow tile.
+ */
+export function tileReason(p: Prospect): { reason: string; compact: string } {
+  const parts = (compact: boolean) =>
+    [
+      p.focus ? (compact ? "focus" : "in focus") : "",
+      p.tone === "input"
+        ? compact
+          ? "input"
+          : "needs your input"
+        : p.tone === "error"
+          ? compact
+            ? "failed"
+            : "run failed"
+          : "",
+      timingWords(p.timing, compact),
+      PRIORITY_WORD[p.priority] ?? "",
+    ].filter(Boolean);
+  return { reason: parts(false).join(" · "), compact: parts(true).join(" · ") };
 }
 /**
  * The verb Wiz puts in front of a title is the kind of act it asks for.
@@ -218,7 +308,7 @@ export function labelRow(
   lead: string,
   label: string,
   running: boolean,
-  options: { compact?: string; ask?: string } = {},
+  options: { compact?: string | readonly string[]; ask?: string } = {},
 ): { lead: string; label: string; ask: string } {
   const room = width - LABEL_CHROME;
   const word =
@@ -230,9 +320,14 @@ export function labelRow(
   const fits = (withAsk: boolean, text: string) =>
     used + (withAsk ? askWidth : 0) + (text ? LABEL_GAP + labelWidth(text) : 0) <=
     room;
-  const labels = [label, options.compact ?? label].filter(
-    (text, index, all) => text && all.indexOf(text) === index,
-  );
+  // The full label, then each shorter form in turn: a reason line falls back
+  // to its compact words, then to the date alone.
+  const labels = [
+    label,
+    ...(typeof options.compact === "string"
+      ? [options.compact]
+      : (options.compact ?? [])),
+  ].filter((text, index, all) => text && all.indexOf(text) === index);
   for (const withAsk of ask ? [true, false] : [false])
     for (const text of labels)
       if (fits(withAsk, text))
@@ -603,10 +698,16 @@ export interface HeatTile {
   waited: number | null;
   /** How hard it pulls, before the size curve. */
   pull: number;
-  /** Colour depth by rank across the whole map, 1 coldest to 5 hottest. */
-  step: Step;
-  /** 1, 2 or 3 on the map's three hottest tiles; unset elsewhere. */
+  /** Now, Next or Later, by the capped fill order across the whole map. */
+  tier: Tier;
+  /** 1, 2 or 3 on the first three Now tiles; unset elsewhere. */
   rank?: number;
+  /** Why the tile wears its tier, in words; empty on Later tiles. */
+  reason: string;
+  /** The reason in fewer letters, for a narrow tile. */
+  compact: string;
+  /** The date is more than two weeks past: a date to tidy, not urgency. */
+  slipped: boolean;
   timing: HeatTiming | null;
   /** Stands for tiles too small to read, folded into one "+N more". */
   overflow?: boolean;
@@ -622,16 +723,16 @@ export interface HeatArea {
   /** The project or container this area opens; sessions have no single root. */
   root: WorkItem | null;
   weight: number;
-  /** The hottest step among the area's own tiles; 1 when nothing is drawn. */
-  step: Step;
+  /** The hottest tier among the area's own tiles; later when nothing is drawn. */
+  tier: Tier;
   waiting: number;
   running: number;
   /** The one agent handling this whole area, while it runs. */
   orchestrator: AreaOrchestrator | null;
   items: WorkItem[];
   tiles: HeatTile[];
-  /** The step of every item drawn as its own tile; grouped work reads 1. */
-  steps: ReadonlyMap<string, Step>;
+  /** The tier of every item drawn as its own tile; grouped work reads later. */
+  tiers: ReadonlyMap<string, Tier>;
 }
 /** The most a pile of quiet work can weigh: about two quiet tiles. */
 const QUIET_CAP = 0.3;
@@ -647,10 +748,16 @@ function quietTile(id: string, members: WorkItem[]): HeatTile {
     stale: 0,
     waited: 0,
     pull: 0,
-    step: 1,
+    tier: "later",
+    reason: "",
+    compact: "",
+    slipped: false,
     timing: null,
   };
 }
+/** Pins, imminent dates and aged undated tasks stay outside the quiet cap. */
+const active = (tile: HeatTile) =>
+  tile.tone !== "quiet" || !!tile.item?.focus || !!tile.timing?.prominent;
 function areaFrom(
   id: string,
   title: string,
@@ -659,10 +766,12 @@ function areaFrom(
   items: WorkItem[],
   now: number,
   keepQuiet: number,
+  tidy: boolean,
 ): HeatArea {
   const tiles = heatOrder(
     items.map((item): HeatTile => {
       const pull = heatPull(item, now);
+      const timing = heatTiming(item, now);
       return {
         id: item.id,
         weight: heatSize(pull),
@@ -672,16 +781,17 @@ function areaFrom(
         members: [] as WorkItem[],
         stale: staleDays(item, now),
         waited: waitingSince(item, now) ? waitDays(item, now) : null,
-        step: 1,
-        timing: heatTiming(item, now),
+        tier: "later",
+        reason: "",
+        compact: "",
+        slipped: !!timing?.slipped,
+        timing,
         running: heatWorking(item) ? 1 : 0,
       };
     }),
   );
-  const loud = tiles.filter(
-    (tile) =>
-      tile.tone !== "quiet" || tile.item!.focus || tile.timing?.prominent,
-  );
+  // In tidy mode every slipped date is drawn on its own: it is the work.
+  const loud = tiles.filter((tile) => active(tile) || (tidy && tile.slipped));
   const quiet = tiles.filter((tile) => !loud.includes(tile));
   const shown =
     quiet.length - keepQuiet >= 2
@@ -703,24 +813,22 @@ function areaFrom(
     items,
     tiles: drawn,
     weight: areaWeight(drawn, false),
-    step: 1,
+    tier: "later",
     waiting: items.filter((item) => needsYou(heatTone(item))).length,
     running: items.filter(heatWorking).length,
     orchestrator: root?.orchestrator ?? null,
-    steps: new Map(),
+    tiers: new Map(),
   };
 }
-/** Pins, imminent dates and aged undated tasks stay outside the quiet cap. */
-const active = (tile: HeatTile) =>
-  tile.tone !== "quiet" || !!tile.item?.focus || !!tile.timing?.prominent;
 /**
- * An area weighs what its tiles lend it: each tile's size through its step's
- * gain, so the hot spots carry the area and cold work barely does. Before the
- * ranking every tile lends its whole size; quiet work is capped as a pile.
+ * An area weighs what its tiles lend it: each tile's size through its tier's
+ * gain, so the Now tiles carry the area and Later work barely does. Before
+ * the tiers are known every tile lends its whole size; quiet work is capped
+ * as a pile.
  */
 export function areaWeight(tiles: readonly HeatTile[], ranked = true) {
   const lent = (tile: HeatTile) =>
-    Math.max(0, tile.weight) * (ranked && tile.item ? STEP_GAIN[tile.step] : 1);
+    Math.max(0, tile.weight) * (ranked && tile.item ? TIER_GAIN[tile.tier] : 1);
   const loud = tiles.filter(active);
   return round(
     loud.reduce((sum, tile) => sum + lent(tile), 0) +
@@ -732,41 +840,69 @@ export function areaWeight(tiles: readonly HeatTile[], ranked = true) {
       ),
   );
 }
+/** The pile's cap in tidy mode is lifted: the slipped tiles are the work. */
+const TIDY_LIFT = 0.5;
+const TIDY_DIM = 0.5;
 /**
- * Depth by rank across the map: every tile drawn on its own is ranked by
- * pull against every other, whatever its area, and the three hottest are
- * numbered. Pull, not the floored size: tiles lifted to the readable minimum
- * share a size but keep their order. Grouped work is not in the ranking and
- * reads as the coldest. Once the steps are known each area weighs what its
- * tiles lend it and wears its hottest step.
+ * Tiers across the map: every tile drawn on its own is a prospect, whatever
+ * its area, and the capped fill order picks the few Now and Next tiles; the
+ * first three Now tiles are numbered. Each tile then says why in words, and
+ * takes its tier's size; in tidy mode the slipped tiles grow to the room a
+ * date-fix row needs and the rest shrink. Grouped work is Later. Once the
+ * tiers are known each area weighs what its tiles lend it and wears its
+ * hottest tier.
  */
-export function withSteps(areas: readonly HeatArea[]): HeatArea[] {
-  const drawn = areas.flatMap((area) =>
-    area.tiles.filter((tile) => tile.item).map((tile) => ({ id: tile.id, weight: tile.pull })),
-  );
-  const steps = rankSteps(drawn);
-  const top = heatOrder(drawn).slice(0, 3).map((tile) => tile.id);
+export function withTiers(areas: readonly HeatArea[], tidy = false): HeatArea[] {
+  const prospects = new Map<string, Prospect>();
+  for (const area of areas)
+    for (const tile of area.tiles)
+      if (tile.item)
+        prospects.set(tile.id, {
+          id: tile.id,
+          pull: tile.pull,
+          focus: tile.item.focus,
+          tone: tile.tone,
+          timing: tile.timing,
+          priority: tile.item.task?.priority ?? "none",
+          resting:
+            !!closedStatus(tile.item) || tile.timing?.kind === "snooze",
+        });
+  const tiers = assignTiers([...prospects.values()]);
   return areas.map((area) => {
-    const tiles = area.tiles.map((tile) => {
-      if (!tile.item) return tile;
-      const rank = top.indexOf(tile.id);
+    let tiles = area.tiles.map((tile) => {
+      const prospect = prospects.get(tile.id);
+      if (!prospect) return tile;
+      const { tier, rank } = tiers.get(tile.id) ?? { tier: "later" as Tier };
+      const words = tier === "later" ? { reason: "", compact: "" } : tileReason(prospect);
       return {
         ...tile,
-        step: steps.get(tile.id) ?? 1,
-        ...(rank >= 0 ? { rank: rank + 1 } : {}),
+        tier,
+        ...words,
+        weight: round(tile.weight * TIER_SIZE[tier]),
+        ...(rank ? { rank } : {}),
       };
     });
+    if (tidy) {
+      const top = Math.max(0, ...tiles.map((tile) => tile.weight));
+      tiles = tiles.map((tile) =>
+        tile.slipped
+          ? { ...tile, weight: round(Math.max(tile.weight, top * TIDY_LIFT)) }
+          : { ...tile, weight: round(tile.weight * TIDY_DIM) },
+      );
+    }
+    tiles = withFloor(heatOrder(tiles), TILE_FLOOR);
     return {
       ...area,
       tiles,
       weight: areaWeight(tiles),
-      step: tiles.reduce<Step>(
-        (top, tile) => (tile.item && tile.step > top ? tile.step : top),
-        1,
+      tier: tiles.reduce<Tier>(
+        (top, tile) =>
+          tile.item && tierRank(tile.tier) < tierRank(top) ? tile.tier : top,
+        "later",
       ),
-      steps: new Map(
+      tiers: new Map(
         tiles.flatMap((tile) =>
-          tile.item ? [[tile.item.id, tile.step] as const] : [],
+          tile.item ? [[tile.item.id, tile.tier] as const] : [],
         ),
       ),
     };
@@ -792,7 +928,8 @@ function loudness(tile: HeatTile) {
  */
 function moreTile(id: string, folded: readonly HeatTile[]): HeatTile {
   const strongest = [...folded].sort(
-    (a, b) => toneRank(a.tone) - toneRank(b.tone) || b.step - a.step,
+    (a, b) =>
+      toneRank(a.tone) - toneRank(b.tone) || tierRank(a.tier) - tierRank(b.tier),
   )[0];
   return {
     id,
@@ -803,7 +940,10 @@ function moreTile(id: string, folded: readonly HeatTile[]): HeatTile {
     stale: 0,
     waited: 0,
     pull: 0,
-    step: strongest?.step ?? 1,
+    tier: strongest?.tier ?? "later",
+    reason: "",
+    compact: "",
+    slipped: false,
     timing: null,
     overflow: true,
     running: folded.reduce((sum, tile) => sum + runningIn(tile), 0),
@@ -943,10 +1083,16 @@ export function openAreaWant(cards: number, max: number) {
 export function buildHeat(
   roots: readonly WorkItem[],
   now: number,
-  options: { uncollapsed?: readonly string[]; keepQuiet?: number } = {},
+  options: {
+    uncollapsed?: readonly string[];
+    keepQuiet?: number;
+    /** Tidy mode: slipped dates are the work; they grow and the rest shrinks. */
+    tidy?: boolean;
+  } = {},
 ): HeatArea[] {
   const open = new Set(options.uncollapsed ?? []);
   const keepQuiet = options.keepQuiet ?? 4;
+  const tidy = !!options.tidy;
   const loose = roots.filter((root) => root.kind !== "project");
   const areas = roots
     .filter((root) => root.kind === "project")
@@ -959,6 +1105,7 @@ export function buildHeat(
         root.children,
         now,
         open.has(root.id) ? Infinity : keepQuiet,
+        tidy,
       ),
     );
   if (loose.length)
@@ -971,10 +1118,11 @@ export function buildHeat(
         loose,
         now,
         open.has(SESSIONS_AREA) ? Infinity : 0,
+        tidy,
       ),
     );
   return heatOrder(
-    withCeiling(withFloor(heatOrder(withSteps(areas)), AREA_FLOOR), (area) =>
+    withCeiling(withFloor(heatOrder(withTiers(areas, tidy)), AREA_FLOOR), (area) =>
       areaCeiling(area.tiles.length),
     ),
   );
@@ -986,7 +1134,12 @@ export function heatStats(areas: readonly HeatArea[], now: number) {
     unread: items.filter((item) => heatTone(item) === "unread").length,
     running: items.filter(heatWorking).length,
     stale: items.filter((item) => staleDays(item, now)).length,
-    overdue: items.filter((item) => heatTiming(item, now)?.overdue).length,
+    /** Late by two weeks at most: urgency. Slipped dates are counted apart. */
+    overdue: items.filter((item) => {
+      const timing = heatTiming(item, now);
+      return timing?.overdue && !timing.slipped;
+    }).length,
+    slipped: items.filter((item) => heatTiming(item, now)?.slipped).length,
     aged: items.filter((item) => heatTiming(item, now)?.aged).length,
   };
 }

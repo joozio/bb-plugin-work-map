@@ -52,6 +52,8 @@ const FALLBACK = { width: 1280, height: 720 };
 const RUNNING = "agent running";
 /** The rank numeral and its gap, taken from the label row's room. */
 const RANK_W = 19;
+/** One row of date fixes: 24px buttons, 3px padding each side, a 1px edge. */
+const FIX_ROW = 24 + 6 + 1;
 /** The area header and the body padding are not available to the tiles. */
 const HEADER = 31;
 /** Below this area width the header keeps only the name and an orchestrator. */
@@ -81,6 +83,10 @@ export interface HeatProps {
   /** One line of live agent text for a tile, when the map already has it. */
   excerpt?: (item: WorkItem) => string;
   selected?: string[];
+  /** Tidy mode: slipped dates are the work; everything else dims. */
+  tidy?: boolean;
+  /** The date-fix row a slipped tile wears in tidy mode. */
+  dateFixes?: (item: WorkItem) => ReactNode;
 }
 export function HeatMap({
   areas,
@@ -96,6 +102,8 @@ export function HeatMap({
   tileActions,
   excerpt,
   selected,
+  tidy,
+  dateFixes,
 }: HeatProps) {
   const frame = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState(FALLBACK);
@@ -240,6 +248,7 @@ export function HeatMap({
     <div
       className="wm-heat"
       ref={frame}
+      data-tidy={tidy ? "true" : undefined}
       style={
         {
           "--wm-heat-areas": ordered.length,
@@ -256,7 +265,7 @@ export function HeatMap({
             key={area.id}
             data-layout-id={area.id}
             className={`wm-heat-area ${open ? "wm-heat-area-open" : ""} ${width < TIGHT ? "wm-heat-area-tight" : ""}`}
-            data-step={area.step}
+            data-tier={area.tier}
             style={box(rect)}
             aria-label={`${area.title} · ${areaState(area)}`}
           >
@@ -269,10 +278,10 @@ export function HeatMap({
                 onClick={() => onOpenArea(area)}
                 aria-label={`${area.root ? "Open project" : "Show every session in"} ${area.title}. ${areaState(area)}.`}
               >
-                {/* The area's hottest step, so the big picture reads at area level. */}
+                {/* The area's hottest tier, so the big picture reads at area level. */}
                 <i
                   className="wm-heat-key wm-heat-swatch"
-                  data-step={area.step}
+                  data-tier={area.tier}
                   aria-hidden="true"
                 />
                 <strong>{area.title}</strong>
@@ -321,6 +330,7 @@ export function HeatMap({
                       excerpt={open ? excerpt : undefined}
                       picked={!!selected?.includes(tile.item?.id ?? "")}
                       actRow={actRow}
+                      fixes={tidy ? dateFixes : undefined}
                     />
                   );
                 })}
@@ -462,7 +472,7 @@ function GroupTile({
     <div className="wm-heat-slot" data-layout-id={tile.id} style={box(rect)}>
       <div
         className={`wm-heat-tile wm-heat-${tile.overflow ? tile.tone : "quiet"} wm-heat-group ${tile.overflow ? "wm-heat-more" : ""} ${tile.running ? "wm-heat-running" : ""} ${shown.length ? "wm-heat-group-list" : ""}`}
-        data-step={tile.overflow ? tile.step : undefined}
+        data-tier={tile.overflow ? tile.tier : undefined}
         role="group"
         aria-label={`${tile.overflow ? foldHead(tile, Infinity) : head} in ${area.title}`}
         title={tile.overflow ? names.join(", ") : undefined}
@@ -491,7 +501,7 @@ function GroupTile({
                 >
                   <i
                     className={`wm-heat-row-dot wm-heat-${heatTone(member)}`}
-                    data-step={area.steps.get(member.id) ?? 1}
+                    data-tier={area.tiers.get(member.id) ?? "later"}
                     aria-hidden="true"
                   />
                   {member.task?.key ? <b>{member.task.key}</b> : null}
@@ -542,6 +552,7 @@ function Tile({
   excerpt,
   picked,
   actRow,
+  fixes,
 }: {
   tile: HeatTile;
   rect: Rect;
@@ -559,6 +570,8 @@ function Tile({
   excerpt?: (item: WorkItem) => string;
   picked?: boolean;
   actRow: number;
+  /** In tidy mode, the date-fix row a slipped tile wears. */
+  fixes?: (item: WorkItem) => ReactNode;
 }) {
   const item = tile.item;
   // Title from 30px of height; a key alone down to 30px of width; below that, colour only.
@@ -590,7 +603,7 @@ function Tile({
   const waiting = needsYou(tile.tone);
   // Tasks name their timing driver; session wait ages remain separate.
   const lead = item.task?.key ?? (working ? "running" : shortAge);
-  const label = tile.timing
+  const timingLabel = tile.timing
     ? tile.timing.label
     : waiting
       ? tile.waited === null
@@ -601,6 +614,13 @@ function Tile({
       : due && !due.endsWith("passed")
         ? due.replace(/^(Due|Planned) /, (word) => word.toLowerCase())
         : "";
+  // A coloured tile says why in words: the reason line takes the label's
+  // place, falling back to its compact words, then to the date alone. A
+  // Later tile keeps the plain date.
+  const label = tile.reason || timingLabel;
+  const shorter = tile.reason
+    ? [tile.compact, tile.timing?.compact ?? ""]
+    : [tile.timing?.compact ?? ""];
   // The key never gives way; the label shows whole or not at all, and the
   // accessible description keeps it either way.
   // The ask tag is hidden on a narrow tile (below 118px), so it is not budgeted there.
@@ -613,13 +633,33 @@ function Tile({
   const row = open
     ? { lead, label, ask }
     : labelRow(width - (rank ? RANK_W : 0) - (flag ? RANK_W : 0), lead, label, working, {
-        compact: tile.timing?.compact,
+        compact: shorter,
         ask: width < 118 ? "" : ask,
       });
+  // In tidy mode a slipped tile wears its date-fix row where it has the room:
+  // one row of four from 160px, two rows of two from 92px; below that the
+  // area opens to its cards, which always have the room.
+  const fixRows =
+    fixes && tile.slipped && !tiny && !closed
+      ? width >= 160 && height >= 60
+        ? 1
+        : width >= 92 && height >= 86
+          ? 2
+          : 0
+      : 0;
+  const fixHeight = fixRows * FIX_ROW;
   // Inside an expanded area a tile is a small card: it spends its room on the
   // state of the work rather than on empty fill. Tiles too small to hold a
   // title cannot hold facts either, so they keep exactly what they had.
   const inside = !!actions && !tiny && height > 74 && width > 104;
+  // A slipped card in tidy mode spends its footer on the date fixes.
+  const footer: "acts" | "fixes" | null = inside
+    ? fixes && tile.slipped && !closed
+      ? "fixes"
+      : "acts"
+    : fixRows
+      ? "fixes"
+      : null;
   const status = item.task?.nextAction || item.task?.summary || "";
   const attached = item.task?.sessionLinks?.length ?? item.threads.length;
   // The hue already says what the work needs; a fact repeats it only when it
@@ -658,7 +698,8 @@ function Tile({
   let lineRows = 0;
   let showFacts = false;
   if (inside) {
-    let room = height - CARD_CHROME - actRow - TITLE_LINE;
+    let room =
+      height - CARD_CHROME - (footer === "fixes" ? FIX_ROW : actRow) - TITLE_LINE;
     if (room >= TITLE_LINE) {
       lines = 2;
       room -= TITLE_LINE;
@@ -688,7 +729,7 @@ function Tile({
     }
   } else {
     // Clamp the title to the lines that actually fit, so nothing is cut mid-word.
-    const spent = 27 + (roomy ? 16 : 0);
+    const spent = 27 + (roomy ? 16 : 0) + fixHeight;
     lines = Math.max(1, Math.min(4, Math.floor((height - spent) / 14)));
   }
   // The act row keeps its labels only where they fit whole: every tile of a
@@ -705,6 +746,7 @@ function Tile({
       className={`wm-heat-slot ${open ? "wm-heat-slot-open" : ""}`}
       data-layout-id={tile.id}
       data-acts={acts}
+      data-fixes={footer === "fixes" ? (fixRows === 2 ? "grid" : "row") : undefined}
       style={
         {
           ...box(rect),
@@ -716,7 +758,8 @@ function Tile({
       <button
         type="button"
         data-work-id={item.id}
-        data-step={tile.step}
+        data-tier={tile.tier}
+        data-slipped={tile.slipped ? "true" : undefined}
         data-timing={tile.timing?.kind}
         aria-expanded={open}
         aria-controls={open ? `detail-${item.id}` : undefined}
@@ -733,8 +776,12 @@ function Tile({
               ? "Done"
               : "Canceled"
             : HEAT_LABEL[tile.tone],
+          tile.tier === "now"
+            ? `Now${tile.rank ? `, ${tile.rank} of 3` : ""}: ${tile.reason}`
+            : tile.tier === "next"
+              ? `Next: ${tile.reason}`
+              : "Later",
           item.focus ? "In focus" : "",
-          tile.rank ? `Hottest on the map, ${tile.rank} of 3` : "",
           tile.timing?.description ?? "",
           waiting
             ? tile.waited === null
@@ -788,7 +835,10 @@ function Tile({
         )}
         {lineRows > 0 && <span className="wm-heat-line">{line}</span>}
       </button>
-      {inside && actions?.(item)}
+      {footer === "acts" && actions?.(item)}
+      {footer === "fixes" && (
+        <div className="wm-tile-acts wm-tile-fixes">{fixes?.(item)}</div>
+      )}
       {open && details}
     </div>
   );

@@ -2,12 +2,20 @@ import type { WorkItem } from "./model";
 import { localDay, snoozeDays } from "./model";
 
 const DAY = 86400000;
-/** Days past due after which a date reads as stale rather than urgent. */
-export const LATE_DAYS = 14;
-/** Days past due after which a tile wears the stale hatch. */
-export const STALE_PAST_DAYS = 60;
+/**
+ * Days past due after which a date has slipped: it no longer says urgency,
+ * only that the date needs tidying. The task then ranks by its priority and
+ * what it needs alone, and wears a quiet "slipped Nd" label.
+ */
+export const SLIPPED_DAYS = 14;
 /** The least any dated or aged task pulls from its timing alone. */
 const NEAR_FLOOR = 0.2;
+/**
+ * What a slipped date pulls: flat, whatever the count of days, so a date
+ * three weeks past and one three months past rank the same, by priority and
+ * need. Under any date this week, over a date a month out.
+ */
+export const SLIPPED_NEAR = 0.3;
 /**
  * Straight lines between the named points: `[days, near]` in rising day
  * order; outside the span the ends hold.
@@ -24,19 +32,14 @@ export function ramp(points: readonly (readonly [number, number])[], x: number) 
   return points[points.length - 1][1];
 }
 /**
- * Pull by days past due (positive). The first week past due is the peak, as
- * hot as today; two weeks later it is still most of that; by two months it
- * is a third, and it keeps fading to the floor: a date long past is stale,
- * not urgent, and must not bury this week's.
+ * Pull by days past due (positive), up to the slipped mark. The first week
+ * past due is the peak, as hot as today; by two weeks it is still most of
+ * that. Past the mark the date has slipped and pulls SLIPPED_NEAR, flat.
  */
 const PAST: readonly (readonly [number, number])[] = [
   [0, 1],
   [7, 1],
-  [14, 0.85],
-  [30, 0.6],
-  [60, 0.36],
-  [90, 0.26],
-  [180, NEAR_FLOOR],
+  [SLIPPED_DAYS, 0.85],
 ];
 /** Pull by days until due: tomorrow is nearly today, a month out is the floor. */
 const AHEAD: readonly (readonly [number, number])[] = [
@@ -57,6 +60,7 @@ const AGE: readonly (readonly [number, number])[] = [
   [180, 0.5],
 ];
 export function dueNear(days: number) {
+  if (days < -SLIPPED_DAYS) return SLIPPED_NEAR;
   return days < 0 ? ramp(PAST, -days) : ramp(AHEAD, days);
 }
 export function ageNear(days: number) {
@@ -75,9 +79,10 @@ export interface HeatTiming {
   /** The label in fewest letters, for a tile too narrow for the full one. */
   compact: string;
   description: string;
+  /** Past its date, slipped or not. */
   overdue: boolean;
-  /** Past due by more than two weeks: stale rather than urgent. */
-  late: boolean;
+  /** Past due by more than SLIPPED_DAYS: a date to tidy, not urgency. */
+  slipped: boolean;
   aged: boolean;
   prominent: boolean;
 }
@@ -117,7 +122,7 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
       description: `Snoozed until ${localDay(item.snoozedUntil)}${task.dueDate ? `; due ${task.dueDate}` : ""}`,
       near: 0.1,
       overdue: false,
-      late: false,
+      slipped: false,
       aged: false,
       prominent: false,
     };
@@ -128,10 +133,13 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
     const days = day - localCalendarDay(now);
     const past = -days;
     const plan = task.dateKind === "plan";
+    const slipped = past > SLIPPED_DAYS;
     const prefix = plan ? "Planned" : "Due";
-    const label =
-      days < 0
-        ? `${-days}d ${plan ? "past plan" : "overdue"}`
+    // "2d late" is urgency; "slipped 21d" is a date to tidy. Both say the count.
+    const label = slipped
+      ? `slipped ${past}d`
+      : days < 0
+        ? `${past}d ${plan ? "past plan" : "late"}`
         : days === 0
           ? `${prefix} today`
           : days === 1
@@ -141,9 +149,10 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
       kind: "due",
       days,
       label,
-      compact:
-        days < 0
-          ? `${-days}d`
+      compact: slipped
+        ? `slip ${past}d`
+        : days < 0
+          ? `${past}d late`
           : days === 0
             ? "today"
             : days === 1
@@ -152,9 +161,11 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
       description: `${label} (${task.dueDate})`,
       near: dueNear(days),
       overdue: days < 0,
-      late: past > LATE_DAYS,
+      slipped,
       aged: false,
-      prominent: days <= 3,
+      // A slipped date is not imminent: it no longer keeps a quiet task out
+      // of the quiet pile on its own.
+      prominent: days <= 3 && !slipped,
     };
   }
   const created = Date.parse(task.createdAt ?? "");
@@ -173,7 +184,7 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
     description: `Created ${days} ${days === 1 ? "day" : "days"} ago; no due date`,
     near: ageNear(days),
     overdue: false,
-    late: false,
+    slipped: false,
     aged: days >= 30,
     prominent: days >= 30,
   };
