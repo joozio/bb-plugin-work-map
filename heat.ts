@@ -931,8 +931,10 @@ const runningIn = (tile: HeatTile) =>
  * then a result to read, then quiet work. The quietest folds first.
  */
 function loudness(tile: HeatTile) {
-  // A Now tile is the point of the map: it folds after everything else.
-  if (tile.tier === "now") return 4;
+  // A Now tile is the point of the map: it folds after everything else, and
+  // a Next tile after anything Later, however light its words made it.
+  if (tile.tier === "now") return 5;
+  if (tile.tier === "next") return 4;
   if (needsYou(tile.tone)) return 3;
   if (runningIn(tile)) return 2;
   return tile.tone === "unread" ? 1 : 0;

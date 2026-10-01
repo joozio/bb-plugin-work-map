@@ -3298,3 +3298,131 @@ i.wm-heat-key.wm-heat-focused {
     max-height: calc(3 * 36px + 2 * 2px);
   }
 }
+
+/* ── 0.1.18: a bigger tile shows more of the work ───────────────────────── */
+/* The ask: what needs to be done, from the task itself (its "Needs you:"
+   comment, its NEXT STEP, else its summary). Budgeted in whole lines from
+   the tile's height, so the text fills the tile and nothing is cut mid-line. */
+.wm-heat-ask-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--wm-heat-ask-lines, 2);
+  overflow: hidden;
+  flex: none;
+  font-size: 10.5px;
+  line-height: 1.3;
+  opacity: 0.92;
+  overflow-wrap: anywhere;
+}
+.wm-heat-tile[data-tier="later"] .wm-heat-ask-text {
+  opacity: 0.85;
+}
+/* One line of context under the ask: sessions, waiting on, the agent's state. */
+.wm-heat-context {
+  flex: none;
+  font-size: 9.5px;
+  line-height: 1.4;
+  opacity: 0.72;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A Now tile carrying several lines of text keeps its red, a shade deeper
+   under the words so the white ask reads; the edge stays the strong red. */
+.wm-heat-tile[data-tier="now"] .wm-heat-ask-text,
+.wm-heat-tile[data-tier="now"] .wm-heat-context,
+.wm-heat-tile[data-tier="now"] .wm-heat-line,
+.wm-heat-tile[data-tier="now"] .wm-heat-facts {
+  color: #fff;
+}
+
+/* ── 0.1.18: an open area is a calm flow of cards ───────────────────────── */
+/* Cards in priority order, each as tall as what it says: the grid places
+   them, columns from the width alone, and the area body scrolls past them. */
+.wm-heat-cards.wm-heat-flow {
+  position: relative;
+  inset: auto;
+  display: grid;
+  gap: 4px;
+  align-items: start;
+  grid-auto-rows: auto;
+  padding-bottom: 2px;
+}
+.wm-heat-flow .wm-heat-slot {
+  position: relative;
+  left: auto;
+  top: auto;
+  width: auto;
+  height: auto;
+  padding: 0;
+}
+.wm-heat-flow .wm-heat-slot:not(.wm-heat-slot-open) > .wm-heat-tile {
+  height: auto;
+  padding: 6px 8px 7px;
+}
+/* A quiet foot on every card: the hovered act row floats there and never
+   over the title. */
+@media (hover: hover) {
+  .wm-heat-flow .wm-heat-slot:not(.wm-heat-slot-open):has(> .wm-tile-acts:not(.wm-tile-fixes)) > .wm-heat-tile {
+    padding-bottom: 18px;
+  }
+}
+.wm-heat-flow .wm-heat-slot .wm-heat-title {
+  font-size: 12px;
+}
+.wm-heat-flow .wm-heat-ask-text {
+  font-size: 11px;
+  opacity: 0.9;
+}
+/* A quiet label over each run of cards sharing a priority. */
+.wm-heat-group-label {
+  grid-column: 1 / -1;
+  padding: 7px 4px 1px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--wm-dim);
+}
+.wm-heat-group-label:first-child {
+  padding-top: 1px;
+}
+/* Acts on hover and on focus, not always: the row floats over the card's
+   foot while the pointer is on the card or a key has reached one of its
+   buttons (Tab still gets there; the buttons are in the tree throughout).
+   Tidy mode's date fixes are the work and stay in view. */
+@media (hover: hover) {
+  .wm-heat-flow .wm-heat-slot:not(.wm-heat-slot-open) > .wm-tile-acts:not(.wm-tile-fixes) {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    bottom: 4px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s;
+  }
+  .wm-heat-flow .wm-heat-slot:not(.wm-heat-slot-open):hover > .wm-tile-acts,
+  .wm-heat-flow .wm-heat-slot:not(.wm-heat-slot-open):focus-within > .wm-tile-acts {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .wm-heat-flow .wm-heat-slot:not(.wm-heat-slot-open) > .wm-tile-acts:not(.wm-tile-fixes) .wm-tile-actions,
+  .wm-heat-flow .wm-heat-slot:not(.wm-heat-slot-open) > .wm-tile-acts:not(.wm-tile-fixes) .wm-tile-error,
+  .wm-heat-flow .wm-heat-slot:not(.wm-heat-slot-open) > .wm-tile-acts:not(.wm-tile-fixes) .wm-tile-note {
+    border-top: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--card);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  }
+  .wm-heat-flow .wm-heat-slot:not(.wm-heat-slot-open):has(> .wm-tile-acts:not(.wm-tile-fixes)) > .wm-heat-tile {
+    border-radius: 6px;
+  }
+}
+/* No pointer to hover with: the acts keep their place under every card. */
+@media (hover: none) {
+  .wm-heat-flow .wm-heat-slot:not(.wm-heat-slot-open) > .wm-tile-acts {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

@@ -12,6 +12,7 @@ import {
   foldSmall,
   heatOrder,
   heatWorking,
+  labelWidth,
   openAreaShare,
   openAreaWant,
   labelRow,
@@ -78,6 +79,82 @@ const TIGHT = 200;
 const BODY_PAD = 6;
 /** The gap between rows of the bulk bar. */
 const BULK_GAP = 6;
+/** The ask a tile shows: the task's own, else its next step, else its summary. */
+function askOf(item: WorkItem) {
+  return (item.task?.ask || item.nextAction || item.summary || "").trim();
+}
+/** Lines a run of text takes at a tile width, from the label-width estimate. */
+function linesFor(text: string, size: number, width: number) {
+  return text
+    ? Math.max(
+        1,
+        Math.ceil((labelWidth(text) * (size / 9.5)) / Math.max(40, width - 16)),
+      )
+    : 0;
+}
+/**
+ * The height a map tile needs to say everything it has at this width: label
+ * row, the whole title (up to four lines), the reason, the ask (up to its
+ * cap), one line of context. Past this a tile is empty fill, so a Now tile
+ * wider than its words gives the room back to its neighbours.
+ */
+export function neededHeight(tile: HeatTile, width: number) {
+  const item = tile.item;
+  if (!item) return 0;
+  const { title } = tileText(item.title);
+  const ask = width >= ASK_MIN_W ? askOf(item) : "";
+  const askLines = Math.min(ASK_MAX, linesFor(ask, 10.5, width));
+  const attached = item.task?.sessionLinks?.length ?? item.threads.length;
+  return (
+    TILE_CHROME +
+    Math.min(4, linesFor(title, 11.5, width)) * TITLE_LINE +
+    (item.reason ? REASON_ROW : 0) +
+    (askLines ? askLines * ASK_LINE + ASK_GAP : 0) +
+    (attached || heatWorking(item) ? CONTEXT_ROW : 0)
+  );
+}
+/** A tile taller than this many times its words shrinks to them. */
+const FILL_SLACK = 1.25;
+/** A Now tile weighs at least this much more than any other tile of its area. */
+const NOW_LEAD = 1.1;
+/**
+ * Give back the fill: any tile drawn far taller than its words needs is
+ * re-weighted to about that height and the area is laid out again, so the
+ * room goes to the tiles beside it. Size still says what is important: a
+ * Now tile stays the heaviest of its area by a margin, whatever its words.
+ */
+export function fitToWords(
+  tiles: readonly HeatTile[],
+  rects: ReadonlyMap<string, Rect>,
+  size: { w: number; h: number },
+): HeatTile[] | null {
+  let changed = false;
+  const fitted = tiles.map((tile) => {
+    const cell = rects.get(tile.id);
+    if (!cell || !tile.item) return tile;
+    const width = (cell.w / 100) * size.w;
+    const height = (cell.h / 100) * size.h;
+    const need = neededHeight(tile, width) + BODY_PAD;
+    if (height <= need * FILL_SLACK) return tile;
+    const weight = tile.weight * ((need * 1.1) / height);
+    if (weight >= tile.weight) return tile;
+    changed = true;
+    return { ...tile, weight: Math.round(weight * 10000) / 10000 };
+  });
+  const lead =
+    Math.max(
+      0,
+      ...fitted
+        .filter((tile) => tile.tier !== "now" && tile.item)
+        .map((tile) => tile.weight),
+    ) * NOW_LEAD;
+  const out = fitted.map((tile) => {
+    if (tile.tier !== "now" || !tile.item || tile.weight >= lead) return tile;
+    changed = true;
+    return { ...tile, weight: Math.round(lead * 10000) / 10000 };
+  });
+  return changed ? out : null;
+}
 const box = (rect: Rect): CSSProperties => ({
   left: `${rect.x}%`,
   top: `${rect.y}%`,
@@ -242,16 +319,29 @@ export function HeatMap({
       // squarified map would draw too small for its key and a title line
       // folds into one "+N more" tile instead of a blank sliver.
       const keep = open ? expandedItemId : undefined;
-      const tiles = foldSmall(
-        open ? evenOut(ranked, EVEN_RATIO) : ranked,
-        { w: bodyWidth, h: bodyHeight },
-        { id: area.id, keep, share: TILE_SHARE },
-      );
-      const inner = place(
-        partition(tiles, { ...UNIT, w: bodyWidth, h: bodyHeight }),
-        expandedWeights(tiles, keep, TILE_SHARE),
-        UNIT,
-      );
+      const body = { w: bodyWidth, h: bodyHeight };
+      const lay = (source: readonly HeatTile[]) => {
+        const tiles = foldSmall(source, body, {
+          id: area.id,
+          keep,
+          share: TILE_SHARE,
+        });
+        const inner = place(
+          partition(tiles, { ...UNIT, w: bodyWidth, h: bodyHeight }),
+          expandedWeights(tiles, keep, TILE_SHARE),
+          UNIT,
+        );
+        return { tiles, inner };
+      };
+      let { tiles, inner } = lay(open ? evenOut(ranked, EVEN_RATIO) : ranked);
+      // A tile far taller than its words gives the room back, three passes
+      // at most: each pass sees the widths the one before it changed.
+      if (!open)
+        for (let pass = 0; pass < 3; pass++) {
+          const fitted = fitToWords(tiles, inner, body);
+          if (!fitted) break;
+          ({ tiles, inner } = lay(fitted));
+        }
       return { area, rect, tiles, inner, bodyHeight, scroll: false, flow: null };
     });
   }, [
@@ -763,17 +853,10 @@ function Tile({
   // facts, then a third title line if room is left.
   // What needs to be done, from the task itself: its ask, else its next
   // step, else its summary. A session's summary is its latest word.
-  const askText = (item.task?.ask || item.nextAction || item.summary || "").trim();
+  const askText = askOf(item);
   // How many lines the ask would fill at this width, so a short ask never
   // reserves blank rows that the title or the context could use instead.
-  const askNeeds = askText
-    ? Math.max(
-        1,
-        Math.ceil(
-          (labelWidth(askText) * (10.5 / 9.5)) / Math.max(40, width - 16),
-        ),
-      )
-    : 0;
+  const askNeeds = linesFor(askText, 10.5, width);
   const context = tiny || closed
     ? []
     : [
