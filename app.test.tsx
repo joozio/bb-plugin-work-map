@@ -2760,20 +2760,60 @@ describe("heat layout", () => {
       ),
     ).filter((node) => node.querySelector(".wm-heat-tile:not(.wm-heat-group)"));
     expect(slots.length).toBe(3);
-    // Sizes are evened out: the quiet backlog task is still a card you can act on.
-    const sizes = slots.map((node) => rect(node).w * rect(node).h);
-    expect(Math.min(...sizes) / Math.max(...sizes)).toBeGreaterThanOrEqual(0.5);
-    for (const node of slots) {
-      expect(node.querySelector(".wm-tile-actions")).toBeTruthy();
-      expect(["full", "lead", "icons"]).toContain(node.dataset.acts);
-    }
-    // The hue already says "Needs your input"; the facts carry only what it adds.
+    // An open area is a flow of content-sized cards: the grid places them,
+    // so no slot carries a rectangle of its own.
+    expect(open.querySelector(".wm-heat-cards")!.classList).toContain(
+      "wm-heat-flow",
+    );
+    for (const node of slots) expect(node.style.width).toBe("");
+    // Every card has the same act-row shape and all three acts.
+    expect(new Set(slots.map((node) => node.dataset.acts)).size).toBe(1);
+    expect(["full", "lead", "icons"]).toContain(slots[0].dataset.acts);
+    for (const node of slots)
+      expect(
+        node.querySelectorAll(".wm-tile-actions > button"),
+      ).toHaveLength(3);
+    // The quiet backlog task is still a card you can act on.
+    const quiet = slot.getByRole("button", {
+      name: /^Preview Quiet backlog item\./,
+    });
+    expect(
+      quiet.closest(".wm-heat-slot")!.querySelector(".wm-tile-actions"),
+    ).toBeTruthy();
+    // The hue already says "Needs your input"; the facts carry only what it
+    // adds, and in a flow the priority belongs to the group label, not a fact.
     const facts = Array.from(open.querySelectorAll(".wm-heat-facts")).map(
       (node) => node.textContent ?? "",
     );
     expect(facts.join(" ")).not.toContain("Needs your input");
-    expect(facts.join(" ")).toContain("medium priority");
+    expect(facts.join(" ")).not.toContain("priority");
     expect(open.querySelector(".wm-heat-reason")).toBeNull();
+    // Every task here is medium: one group, so no label repeats it.
+    expect(open.querySelector(".wm-heat-group-label")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
+  it("opens an area in Heat as a flow of cards under priority labels", async () => {
+    const slot = await mount({
+      layout: "heat",
+      tasks: [
+        task({ id: "t1", key: "TEST-1", title: "Medium one" }),
+        task({ id: "t2", key: "TEST-2", title: "Urgent one", priority: "urgent" }),
+        task({ id: "t3", key: "TEST-3", title: "Low one", priority: "low" }),
+      ],
+      threads: [],
+    });
+    await expandProject(slot);
+    const open =
+      slot.container.querySelector<HTMLElement>(".wm-heat-area-open")!;
+    expect(open.querySelector(".wm-heat-cards")!.classList).toContain(
+      "wm-heat-flow",
+    );
+    expect(
+      within(open)
+        .getAllByRole("heading", { level: 4 })
+        .map((node) => node.textContent),
+    ).toEqual(["Urgent", "Medium", "Low / none"]);
     slot.lifecycle.unmount();
   });
 

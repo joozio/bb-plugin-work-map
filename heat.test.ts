@@ -53,6 +53,12 @@ import {
   openAreaWant,
   OPEN_AREA_FLOOR,
   MIN_TILE,
+  NOW_SHARE_CAP,
+  capNowShare,
+  nowScale,
+  nowShare,
+  priorityGroup,
+  priorityOrder,
 } from "./heat";
 
 const DAY = 86400000;
@@ -1575,5 +1581,126 @@ describe("a fold never hides running work behind quiet work", () => {
           ? "working"
           : "quiet",
     );
+  });
+});
+
+describe("the Now share of the map", () => {
+  const tileOf = (id: string, weight: number, tier: Tier): HeatTile => ({
+    id, weight, pull: 0, tone: "review", item: item({ id, attention: "review" }),
+    members: [], stale: 0, waited: null, tier, reason: "", compact: "", slipped: false, timing: null,
+  });
+  const areaOf = (id: string, tiles: HeatTile[]): HeatArea => ({
+    id, title: id, scope: id, root: null, weight: areaWeight(tiles), tier: "later",
+    waiting: 0, running: 0, orchestrator: null, items: [], tiles, tiers: new Map(),
+  });
+  const same = (areas: readonly HeatArea[]) => [...areas];
+  const nowOf = (area: HeatArea) => area.tiles.filter((t) => t.tier === "now");
+
+  it("reads the Now tiles' share of the map from each area's share and the tiles' share of it", () => {
+    const one = areaOf("p", [
+      tileOf("now", 3, "now"),
+      tileOf("l1", 1, "later"),
+      tileOf("l2", 1, "later"),
+      tileOf("l3", 1, "later"),
+    ]);
+    expect(nowShare([one])).toBeCloseTo(0.5, 6);
+    expect(nowShare([])).toBe(0);
+  });
+
+  it("shrinks the Now tiles to the cap and keeps them the heaviest of their area", () => {
+    const areas = [
+      areaOf("hot", [tileOf("now", 1.5, "now"), tileOf("a", 0.5, "later"), tileOf("b", 0.5, "later")]),
+      areaOf("cold", [tileOf("c", 1, "later"), tileOf("d", 1, "later"), tileOf("e", 1, "later")]),
+    ];
+    expect(nowShare(areas)).toBeGreaterThan(NOW_SHARE_CAP);
+    const capped = capNowShare(areas, same);
+    expect(nowShare(capped)).toBeLessThanOrEqual(NOW_SHARE_CAP + 1e-6);
+    const hot = capped.find((area) => area.id === "hot")!;
+    const [now] = nowOf(hot);
+    for (const tile of hot.tiles.filter((t) => t.tier !== "now"))
+      expect(now.weight).toBeGreaterThan(tile.weight);
+    // Only the Now tiles move; the room they give back goes to the rest.
+    expect(capped.find((area) => area.id === "cold")!.tiles).toEqual(areas[1].tiles);
+    expect(hot.weight).toBeLessThan(areas[0].weight);
+  });
+
+  it("never scales the Now tiles under the floor, even when the cap cannot be met", () => {
+    // One area, the Now tile three fifths of it: at 0.4 of its weight it is
+    // still more than the cap, so the scale stops at the floor.
+    const areas = [areaOf("p", [tileOf("now", 3, "now"), tileOf("a", 1, "later"), tileOf("b", 1, "later")])];
+    expect(nowShare(areas)).toBeCloseTo(0.6, 6);
+    const scale = nowScale(areas, same);
+    expect(scale).toBeGreaterThanOrEqual(0.4);
+    expect(scale * 0.94).toBeLessThan(0.4);
+    const capped = capNowShare(areas, same);
+    expect(nowShare(capped)).toBeGreaterThan(NOW_SHARE_CAP);
+    expect(nowOf(capped[0])[0].weight).toBeCloseTo(3 * scale, 3);
+    expect(nowOf(capped[0])[0].weight).toBeGreaterThan(1);
+  });
+});
+
+describe("the order of an open area's cards", () => {
+  const card = (id: string, weight: number, priority: string, status = "todo"): HeatTile => ({
+    id, weight, pull: 0, tone: "quiet", item: item({ id, task: task({ id, priority, status }) }),
+    members: [], stale: 0, waited: null, tier: "later", reason: "", compact: "", slipped: false, timing: null,
+  });
+
+  it("puts closed work last, then urgent, high, medium, low and none, heavier first, then by id", () => {
+    const tiles = [
+      card("done-urgent", 9, "urgent", "done"),
+      card("low", 5, "low"),
+      card("none", 6, "none"),
+      card("medium-b", 2, "medium"),
+      card("medium-light", 1, "medium"),
+      card("medium-a", 2, "medium"),
+      card("high", 1, "high"),
+      card("urgent", 0.5, "urgent"),
+      card("canceled", 3, "medium", "canceled"),
+    ];
+    expect(priorityOrder(tiles).map((t) => t.id)).toEqual([
+      "urgent",
+      "high",
+      "medium-a",
+      "medium-b",
+      "medium-light",
+      // Low and none are one group, so weight decides between them.
+      "none",
+      "low",
+      "done-urgent",
+      "canceled",
+    ]);
+  });
+
+  it("names each priority group in a word", () => {
+    expect(priorityGroup("urgent")).toBe("Urgent");
+    expect(priorityGroup("high")).toBe("High");
+    expect(priorityGroup("medium")).toBe("Medium");
+    expect(priorityGroup("low")).toBe("Low / none");
+    expect(priorityGroup("none")).toBe("Low / none");
+    expect(priorityGroup(undefined)).toBe("Low / none");
+  });
+});
+
+describe("folding Next after Later", () => {
+  it("folds a heavier Later tile before a lighter Next one", () => {
+    const tileOf = (id: string, weight: number, tier: Tier): HeatTile => ({
+      id, weight, pull: 0, tone: "quiet", item: item({ id }),
+      members: [], stale: 0, waited: null, tier, reason: "", compact: "", slipped: false, timing: null,
+    });
+    const tiles = [
+      tileOf("later-a", 6, "later"),
+      tileOf("later-b", 3, "later"),
+      tileOf("next", 1, "next"),
+    ];
+    const size = { w: 300, h: 120 };
+    const rect = { x: 0, y: 0, ...size };
+    // Unfolded, the Next tile is too small to read: something must fold.
+    const before = place(partition(tiles, rect), expandedWeights(tiles, undefined, 0.78), rect);
+    const cell = before.get("next")!;
+    expect(cell.w < MIN_TILE.w || cell.h < MIN_TILE.h).toBe(true);
+    const shown = foldSmall(tiles, size, { id: "p1" });
+    const more = shown.find((tile) => tile.overflow)!;
+    expect(more.members.map((member) => member.id)).toEqual(["later-b"]);
+    expect(shown.map((tile) => tile.id).sort()).toEqual(["later-a", "more:p1", "next"]);
   });
 });

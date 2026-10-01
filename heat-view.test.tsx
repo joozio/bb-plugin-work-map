@@ -1,12 +1,18 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { data, now, task, thread } from "./fixtures";
 import { buildMap, localDay } from "./model";
-import { buildHeat } from "./heat";
-import { HeatMap, foldHead, groupRows } from "./heat-view";
+import { buildHeat, type HeatTile, type Tier } from "./heat";
+import {
+  HeatMap,
+  fitToWords,
+  foldHead,
+  groupRows,
+  neededHeight,
+} from "./heat-view";
 
 const DAY = 86400000;
 const due = (days: number) => localDay(now + days * DAY);
@@ -197,7 +203,10 @@ it("says agent running whole on an open card, beside its green dot", () => {
 });
 
 it("budgets a card's rows from the measured act row, not an assumed one", () => {
-  const budget = (actRow: number) => {
+  const budget = (actRow: number, expanded: boolean) => {
+    // A wide, low frame: beside an open card the sibling is short enough
+    // that the act row decides how many rows it keeps.
+    const [width, height] = expanded ? [1000, 200] : [300, 200];
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -209,9 +218,9 @@ it("budgets a card's rows from the measured act row, not an assumed one", () => 
             [
               {
                 target,
-                contentRect: { width: 300, height: bar ? 0 : 200 },
+                contentRect: { width, height: bar ? 0 : height },
                 borderBoxSize: row
-                  ? [{ blockSize: actRow, inlineSize: 300 }]
+                  ? [{ blockSize: actRow, inlineSize: width }]
                   : [],
               } as unknown as ResizeObserverEntry,
             ],
@@ -222,9 +231,17 @@ it("budgets a card's rows from the measured act row, not an assumed one", () => 
       },
     );
     const view = heat(
-      [task({ id: "card", key: "T-5", title: "Card", priority: "high" })],
+      [
+        ...(expanded
+          ? [task({ id: "big", key: "T-1", title: "Big", priority: "high" })]
+          : []),
+        task({ id: "card", key: "T-5", title: "Card", priority: "high" }),
+      ],
       [],
-      { tileActions: () => <div className="wm-tile-actions" /> },
+      {
+        tileActions: () => <div className="wm-tile-actions" />,
+        ...(expanded ? { expandedItemId: "task:big" } : {}),
+      },
       true,
     );
     const slot = tile(view, "Card").parentElement!;
@@ -232,13 +249,20 @@ it("budgets a card's rows from the measured act row, not an assumed one", () => 
       slot.style.getPropertyValue("--wm-heat-lines"),
       slot.style.getPropertyValue("--wm-heat-line-rows"),
     ];
+    expect(
+      !!view.container.querySelector(".wm-heat-cards.wm-heat-flow"),
+    ).toBe(!expanded);
     view.unmount();
     return rows;
   };
-  // A desktop act row leaves room for the latest word; a phone-sized one
-  // takes that room back instead of pushing rows out of the card.
-  expect(budget(31)).toEqual(["4", "2"]);
-  expect(budget(90)).toEqual(["3", "0"]);
+  // Beside an open card the squarified cards keep their budget: a desktop act
+  // row leaves room for the latest word; a phone-sized one takes that room
+  // back instead of pushing rows out of the card.
+  expect(budget(31, true)).toEqual(["4", "2"]);
+  expect(budget(90, true)).toEqual(["3", "0"]);
+  // A card in a flow is as tall as what it says: the act row changes nothing.
+  expect(budget(31, false)).toEqual(["3", "0"]);
+  expect(budget(90, false)).toEqual(["3", "0"]);
 });
 
 it("gives card acts, bulk acts and picker rows 24px, and 36px under 720px", () => {
@@ -307,38 +331,54 @@ it("draws no titleless tile in a small area: the unreadable ones fold into a nam
 });
 
 it("keeps open-area cards readable and scrolls the area body when they do not fit", () => {
-  frame(420, 260);
   const keys = Array.from({ length: 12 }, (_, index) => `DT-${index + 1}`);
-  const view = heat(
-    keys.map((key, index) =>
-      task({
-        id: `t${index}`,
-        key,
-        title: `Draft ${key}`,
-        status: "in_review",
-      }),
-    ),
-    [],
-    { tileActions: () => <div className="wm-tile-actions" /> },
-    true,
-  );
+  const open = (width: number) => {
+    frame(width, 260);
+    return heat(
+      keys.map((key, index) =>
+        task({
+          id: `t${index}`,
+          key,
+          title: `Draft ${key}`,
+          status: "in_review",
+        }),
+      ),
+      [],
+      { tileActions: () => <div className="wm-tile-actions" /> },
+      true,
+    );
+  };
+  const columns = (view: ReturnType<typeof render>) =>
+    Number(
+      /^repeat\((\d+), minmax\(0, 1fr\)\)$/.exec(
+        view.container.querySelector<HTMLElement>(".wm-heat-cards")!.style
+          .gridTemplateColumns,
+      )![1],
+    );
+  const view = open(420);
   const body = view.container.querySelector(
     ".wm-heat-area-open .wm-heat-body",
   )!;
   expect(body.classList).toContain("wm-heat-body-scroll");
   const cards = body.querySelector<HTMLElement>(".wm-heat-cards")!;
-  const height = parseFloat(cards.style.height);
-  expect(height).toBeGreaterThan(260);
+  expect(cards.classList).toContain("wm-heat-flow");
+  // The flow is as tall as its cards; the body scrolls, nothing sets a height.
+  expect(cards.style.height).toBe("");
+  // 414px of body holds one 250px card a row, never a card under 150px.
+  expect(columns(view)).toBe(1);
   for (const key of keys) {
     const slot = tile(view, `Draft ${key}`).parentElement!;
-    // Two title lines plus the act row, never less.
-    expect(
-      (parseFloat(slot.style.height) / 100) * height,
-    ).toBeGreaterThanOrEqual(4 + 12 + 14.35 + 31 + 2 * 14.03 - 0.01);
+    expect(slot.style.height).toBe("");
+    expect(slot.style.getPropertyValue("--wm-heat-lines")).toBe("3");
     expect(
       tile(view, `Draft ${key}`).querySelector(".wm-heat-title"),
     ).not.toBeNull();
   }
+  view.unmount();
+  // A wider area flows into as many columns as fit at about 250px each.
+  const wide = open(1100);
+  expect(columns(wide)).toBe(Math.floor((1100 - 6 + 4) / 254));
+  expect(columns(wide)).toBeGreaterThanOrEqual(2);
 });
 
 it("keeps the orchestrator and every count on a narrow area header, in short words", () => {
@@ -876,4 +916,265 @@ it("puts the date fixes on a slipped tile in tidy mode where they fit: one row, 
     footer: false,
     tidy: undefined,
   });
+});
+
+it("puts the ask on a big map tile, with where it came from, and keeps it off a narrow one", () => {
+  const map = (width: number, height: number, overrides: Parameters<typeof task>[0]) => {
+    frame(width, height);
+    const view = heat([task({ id: "w", key: "T-1", title: "Write the post", ...overrides })]);
+    const button = tile(view, "Write the post");
+    const out = {
+      ask: button.querySelector<HTMLElement>(".wm-heat-ask-text"),
+      lines: Number(
+        button.parentElement!.style.getPropertyValue("--wm-heat-ask-lines"),
+      ),
+      context: button.querySelector(".wm-heat-context")?.textContent,
+    };
+    return { view, ...out };
+  };
+  const asked = map(1400, 800, {
+    summary:
+      "A long summary of everything the draft went through: three rounds of edits, a new opening, the links checked and the images sized for the post.",
+    ask: "Pick the title and post it.",
+    askFrom: "comment",
+  });
+  expect(asked.ask?.textContent).toBe("Pick the title and post it.");
+  expect(asked.ask?.dataset.askFrom).toBe("comment");
+  expect(asked.lines).toBeGreaterThanOrEqual(1);
+  asked.view.unmount();
+  // Without an ask of its own the tile says the next step.
+  const next = map(1400, 800, { nextAction: "Choose a direction" });
+  expect(next.ask?.textContent).toBe("Choose a direction");
+  expect(next.ask?.dataset.askFrom).toBeUndefined();
+  next.view.unmount();
+  // Under 90px wide the words of an ask do not fit: the tile keeps its title.
+  const narrow = map(86, 700, { ask: "Pick the title and post it." });
+  expect(narrow.ask).toBeNull();
+  expect(narrow.lines).toBe(0);
+  narrow.view.unmount();
+  // One line of context under the ask: the sessions attached.
+  const sessions = map(1400, 800, {
+    ask: "Pick the title and post it.",
+    sessionLinks: [
+      { threadId: "thr_a", title: "A", attachedAt: new Date(now).toISOString() },
+      { threadId: "thr_b", title: "B", attachedAt: new Date(now).toISOString() },
+    ],
+  });
+  expect(sessions.context).toBe("2 sessions");
+  sessions.view.unmount();
+});
+
+describe("fitting a tile to its words", () => {
+  const workItem = (ask: string, title = "Ship it") =>
+    buildMap(
+      data([task({ id: "w", title, ask, summary: "", nextAction: "" })]),
+      [],
+      {},
+      now,
+    )[0].children[0];
+  const tileOf = (
+    id: string,
+    weight: number,
+    tier: Tier,
+    ask: string,
+  ): HeatTile => ({
+    id,
+    weight,
+    pull: 0,
+    tone: "review",
+    item: { ...workItem(ask), id },
+    members: [],
+    stale: 0,
+    waited: null,
+    tier,
+    reason: "",
+    compact: "",
+    slipped: false,
+    timing: null,
+  });
+  const long =
+    "Read the three drafts side by side, pick the one whose opening lands, merge the best examples from the other two into it and send it back for a last pass before Friday.";
+
+  it("needs more height for a longer ask and none for a group tile", () => {
+    const short = neededHeight(tileOf("a", 1, "later", "Post it."), 300);
+    const longer = neededHeight(tileOf("a", 1, "later", long), 300);
+    expect(short).toBeGreaterThan(0);
+    expect(longer).toBeGreaterThan(short);
+    // Under 90px no ask is drawn, so it costs nothing.
+    expect(neededHeight(tileOf("a", 1, "later", long), 80)).toBe(
+      neededHeight(tileOf("a", 1, "later", "Post it."), 80),
+    );
+    expect(neededHeight({ ...tileOf("g", 1, "later", ""), item: null }, 300)).toBe(0);
+  });
+
+  it("leaves tiles that already fit their words alone", () => {
+    const tiles = [tileOf("a", 1, "later", long), tileOf("b", 0.8, "next", long)];
+    const height = neededHeight(tiles[0], 200) + 6;
+    const rects = new Map([
+      ["a", { x: 0, y: 0, w: 50, h: 100 }],
+      ["b", { x: 50, y: 0, w: 50, h: 100 }],
+    ]);
+    expect(fitToWords(tiles, rects, { w: 400, h: height })).toBeNull();
+  });
+
+  it("shrinks a tall tile to its words, never under half its original weight", () => {
+    const tall = [tileOf("a", 1, "later", "Post.")];
+    const rects = new Map([["a", { x: 0, y: 0, w: 100, h: 100 }]]);
+    const size = { w: 200, h: 2000 };
+    expect(fitToWords(tall, rects, size)![0].weight).toBe(0.5);
+    // Half of the weight before any fitting, not of the current one.
+    expect(fitToWords(tall, rects, size, new Map([["a", 0.8]]))![0].weight).toBe(0.4);
+  });
+
+  it("keeps a Now tile at least 1.1 times the heaviest other tile of its area", () => {
+    const tiles = [tileOf("now", 1, "now", "Post."), tileOf("later", 0.8, "later", long)];
+    const rects = new Map([
+      ["now", { x: 0, y: 0, w: 50, h: 100 }],
+      ["later", { x: 50, y: 0, w: 50, h: 100 }],
+    ]);
+    // 150px tall: the Later tile's long ask fills it; the Now tile's one word does not.
+    const fitted = fitToWords(tiles, rects, { w: 400, h: 150 })!;
+    const by = new Map(fitted.map((t) => [t.id, t.weight]));
+    expect(by.get("later")).toBe(0.8);
+    expect(by.get("now")!).toBeLessThan(1);
+    expect(by.get("now")!).toBeCloseTo(0.8 * 1.1, 4);
+  });
+});
+
+it("orders an open area's cards by priority, heavier first, closed last, under one label per priority", () => {
+  frame(1200, 700);
+  const tasks = [
+    task({ id: "m1", key: "T-1", title: "Medium due", priority: "medium", status: "in_review", dateKind: "deadline", dueDate: due(1) }),
+    task({ id: "h", key: "T-2", title: "High", priority: "high" }),
+    task({ id: "l", key: "T-3", title: "Low", priority: "low" }),
+    task({ id: "u", key: "T-4", title: "Urgent", priority: "urgent" }),
+    task({ id: "m2", key: "T-5", title: "Medium plain", priority: "medium" }),
+    // A closed task stays on the map while its result is unread.
+    task({ id: "d", key: "T-6", title: "Done", priority: "urgent", status: "done", threadIds: ["thr_done"] }),
+  ];
+  const threads = [thread({ id: "thr_done", indicator: "unread-success", isUnread: true })];
+  const open = (list: typeof tasks) => {
+    const areas = buildHeat(buildMap(data(list), threads, {}, now), now, {
+      uncollapsed: ["project:p1"],
+    });
+    return render(
+      <HeatMap
+        areas={areas}
+        expandedAreaId="project:p1"
+        now={now}
+        onOpenArea={() => {}}
+        onOpen={() => {}}
+        onDragStart={() => {}}
+        onDragEnd={() => {}}
+        tileActions={() => <div className="wm-tile-actions" />}
+      />,
+    );
+  };
+  const view = open(tasks);
+  const flow = view.container.querySelector<HTMLElement>(".wm-heat-flow")!;
+  expect(
+    Array.from(flow.querySelectorAll(".wm-heat-key-text"), (e) => e.textContent),
+  ).toEqual(["T-4", "T-2", "T-1", "T-5", "T-3", "T-6"]);
+  expect(
+    view.getAllByRole("heading", { level: 4 }).map((e) => e.textContent),
+  ).toEqual(["Urgent", "High", "Medium", "Low / none", "Closed"]);
+  // Each label sits right before the first card of its run.
+  const children = Array.from(flow.children);
+  for (const [label, key] of [
+    ["Urgent", "T-4"],
+    ["High", "T-2"],
+    ["Medium", "T-1"],
+    ["Low / none", "T-3"],
+    ["Closed", "T-6"],
+  ]) {
+    const at = children.findIndex((e) => e.textContent === label);
+    expect(children[at + 1].querySelector(".wm-heat-key-text")?.textContent).toBe(key);
+  }
+  view.unmount();
+  // One priority throughout: nothing to scan by, so no labels.
+  const plain = open(tasks.map((t) => ({ ...t, priority: "medium", status: "todo" })));
+  expect(plain.container.querySelector(".wm-heat-flow")).not.toBeNull();
+  expect(plain.container.querySelector(".wm-heat-group-label")).toBeNull();
+});
+
+it("shows a card's acts on hover and focus by CSS only, keeps them in the tree, and never hides date fixes", () => {
+  const css = readFileSync(join(__dirname, "app.css"), "utf8");
+  // The whole @media block from `at`, by matching braces.
+  const block = (at: number) => {
+    let depth = 0;
+    for (let i = css.indexOf("{", at); i < css.length; i++) {
+      if (css[i] === "{") depth++;
+      else if (css[i] === "}" && --depth === 0) return css.slice(at, i + 1);
+    }
+    return "";
+  };
+  const media = (query: string) => {
+    const out: string[] = [];
+    for (let at = css.indexOf(query); at >= 0; at = css.indexOf(query, at + 1))
+      out.push(block(at));
+    return out;
+  };
+  const rule = (text: string, selector: string) => {
+    const at = text.indexOf(`${selector} {`);
+    expect(at).toBeGreaterThanOrEqual(0);
+    return text.slice(at, text.indexOf("}", at));
+  };
+  const card = ".wm-heat-flow .wm-heat-slot:not(.wm-heat-slot-open)";
+  const hover = media("@media (hover: hover)").find((text) =>
+    text.includes(`${card} > .wm-tile-acts:not(.wm-tile-fixes) {`),
+  )!;
+  expect(hover).toBeDefined();
+  const hidden = rule(hover, `${card} > .wm-tile-acts:not(.wm-tile-fixes)`);
+  expect(hidden).toContain("opacity: 0");
+  expect(hidden).toContain("pointer-events: none");
+  const shown = rule(
+    hover,
+    `${card}:hover > .wm-tile-acts,\n  ${card}:focus-within > .wm-tile-acts`,
+  );
+  expect(shown).toContain("opacity: 1");
+  expect(shown).toContain("pointer-events: auto");
+  const touch = media("@media (hover: none)").find((text) =>
+    text.includes(`${card} > .wm-tile-acts {`),
+  )!;
+  const kept = rule(touch, `${card} > .wm-tile-acts`);
+  expect(kept).toContain("position: static");
+  expect(kept).toContain("opacity: 1");
+
+  // In the tree: every card in the flow has its three act buttons, so Tab
+  // reaches them, and in tidy mode a slipped card wears its date fixes,
+  // which the hover rule above never matches.
+  frame(1200, 700);
+  const tasks = [
+    task({ id: "late", key: "T-1", title: "Late", dateKind: "deadline", dueDate: due(-21) }),
+    task({ id: "fine", key: "T-2", title: "Fine", status: "in_review" }),
+  ];
+  const areas = buildHeat(buildMap(data(tasks), [], {}, now), now, { tidy: true });
+  const view = render(
+    <HeatMap
+      areas={areas}
+      expandedAreaId={areas[0].id}
+      now={now}
+      onOpenArea={() => {}}
+      onOpen={() => {}}
+      onDragStart={() => {}}
+      onDragEnd={() => {}}
+      tidy
+      dateFixes={(item) => <div className="wm-date-fixes" data-for={item.id} />}
+      tileActions={(item) => (
+        <div className="wm-tile-acts">
+          <div className="wm-tile-actions">
+            {["Agent decides", "Snooze", "Done"].map((name) => (
+              <button key={name} type="button">{`${name} · ${item.title}`}</button>
+            ))}
+          </div>
+        </div>
+      )}
+    />,
+  );
+  expect(view.container.querySelector(".wm-heat-flow")).not.toBeNull();
+  const fine = tile(view, "Fine").parentElement!;
+  expect(fine.querySelectorAll(".wm-tile-acts:not(.wm-tile-fixes) button")).toHaveLength(3);
+  const late = tile(view, "Late").parentElement!;
+  expect(late.querySelector(":scope > .wm-tile-acts.wm-tile-fixes .wm-date-fixes")).not.toBeNull();
+  expect(late.querySelector(":scope > .wm-tile-acts:not(.wm-tile-fixes)")).toBeNull();
 });
