@@ -603,7 +603,7 @@ describe("task ask", () => {
       askFrom: "next",
     });
     expect(
-      describeTask("Waiting on a reply.\nNEXT ACTION: none\nWAITING: Ania"),
+      describeTask("Waiting on a reply.\nNEXT ACTION: none\nWAITING: Sam"),
     ).toMatchObject({ ask: "Waiting on a reply.", askFrom: "summary" });
   });
   it("falls back to the Why line", () => {

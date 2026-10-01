@@ -1183,9 +1183,9 @@ it("shows a card's acts on hover and focus by CSS only, keeps them in the tree, 
 describe("sameWords", () => {
   it("treats a cut ask and the full description it came from as one text", () => {
     const full =
-      "Apple sometimes holds your iMessages to Wiz until the Mini itself sends something. chat.db shows 5 holds over 5 minutes since April, the worst 12.5 h on 04-26. Last night's message landed late.";
+      "The nightly export stalls when the queue fills up. The log shows 4 stalls over 10 minutes since March, the worst 3 h on 03-14. Yesterday's run finished late.";
     const ask =
-      "Apple sometimes holds your iMessages to Wiz until the Mini itself sends something. chat.db shows 5 holds over 5 minutes since April, the worst 12.5 h on 04-26.";
+      "The nightly export stalls when the queue fills up. The log shows 4 stalls over 10 minutes since March, the worst 3 h on 03-14.";
     expect(sameWords(full, ask)).toBe(true);
     expect(sameWords("Disk hit 19.4%  free overnight...", "disk hit 19.4% free overnight")).toBe(true);
   });
