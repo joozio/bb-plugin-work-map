@@ -459,6 +459,7 @@ async function mount(
     settleError?: boolean;
     manageRequests?: ManagementInput[];
     layout?: "overview" | "heat";
+    legendOpen?: boolean;
     noProjects?: boolean;
     /** Hold the layout and snapshot answers until these settle. */
     layoutGate?: Promise<void>;
@@ -472,6 +473,7 @@ async function mount(
   const app = await loadPluginApp(() => import("./app"));
   const storedPreferences = { ...options.preferences };
   const storedLayout = { layout: options.layout ?? ("overview" as const) };
+  const storedLegend = { open: options.legendOpen ?? false };
   const settled: Settlement[] = [];
   let snapshotCalls = 0;
   const projects = options.noProjects
@@ -652,6 +654,11 @@ async function mount(
         setLayout: ({ layout }) => {
           storedLayout.layout = layout;
           return { layout };
+        },
+        legend: () => ({ ...storedLegend }),
+        setLegend: ({ open }) => {
+          storedLegend.open = open;
+          return { open };
         },
         preferences: () => storedPreferences,
         setPreference: (input) => {
@@ -3399,6 +3406,43 @@ describe("heat layout", () => {
         .disabled,
     ).toBe(false);
     slot.lifecycle.unmount();
+  });
+
+  it("folds Heat's legend behind one remembered toggle, keeping the five counts", async () => {
+    const slot = await mount({ ...heatFixture(), layout: "heat" });
+    await waitFor(() =>
+      expect(slot.container.querySelector(".wm-heat")).toBeTruthy(),
+    );
+    const legend = slot.container.querySelector<HTMLElement>(".wm-heat-legend")!;
+    const toggle = slot.getByRole("button", { name: "Legend" });
+    // Shut by default; the stylesheet hides it only under 720px.
+    expect(legend.dataset.open).toBe("false");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.getAttribute("aria-controls")).toBe(legend.id);
+    expect(
+      slot.container.querySelectorAll(".wm-heat-counts > div"),
+    ).toHaveLength(5);
+    fireEvent.click(toggle);
+    expect(legend.dataset.open).toBe("true");
+    await waitFor(() =>
+      expect(
+        slot.inspection.rpcCalls.filter((call) => call.method === "setLegend"),
+      ).toEqual([{ method: "setLegend", input: { open: true } }]),
+    );
+    slot.lifecycle.unmount();
+    // A reload reads the choice back.
+    const again = await mount({
+      ...heatFixture(),
+      layout: "heat",
+      legendOpen: true,
+    });
+    await waitFor(() =>
+      expect(
+        again.container.querySelector<HTMLElement>(".wm-heat-legend")?.dataset
+          .open,
+      ).toBe("true"),
+    );
+    again.lifecycle.unmount();
   });
 
   it("stays off until chosen, then remembers the choice and sizes areas by pull", async () => {

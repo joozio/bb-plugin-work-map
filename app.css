@@ -2166,6 +2166,26 @@
 .wm-heat-sense {
   opacity: 0.7;
 }
+/* Only a phone folds the legend; wider screens always show it. */
+.wm-heat-legend-toggle {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--wm-dim);
+  background: none;
+}
+.wm-heat-legend-toggle::after {
+  content: "▾";
+  font-size: 9px;
+}
+.wm-heat-legend-toggle[aria-expanded="true"]::after {
+  content: "▴";
+}
 .wm-heat-legend span {
   display: inline-flex;
   align-items: center;
@@ -2791,6 +2811,13 @@ i.wm-heat-key.wm-heat-late {
   }
   .wm-heat-legend {
     justify-content: flex-start;
+  }
+  /* The five counts stay; the legend rows open from one toggle. */
+  .wm-heat-legend[data-open="false"] {
+    display: none;
+  }
+  .wm-heat-legend-toggle {
+    display: inline-flex;
   }
   .wm-heat-actions .wm-heat-side-pane {
     display: none;

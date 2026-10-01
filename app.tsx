@@ -279,6 +279,24 @@ function WorkMap() {
       },
     );
   }, [rpc]);
+  // On a phone Heat's legend rows sit behind one toggle; its state is kept
+  // with the layout choice, so a reload does not push the map down again.
+  const [legendOpen, setLegendOpen] = useState(false);
+  useEffect(() => {
+    rpc.call("legend").then(
+      (result) => {
+        if (live.current) setLegendOpen(result.open);
+      },
+      () => {
+        /* A missing choice keeps the legend shut; it is never an error. */
+      },
+    );
+  }, [rpc]);
+  const toggleLegend = () => {
+    const open = !legendOpen;
+    setLegendOpen(open);
+    rpc.call("setLegend", { open }).catch(report);
+  };
   const chooseLayout = (next: MapLayout) => {
     // Heat also acts as "show me the whole map again" from a filter or a search.
     if (next === layoutMode && (next === "overview" || heatOn)) return;
@@ -2682,8 +2700,19 @@ function WorkMap() {
                       ? "Layout held while expanded"
                       : "Click to expand in place · Escape steps back"}
                   </span>
+                  <button
+                    type="button"
+                    className="wm-heat-legend-toggle"
+                    aria-expanded={legendOpen}
+                    aria-controls="wm-heat-legend"
+                    onClick={toggleLegend}
+                  >
+                    Legend
+                  </button>
                   <div
+                    id="wm-heat-legend"
                     className="wm-heat-legend"
+                    data-open={legendOpen}
                     title={
                       "Deeper = closer date / older undated task\n" +
                       "Size = urgency · Due date first, otherwise creation age"

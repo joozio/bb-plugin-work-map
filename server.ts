@@ -99,6 +99,8 @@ export type Preference = z.infer<typeof preferenceSchema>;
 const preferencesSchema = z.record(z.string(), preferenceSchema);
 const layoutSchema = z.object({ layout: z.enum(["overview", "heat"]) });
 export type MapLayout = z.infer<typeof layoutSchema>["layout"];
+/** Whether Heat's legend rows are open on a phone, where they are a toggle. */
+const legendSchema = z.object({ open: z.boolean() });
 const itemId = z
   .string()
   .regex(/^(task|project|thread):[A-Za-z0-9_-]+$/)
@@ -126,6 +128,8 @@ export const rpcContract = defineRpcContract({
   preferences: { input: z.null(), output: preferencesSchema },
   layout: { input: z.null(), output: layoutSchema },
   setLayout: { input: layoutSchema, output: layoutSchema },
+  legend: { input: z.null(), output: legendSchema },
+  setLegend: { input: legendSchema, output: legendSchema },
   setPreference: {
     input: z.object({
       id: itemId,
@@ -506,6 +510,17 @@ export default async function plugin(bb: BbPluginApi) {
     setLayout: async ({ layout }) => {
       await bb.storage.kv.set("view:layout", { layout });
       return { layout };
+    },
+    legend: async () => {
+      // Shut until opened once: on a phone the first area comes first.
+      const parsed = legendSchema.safeParse(
+        await bb.storage.kv.get<unknown>("view:legend"),
+      );
+      return parsed.success ? parsed.data : { open: false };
+    },
+    setLegend: async ({ open }) => {
+      await bb.storage.kv.set("view:legend", { open });
+      return { open };
     },
     previews: async ({ threadIds, fresh }) => {
       const entries = await Promise.all(
