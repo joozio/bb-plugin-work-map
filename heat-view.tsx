@@ -22,13 +22,13 @@ import {
   type HeatArea,
   type HeatTile,
   type Rect,
+  heatTone,
+  heatLevel,
 } from "./heat";
 
 const UNIT: Rect = { x: 0, y: 0, w: 100, h: 100 };
 const AREA_SHARE = 0.66;
 const TILE_SHARE = 0.78;
-/** An open card beside nothing but the "+N more" label. */
-const LONE_SHARE = 0.9;
 /** Inside an expanded area no tile is lighter than this share of the heaviest. */
 const EVEN_RATIO = 0.8;
 /** Pixels a card spends before its title besides its act row: slot padding,
@@ -211,13 +211,9 @@ export function HeatMap({
         { w: bodyWidth, h: bodyHeight },
         { id: area.id, keep, share: TILE_SHARE },
       );
-      // When every sibling folded into one "+N more", that tile is only a
-      // label: the open card takes the room, the label keeps a narrow strip.
-      const alone =
-        !!keep && tiles.length === 2 && tiles.some((tile) => tile.overflow);
       const inner = place(
         partition(tiles, { ...UNIT, w: bodyWidth, h: bodyHeight }),
-        expandedWeights(tiles, keep, alone ? LONE_SHARE : TILE_SHARE),
+        expandedWeights(tiles, keep, TILE_SHARE),
         UNIT,
       );
       return { area, rect, tiles, inner, bodyHeight, scroll: false };
@@ -347,6 +343,129 @@ export function areaState(area: HeatArea) {
       .join(" · ") || `${area.items.length} quiet`
   );
 }
+/** The head line of a group tile, then one row per member, then the rest. */
+const GROUP_HEAD = 20;
+const GROUP_ROW = 18;
+const GROUP_PAD = 10;
+/** How many member rows a group tile this tall can list under its head. */
+export function groupRows(height: number, members: number) {
+  const fit = Math.floor((height - GROUP_HEAD - GROUP_PAD) / GROUP_ROW);
+  // One row alone would only repeat the head; two or more are worth listing.
+  return fit < 2 ? 0 : Math.min(members, fit);
+}
+/**
+ * A tile that stands for several pieces of work: the quiet pile, finished
+ * agents, or what folded because it was too small to read. It is never an
+ * empty box: as many of its members as fit are listed as rows, each one a
+ * way in, and only the remainder is a count.
+ */
+function GroupTile({
+  tile,
+  rect,
+  width,
+  height,
+  area,
+  now,
+  tiny,
+  onOpen,
+  onOpenArea,
+}: {
+  tile: HeatTile;
+  rect: Rect;
+  width: number;
+  height: number;
+  area: HeatArea;
+  now: number;
+  tiny: boolean;
+  onOpen: (item: WorkItem) => void;
+  onOpenArea: (area: HeatArea) => void;
+}) {
+  const members = [...tile.members].sort((a, b) => b.score - a.score);
+  const count = members.length;
+  const finished =
+    !tile.overflow && members.every((member) => member.kind === "thread");
+  const noun = tile.overflow
+    ? "more"
+    : finished
+      ? `agent${count === 1 ? "" : "s"} finished`
+      : `quiet task${count === 1 ? "" : "s"}`;
+  const head = tile.overflow ? `+${count} more` : `${count} ${noun}`;
+  const names = members.map((member) => member.task?.key ?? member.title);
+  // Rows need a key and a few words beside the dot; below that, the head alone.
+  const fit = tiny || width < 96 ? 0 : groupRows(height, count);
+  const shown = fit >= count ? members : members.slice(0, Math.max(0, fit - 1));
+  const rest = count - shown.length;
+  // A project opens as its card grid. The Sessions area has no grid, so its
+  // "+N more" opens the heaviest folded session in place; its quiet pile of
+  // finished agents still opens the area, which reveals them.
+  const openGroup = () =>
+    !tile.overflow || area.root || !members[0]
+      ? onOpenArea(area)
+      : onOpen(members[0]);
+  return (
+    <div className="wm-heat-slot" data-layout-id={tile.id} style={box(rect)}>
+      <div
+        className={`wm-heat-tile wm-heat-quiet wm-heat-group ${tile.overflow ? "wm-heat-more" : ""} ${shown.length ? "wm-heat-group-list" : ""}`}
+        role="group"
+        aria-label={`${head} in ${area.title}`}
+        title={tile.overflow ? names.join(", ") : undefined}
+      >
+        <button
+          type="button"
+          className="wm-heat-group-head"
+          onClick={openGroup}
+          title={names.join(", ")}
+          aria-label={`Show ${count} ${noun} in ${area.title}${tile.overflow ? `: ${names.join(", ")}` : ""}`}
+        >
+          <span className="wm-heat-meta">
+            <span>{head}</span>
+          </span>
+        </button>
+        {shown.length > 0 && (
+          <ul className="wm-heat-rows">
+            {shown.map((member) => (
+              <li key={member.id}>
+                <button
+                  type="button"
+                  className="wm-heat-row"
+                  onClick={() => onOpen(member)}
+                  title={member.title}
+                  aria-label={`Open ${member.title}`}
+                >
+                  <i
+                    className={`wm-heat-row-dot wm-heat-${heatTone(member)}`}
+                    data-level={heatLevel(member, now)}
+                    aria-hidden="true"
+                  />
+                  {member.task?.key ? <b>{member.task.key}</b> : null}
+                  <span>{member.title}</span>
+                </button>
+              </li>
+            ))}
+            {rest > 0 && (
+              <li>
+                <button
+                  type="button"
+                  className="wm-heat-row wm-heat-row-rest"
+                  onClick={openGroup}
+                >
+                  +{rest} more
+                </button>
+              </li>
+            )}
+          </ul>
+        )}
+        {!shown.length && !tiny && !tile.overflow && (
+          <span className="wm-heat-dots" aria-hidden="true">
+            {members.slice(0, 60).map((member) => (
+              <i key={member.id} />
+            ))}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 function Tile({
   tile,
   rect,
@@ -387,62 +506,20 @@ function Tile({
   const tiny = !open && (width < 52 || height < 30);
   const sliver = !open && (width < 44 || height < 18);
   const roomy = open || (height > 92 && width > 150);
-  if (!item && tile.overflow) {
-    const names = tile.members.map(
-      (member) => member.task?.key ?? member.title,
-    );
-    const count = tile.members.length;
+  if (!item)
     return (
-      <div className="wm-heat-slot" data-layout-id={tile.id} style={box(rect)}>
-        <button
-          type="button"
-          className="wm-heat-tile wm-heat-quiet wm-heat-group wm-heat-more"
-          // A project opens as its card grid; the Sessions area has no grid, so
-          // its "+N more" opens the heaviest folded session in place.
-          onClick={() =>
-            area.root || !tile.members[0]
-              ? onOpenArea(area)
-              : onOpen(tile.members[0])
-          }
-          title={names.join(", ")}
-          aria-label={`Show ${count} more in ${area.title}: ${names.join(", ")}`}
-        >
-          <span className="wm-heat-meta">
-            <span>+{count} more</span>
-          </span>
-        </button>
-      </div>
+      <GroupTile
+        tile={tile}
+        rect={rect}
+        width={width}
+        height={height}
+        area={area}
+        now={now}
+        tiny={tiny}
+        onOpen={onOpen}
+        onOpenArea={onOpenArea}
+      />
     );
-  }
-  if (!item) {
-    const finished = tile.members.every((member) => member.kind === "thread");
-    const noun = finished
-      ? `agent${tile.members.length === 1 ? "" : "s"} finished`
-      : `quiet task${tile.members.length === 1 ? "" : "s"}`;
-    return (
-      <div className="wm-heat-slot" data-layout-id={tile.id} style={box(rect)}>
-        <button
-          type="button"
-          className="wm-heat-tile wm-heat-quiet wm-heat-group"
-          onClick={() => onOpenArea(area)}
-          aria-label={`Show ${tile.members.length} ${noun} in ${area.title}`}
-        >
-          <span className="wm-heat-meta">
-            <span>
-              {tile.members.length} {noun}
-            </span>
-          </span>
-          {!tiny && (
-            <span className="wm-heat-dots" aria-hidden="true">
-              {tile.members.slice(0, 60).map((member) => (
-                <i key={member.id} />
-              ))}
-            </span>
-          )}
-        </button>
-      </div>
-    );
-  }
   const { ask, title } = tileText(item.title);
   const due = item.task ? dueLabel(item.task, now) : "";
   const age = activityLabel(item, now);

@@ -2,11 +2,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { data, now, task, thread } from "./fixtures";
 import { buildMap, localDay } from "./model";
 import { buildHeat } from "./heat";
-import { HeatMap } from "./heat-view";
+import { HeatMap, groupRows } from "./heat-view";
 
 const DAY = 86400000;
 const due = (days: number) => localDay(now + days * DAY);
@@ -542,4 +542,42 @@ it("shows a closed task as done in an open area even while its orchestrator runs
   expect(
     view.container.querySelector(".wm-heat-area")!.getAttribute("aria-label"),
   ).toContain("1 running");
+});
+
+it("lists a group tile's members as rows when it has the room, and never draws it empty", () => {
+  frame(260, 150);
+  // Twelve drafts in a tiny area: most fold. The fold tile lists what it can.
+  const keys = Array.from({ length: 12 }, (_, i) => `DT-${i + 1}`);
+  const opened: string[] = [];
+  const view = heat(
+    keys.map((key, i) =>
+      task({ id: `t${i}`, key, title: `Draft ${key}`, dateKind: "deadline", dueDate: due(-40 - i) }),
+    ),
+    [],
+    { onOpen: (item) => opened.push(item.id) },
+  );
+  const group = view.container.querySelector(".wm-heat-more")!;
+  expect(group).not.toBeNull();
+  const rows = Array.from(group.querySelectorAll<HTMLElement>(".wm-heat-row"));
+  // Either the tile is too short for rows, or it lists members and the rest.
+  const bb = group.getBoundingClientRect();
+  if (rows.length) {
+    const rest = rows.filter((row) => row.classList.contains("wm-heat-row-rest"));
+    expect(rows.length - rest.length).toBeGreaterThan(0);
+    for (const row of rows.filter((row) => !rest.includes(row))) {
+      expect(row.querySelector("b")?.textContent).toMatch(/^DT-\d+$/);
+      expect(row.querySelector(".wm-heat-row-dot")).not.toBeNull();
+    }
+    fireEvent.click(rows[0]);
+    expect(opened).toHaveLength(1);
+  }
+  void bb;
+});
+
+it("fits as many member rows as the tile's height allows, keeping one for the remainder", () => {
+  expect(groupRows(40, 12)).toBe(0);
+  expect(groupRows(66, 12)).toBe(2);
+  expect(groupRows(100, 12)).toBe(3);
+  expect(groupRows(400, 12)).toBe(12);
+  expect(groupRows(400, 3)).toBe(3);
 });

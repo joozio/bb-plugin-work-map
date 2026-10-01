@@ -2571,6 +2571,87 @@ i.wm-heat-key.wm-heat-late {
   font-size: 10px;
   font-weight: 600;
 }
+/* A group tile is never an empty box: its head, then a row per member that fits. */
+.wm-heat-group {
+  cursor: default;
+}
+.wm-heat-group-list {
+  justify-content: flex-start;
+  align-items: stretch;
+  text-align: left;
+}
+.wm-heat-group-head,
+.wm-heat-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wm-heat-group-head {
+  flex: none;
+  min-height: 20px;
+}
+.wm-heat-group-head .wm-heat-meta {
+  width: 100%;
+}
+.wm-heat-group-list .wm-heat-group-head .wm-heat-meta {
+  justify-content: flex-start;
+}
+.wm-heat-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.wm-heat-row {
+  gap: 5px;
+  height: 18px;
+  padding: 0 3px;
+  font-size: 10.5px;
+  line-height: 18px;
+}
+.wm-heat-row:hover,
+.wm-heat-group-head:hover {
+  background: color-mix(in srgb, var(--foreground) 9%, transparent);
+}
+.wm-heat-row:focus-visible,
+.wm-heat-group-head:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.wm-heat-row b {
+  flex: none;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.wm-heat-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wm-heat-row-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+}
+.wm-heat-row-rest {
+  font-weight: 600;
+  opacity: 0.75;
+}
 .wm-heat-dots {
   display: flex;
   flex-wrap: wrap;
