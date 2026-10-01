@@ -4237,8 +4237,8 @@ describe("the opened task", () => {
     fireEvent.click(within(detail).getByRole("button", { name: "Back to summary" }));
     expect(within(detail).getByRole("region", { name: "Description" })).toBeTruthy();
     const css = readFileSync(join(__dirname, "app.css"), "utf8");
-    expect(css).toMatch(/\.wm-task-body \{\n  display: grid;\n  grid-template-columns: minmax\(0, 1fr\) minmax\(200px, 250px\);/);
-    expect(css).toMatch(/@container \(max-width: 520px\) \{\n  \.wm-task-body \{\n    grid-template-columns: minmax\(0, 1fr\);/);
+    expect(css).toMatch(/\.wm-task-body \{\n  display: grid;\n  grid-template-columns: minmax\(0, 1fr\) minmax\(180px, 220px\);/);
+    expect(css).toMatch(/@container \(max-width: 470px\) \{\n  \.wm-task-body \{\n    grid-template-columns: minmax\(0, 1fr\);/);
     expect(css).toMatch(/@media \(width <= 720px\) \{\n  \.wm-task-body \{\n    grid-template-columns: minmax\(0, 1fr\);/);
     expect(css).toContain(".wm-task-detail {\n  container-type: inline-size;");
     slot.lifecycle.unmount();

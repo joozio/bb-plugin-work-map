@@ -3546,8 +3546,8 @@ i.wm-heat-key.wm-heat-focused {
 }
 .wm-task-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(200px, 250px);
-  gap: 20px 28px;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 220px);
+  gap: 20px 24px;
   align-items: start;
 }
 .wm-task-main,
@@ -3933,7 +3933,7 @@ i.wm-heat-key.wm-heat-focused {
   grid-template-columns: 1fr;
 }
 /* One column where the panel is narrow: the side pane, a squeezed open card. */
-@container (max-width: 520px) {
+@container (max-width: 470px) {
   .wm-task-body {
     grid-template-columns: minmax(0, 1fr);
   }
