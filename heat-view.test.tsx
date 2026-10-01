@@ -209,13 +209,20 @@ it("gives card acts, bulk acts and picker rows 24px, and 36px under 720px", () =
     return css.slice(at, css.indexOf("}", at));
   };
   expect(rule(".wm-tile-action")).toContain("min-height: 24px");
+  // An icon-only act measured 23px wide: the minimum is square.
+  expect(rule(".wm-tile-action")).toContain("min-width: 24px");
   expect(rule(".wm-tile-action")).not.toMatch(/\bheight: 20px/);
+  expect(rule(".wm-task-link", css.indexOf("\n.wm-task-link {"))).toContain(
+    "min-height: 24px",
+  );
+  expect(rule(".wm-preview-top > button")).toContain("min-height: 24px");
   expect(rule(".wm-bulk-row > button")).toContain("min-height: 24px");
   expect(rule(".wm-bulk-pick")).toContain("min-height: 24px");
   const phone = css.lastIndexOf("@media (max-width: 720px)");
   expect(
     rule(".wm-tile-action,\n  .wm-bulk-row > button,\n  .wm-bulk-pick", phone),
   ).toContain("min-height: 36px");
+  expect(rule(".wm-tile-action", phone)).toContain("min-width: 36px");
 });
 
 it("draws no titleless tile in a small area: the unreadable ones fold into a named +N more", () => {

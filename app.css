@@ -838,8 +838,15 @@
   margin-left: auto;
 }
 .wm-task-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   font-size: 11px;
   color: var(--wm-blue);
+}
+/* The detail header's own controls meet the same minimum as the card acts. */
+.wm-preview-top > button {
+  min-height: 24px;
 }
 .wm-detail-section,
 .wm-session-view {
@@ -2785,8 +2792,9 @@ i.wm-heat-key.wm-heat-late {
 .wm-tile-action {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 3px;
-  min-width: 0;
+  min-width: 24px;
   min-height: 24px;
   padding: 0 6px;
   border: 1px solid var(--border);
@@ -2976,6 +2984,9 @@ i.wm-heat-key.wm-heat-late {
   .wm-bulk-row > button,
   .wm-bulk-pick {
     min-height: 36px;
+  }
+  .wm-tile-action {
+    min-width: 36px;
   }
   .wm-bulk-picks {
     max-height: calc(3 * 36px + 2 * 2px);

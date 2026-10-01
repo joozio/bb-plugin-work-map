@@ -27,6 +27,8 @@ import {
 const UNIT: Rect = { x: 0, y: 0, w: 100, h: 100 };
 const AREA_SHARE = 0.66;
 const TILE_SHARE = 0.78;
+/** An open card beside nothing but the "+N more" label. */
+const LONE_SHARE = 0.9;
 /** Inside an expanded area no tile is lighter than this share of the heaviest. */
 const EVEN_RATIO = 0.8;
 /** Pixels a card spends before its title besides its act row: slot padding,
@@ -209,9 +211,13 @@ export function HeatMap({
         { w: bodyWidth, h: bodyHeight },
         { id: area.id, keep, share: TILE_SHARE },
       );
+      // When every sibling folded into one "+N more", that tile is only a
+      // label: the open card takes the room, the label keeps a narrow strip.
+      const alone =
+        !!keep && tiles.length === 2 && tiles.some((tile) => tile.overflow);
       const inner = place(
         partition(tiles, { ...UNIT, w: bodyWidth, h: bodyHeight }),
-        expandedWeights(tiles, keep, TILE_SHARE),
+        expandedWeights(tiles, keep, alone ? LONE_SHARE : TILE_SHARE),
         UNIT,
       );
       return { area, rect, tiles, inner, bodyHeight, scroll: false };

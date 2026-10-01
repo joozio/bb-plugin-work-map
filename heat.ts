@@ -669,9 +669,15 @@ export function foldSmall(
       return !cell || cell.w < min.w || cell.h < min.h;
     });
     if (!small.length) break;
-    folded = [...folded, ...small];
+    // Fold the lightest half first: once they are out of the way the rest
+    // usually fit, and an area keeps its heaviest tiles instead of showing
+    // nothing but "+N more".
+    const lightest = [...small]
+      .sort((a, b) => a.weight - b.weight)
+      .slice(0, Math.max(1, Math.ceil(small.length / 2)));
+    folded = [...folded, ...lightest];
     shown = heatOrder([
-      ...shown.filter((tile) => tile.id !== moreId && !small.includes(tile)),
+      ...shown.filter((tile) => tile.id !== moreId && !lightest.includes(tile)),
       moreTile(moreId, folded),
     ]);
   }
@@ -706,8 +712,10 @@ export function openAreaShare(
   return 0;
 }
 /** An open area wants a quarter of the map plus a little per card. */
+/** The least an open area asks for: room for its act bar and one whole card. */
+export const OPEN_AREA_FLOOR = 0.4;
 export function openAreaWant(cards: number, max: number) {
-  return Math.min(max, 0.25 + 0.04 * cards);
+  return Math.min(max, Math.max(OPEN_AREA_FLOOR, 0.25 + 0.04 * cards));
 }
 /**
  * Areas are the map's own roots: a project area per project, and one Sessions

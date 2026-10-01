@@ -38,6 +38,9 @@ import {
   type HeatTone,
   type Rect,
   type Weighted,
+  openAreaWant,
+  OPEN_AREA_FLOOR,
+  MIN_TILE,
 } from "./heat";
 
 const DAY = 86400000;
@@ -1068,5 +1071,47 @@ describe("closed work with an agent still attached", () => {
     const [area] = buildHeat(roots, now, { uncollapsed: [roots[0].id] });
     expect(area.running).toBe(1);
     expect(heatStats([area], now).running).toBe(1);
+  });
+});
+
+describe("what an open area asks for", () => {
+  it("never asks for less than the floor that fits its act bar and one card", () => {
+    expect(openAreaWant(1, 0.66)).toBe(OPEN_AREA_FLOOR);
+    expect(openAreaWant(3, 0.66)).toBe(OPEN_AREA_FLOOR);
+    expect(openAreaWant(13, 0.66)).toBe(0.66);
+    expect(openAreaWant(13, 0.9)).toBeCloseTo(0.77);
+  });
+});
+
+describe("folding keeps the heaviest tiles on screen", () => {
+  const tile = (id: string, weight: number): HeatTile => ({
+    id,
+    weight,
+    tone: "working",
+    item: { id, title: id } as WorkItem,
+    members: [],
+    stale: 0,
+    waited: null,
+    level: 1,
+    timing: null,
+  });
+  it("folds the lightest half at a time, so a crowded area still shows its heaviest work", () => {
+    // Fifteen sessions in a 290x300 area: all too small at once, but once the
+    // light half is folded the rest fit, and "+N more" is never the whole area.
+    const tiles = Array.from({ length: 15 }, (_, i) => tile(`s${i}`, 1 + i * 0.3));
+    const shown = foldSmall(tiles, { w: 290, h: 300 }, { id: "sessions" });
+    const more = shown.find((t) => t.overflow);
+    expect(more).toBeTruthy();
+    expect(shown.length).toBeGreaterThan(2);
+    expect(shown.map((t) => t.id)).toContain("s14");
+    expect(more!.members.map((m) => m.id)).toContain("s0");
+    expect(more!.members.map((m) => m.id)).not.toContain("s14");
+    // And nothing left on screen is below the readable minimum.
+    const rect = { x: 0, y: 0, w: 290, h: 300 };
+    const rects = place(partition(shown, rect), expandedWeights(shown, undefined, 0.78), rect);
+    for (const t of shown) {
+      const cell = rects.get(t.id)!;
+      if (!t.overflow) expect(cell.w >= MIN_TILE.w && cell.h >= MIN_TILE.h).toBe(true);
+    }
   });
 });
