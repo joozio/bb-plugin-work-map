@@ -2971,11 +2971,13 @@ i.wm-heat-key.wm-heat-late {
    one of three known shapes and never a label cut short. */
 [data-acts="lead"] .wm-tile-done span,
 [data-acts="lead"] .wm-tile-snooze span,
+[data-acts="lead"] .wm-tile-unsnooze span,
 [data-acts="icons"] .wm-tile-action span {
   display: none;
 }
 [data-acts="lead"] .wm-tile-done,
 [data-acts="lead"] .wm-tile-snooze,
+[data-acts="lead"] .wm-tile-unsnooze,
 [data-acts="icons"] .wm-tile-action {
   padding: 0 5px;
 }

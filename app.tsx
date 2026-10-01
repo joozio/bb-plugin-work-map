@@ -1094,6 +1094,19 @@ function WorkMap() {
       setHandedOver((current) => ({ ...current, [taskId]: Date.now() }));
       return `${result.taskKey} handed to an agent on ${result.preset}${result.movedFrom ? ", out of review" : ""}.`;
     }
+    if (action === "unsnooze") {
+      // No confirmation: it only gives the task its attention back.
+      const id = item.id;
+      const preference = await rpc.call("setPreference", {
+        id,
+        snoozedUntil: null,
+      });
+      captureLayout();
+      setPreferences((previous) => ({ ...previous, [id]: preference }));
+      setSnoozes((rows) => rows.filter((row) => row.itemId !== id));
+      if (!quiet) setNotice(`Snooze cleared on ${item.task.key}.`);
+      return null;
+    }
     if (action === "snooze") {
       const id = item.id;
       const taskKey = item.task.key;

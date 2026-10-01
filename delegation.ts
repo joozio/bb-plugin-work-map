@@ -1,22 +1,28 @@
 import type { WorkItem } from "./model";
 import { hasAgent, ORCHESTRATOR_CAP } from "./model";
 
-/** What an expanded area can do to a piece of work without opening it. */
-export type QuickAction = "delegate" | "done" | "snooze";
 /**
- * The labels say what happens, in the map's own voice, where "you" is always
- * the reader: "Agent decides" is the act of letting it decide on its own.
+ * What an expanded area can do to a piece of work without opening it.
+ * Unsnooze takes Snooze's place on a snoozed card, so ending a snooze never
+ * depends on the session that started it still being open.
  */
-export const ACTION_LABEL: Record<QuickAction, string> = {
-  delegate: "Agent decides",
-  done: "Done",
-  snooze: "Snooze",
-};
+export type QuickAction = "delegate" | "done" | "snooze" | "unsnooze";
 /**
  * How long Snooze keeps a task out of what needs you. The snooze lives in
  * this plugin's own records, never in Tasks, and the clock ends it.
  */
 export const SNOOZE_DAYS = 7;
+/**
+ * The labels say what happens, in the map's own voice, where "you" is always
+ * the reader: "Agent decides" is the act of letting it decide on its own.
+ * Snooze says for how long before the click, not after it.
+ */
+export const ACTION_LABEL: Record<QuickAction, string> = {
+  delegate: "Agent decides",
+  done: "Done",
+  snooze: `Snooze ${SNOOZE_DAYS}d`,
+  unsnooze: "Unsnooze",
+};
 /** The comment recorded on the task, in your name, when you hand it over. */
 export const DELEGATION_COMMENT = "Delegated: decide on your own";
 /** The same handover, when an area's orchestrator is the one taking it on. */
@@ -143,6 +149,7 @@ export function blockedReason(
     return "only tasks can be settled here";
   if (CLOSED.includes(item.task.status)) return "already closed";
   if (action === "snooze") return item.snoozedUntil ? "already snoozed" : null;
+  if (action === "unsnooze") return item.snoozedUntil ? null : "not snoozed";
   if (action !== "delegate") return null;
   // Dispatch needs a bb project to start the agent in. Saying so here is the
   // difference between a disabled act with a reason and a failed click.
@@ -189,7 +196,9 @@ export function confirmHeading(action: QuickAction, count: number) {
     ? `Let agents decide ${work}?`
     : action === "done"
       ? `Mark ${work} done?`
-      : `Snooze ${work}?`;
+      : action === "unsnooze"
+        ? `Unsnooze ${work}?`
+        : `Snooze ${work}?`;
 }
 /**
  * What the confirmation says beyond the list. Undo is honest about its limit:
@@ -200,5 +209,5 @@ export function confirmNote(action: QuickAction, area = "", count = 0) {
     ? `Starts ${orchestratorTitle(area)} for ${count} ${count === 1 ? "task" : "tasks"}. It runs at most ${ORCHESTRATOR_LIMIT} at a time, brings every task to done or back to you with a reason, and leaves you one review task with the summary. Undo cannot unstart an agent that has already begun.`
     : action === "done"
       ? "Closing a task can trigger follow-ups wired outside Work Map, which do not run on cancel. Undo reopens the task here; it cannot recall a follow-up that already fired."
-      : `Snoozing hides the task from what needs you for ${SNOOZE_DAYS} days and changes nothing in Tasks. Undo restores it.`;
+      : `Snoozing hides the task from what needs you for ${SNOOZE_DAYS} days and changes nothing in Tasks. New input or a failed run still brings it back. Unsnooze on its card ends it early.`;
 }

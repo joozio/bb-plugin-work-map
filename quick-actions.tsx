@@ -20,6 +20,7 @@ const ICON: Record<QuickAction, string> = {
   delegate: "Bot",
   done: "CircleCheck",
   snooze: "Clock",
+  unsnooze: "ArrowTurnBackward",
 };
 
 /**
@@ -50,7 +51,13 @@ export function TileActions({
   onAct: (action: QuickAction, item: WorkItem) => void;
   onDismissError?: () => void;
 }) {
-  const actions: QuickAction[] = ["delegate", "done", "snooze"];
+  // A snoozed card offers to end its snooze where Snooze was, so recovery
+  // never depends on the Undo of the session that snoozed it.
+  const actions: QuickAction[] = [
+    "delegate",
+    "done",
+    item.snoozedUntil ? "unsnooze" : "snooze",
+  ];
   // Work that cannot be settled at all offers nothing. When only the handover
   // is blocked, the act stays on the card and says why, because a reason where
   // the click would have been is worth more than a button that disappeared.

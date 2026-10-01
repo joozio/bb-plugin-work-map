@@ -188,10 +188,25 @@ export function dueLabel(task: MapTask, now: number) {
     return `${prefix} ${task.dueDate.slice(5)} · passed`;
   return `${prefix} ${task.dueDate.slice(5)}`;
 }
-/** "snoozed 6d": what a tile or card says about a snooze still running. */
+/**
+ * Whole calendar days a snooze still runs, at least 1: the one count Heat
+ * and Overview both show. Calendar days, not elapsed milliseconds, so a
+ * 7-day snooze reads 7d from the click, never 8d because the map's clock
+ * ticked behind it, and a DST night never adds or drops a day.
+ */
+export function snoozeDays(until: number, now: number) {
+  const day = (at: number) => {
+    const date = new Date(at);
+    return (
+      Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / DAY
+    );
+  };
+  return Math.max(1, day(until) - day(now));
+}
+/** "Snoozed 6d": what a tile or card says about a snooze still running. */
 export function snoozeLabel(item: Pick<WorkItem, "snoozedUntil">, now: number) {
   if (!item.snoozedUntil || item.snoozedUntil <= now) return "";
-  return `Snoozed ${Math.max(1, Math.ceil((item.snoozedUntil - now) / DAY))}d`;
+  return `Snoozed ${snoozeDays(item.snoozedUntil, now)}d`;
 }
 function rank(
   item: Pick<

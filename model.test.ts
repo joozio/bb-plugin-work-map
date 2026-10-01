@@ -1,3 +1,5 @@
+import { heatTiming } from "./heat-timing";
+import type { WorkItem } from "./model";
 import { describe, expect, it } from "vitest";
 import {
   ORCHESTRATOR_CAP,
@@ -10,6 +12,7 @@ import {
   isWorking,
   preferredSession,
   selectVisible,
+  snoozeDays,
   snoozeLabel,
   threadSignal,
 } from "./model";
@@ -1045,5 +1048,30 @@ describe("a snoozed task", () => {
       "task:task2",
       "task:task1",
     ]);
+  });
+});
+
+describe("one snooze day count for Heat and Overview", () => {
+  it("counts calendar days, so a clock behind the click never reads 8d", () => {
+    const noon = new Date(2026, 9, 1, 12, 0, 0).getTime();
+    const until = noon + 7 * 86400000;
+    // The map's clock ticked a minute before the click that saved the snooze.
+    expect(snoozeDays(until, noon - 60000)).toBe(7);
+    expect(snoozeLabel({ snoozedUntil: until }, noon - 60000)).toBe("Snoozed 7d");
+    // Late on the last day it still says 1d, never 0d.
+    expect(snoozeDays(until, until - 3600000)).toBe(1);
+  });
+  it("is the count Heat shows", () => {
+    const noon = new Date(2026, 9, 1, 12, 0, 0).getTime();
+    const until = noon + 7 * 86400000;
+    expect(
+      heatTiming(
+        {
+          snoozedUntil: until,
+          task: { status: "in_review", dueDate: "" },
+        } as unknown as WorkItem,
+        noon - 60000,
+      )?.label,
+    ).toBe(`snoozed ${snoozeDays(until, noon - 60000)}d`);
   });
 });

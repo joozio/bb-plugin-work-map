@@ -1,5 +1,5 @@
 import type { WorkItem } from "./model";
-import { localDay } from "./model";
+import { localDay, snoozeDays } from "./model";
 
 const DAY = 86400000;
 /** Days past due after which a date reads as stale rather than urgent. */
@@ -43,12 +43,8 @@ export function heatTiming(item: WorkItem, now: number): HeatTiming | null {
     return null;
   // A snooze speaks for the task until it ends: quiet, and it says so.
   if (item.snoozedUntil && item.snoozedUntil > now) {
-    // Calendar days, not elapsed milliseconds: the map's clock ticks behind
-    // the click, and a 7-day snooze must never read 8d for a minute.
-    const days = Math.max(
-      1,
-      localCalendarDay(item.snoozedUntil) - localCalendarDay(now),
-    );
+    // The same count Overview shows, from the one shared function.
+    const days = snoozeDays(item.snoozedUntil, now);
     return {
       kind: "snooze",
       days,

@@ -137,7 +137,7 @@ describe("a bulk act names exactly what it will touch", () => {
     expect(confirmNote("done")).toContain("follow-ups wired outside Work Map");
     expect(SNOOZE_DAYS).toBe(7);
     expect(confirmNote("snooze")).toBe(
-      "Snoozing hides the task from what needs you for 7 days and changes nothing in Tasks. Undo restores it.",
+      "Snoozing hides the task from what needs you for 7 days and changes nothing in Tasks. New input or a failed run still brings it back. Unsnooze on its card ends it early.",
     );
   });
 });

@@ -2955,7 +2955,7 @@ describe("heat layout", () => {
         .filter((input) => input.snoozedUntil !== undefined);
     const before = Date.now();
     fireEvent.click(
-      slot.getByRole("button", { name: "Snooze · Read the result" }),
+      slot.getByRole("button", { name: "Snooze 7d · Read the result" }),
     );
     await waitFor(() => expect(snoozes()).toHaveLength(1));
     const after = Date.now();
@@ -2980,6 +2980,48 @@ describe("heat layout", () => {
     slot.lifecycle.unmount();
   });
 
+  it("offers Unsnooze on a card snoozed before this page loaded, and it clears the snooze without asking", async () => {
+    // A fresh page: the snooze is saved, the session that made it is gone,
+    // so there is no Undo receipt. The card itself is the way back.
+    const settleRequests: SettleInput[] = [];
+    const slot = await mount({
+      ...heatFixture(),
+      settleRequests,
+      preferences: {
+        "task:t2": { snoozedUntil: Date.now() + 7 * 86400000 },
+      },
+    });
+    await expandProject(slot);
+    expect(slot.queryByRole("region", { name: "Settled today" })).toBeNull();
+    expect(slot.queryByRole("button", { name: /^Snooze 7d · Read the result/ })).toBeNull();
+    const card = slot.container.querySelector<HTMLElement>(
+      '.wm-heat-area-open [data-layout-id="task:t2"]',
+    )!;
+    // Heat and Overview read the same day count.
+    expect(card.textContent).toContain("snoozed 7d");
+    const unsnooze = slot.getByRole("button", {
+      name: "Unsnooze · Read the result",
+    });
+    expect((unsnooze as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(unsnooze);
+    await waitFor(() =>
+      expect(
+        slot.inspection.rpcCalls.some(
+          (call) =>
+            call.method === "setPreference" &&
+            (call.input as { id: string; snoozedUntil?: null }).id === "task:t2" &&
+            (call.input as { snoozedUntil?: null }).snoozedUntil === null,
+        ),
+      ).toBe(true),
+    );
+    expect(slot.queryByRole("dialog")).toBeNull();
+    await slot.findByText("Snooze cleared on TEST-2.");
+    // Its attention is back, and so is the act that snoozes it.
+    await slot.findByRole("button", { name: "Snooze 7d · Read the result" });
+    expect(settleRequests).toHaveLength(0);
+    slot.lifecycle.unmount();
+  });
+
   it("confirms a bulk snooze with honest copy and snoozes each task in turn", async () => {
     const settleRequests: SettleInput[] = [];
     const slot = await mount({ ...heatFixture(), settleRequests });
@@ -2987,13 +3029,13 @@ describe("heat layout", () => {
     menuAct(slot, /^Snooze all/);
     const confirm = await slot.findByRole("dialog");
     expect(confirm.textContent).toContain(
-      "Snoozing hides the task from what needs you for 7 days and changes nothing in Tasks. Undo restores it.",
+      "Snoozing hides the task from what needs you for 7 days and changes nothing in Tasks. New input or a failed run still brings it back. Unsnooze on its card ends it early.",
     );
     expect(confirm.textContent).not.toContain("clears it from what needs you");
     fireEvent.click(
       within(confirm).getByRole("button", { name: "Snooze 3 tasks" }),
     );
-    await slot.findByText("Snooze · 3 of 3 tasks.");
+    await slot.findByText("Snooze 7d · 3 of 3 tasks.");
     const ids = slot.inspection.rpcCalls
       .filter((call) => call.method === "setPreference")
       .map((call) => (call.input as { id: string }).id);
