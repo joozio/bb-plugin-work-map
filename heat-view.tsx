@@ -155,12 +155,33 @@ export function fitToWords(
         .filter((tile) => tile.tier !== "now" && tile.item)
         .map((tile) => tile.weight),
     ) * NOW_LEAD;
-  const out = fitted.map((tile) => {
+  const led = fitted.map((tile) => {
     if (tile.tier !== "now" || !tile.item || tile.weight >= lead) return tile;
     changed = true;
     return { ...tile, weight: Math.round(lead * 10000) / 10000 };
   });
-  return changed ? out : null;
+  if (!changed) return null;
+  // The fit changes sizes, never the reading order: in the order the tiles
+  // had before any fitting, none drops under the one after it, so the tile
+  // you open never jumps to another place when its full weight returns.
+  const before = heatOrder(
+    led.map((tile) => ({
+      ...tile,
+      weight: original.get(tile.id) ?? tile.weight,
+    })),
+  ).map((tile) => tile.id);
+  const weights = new Map(led.map((tile) => [tile.id, tile.weight]));
+  let floor = 0;
+  for (const id of [...before].reverse()) {
+    const weight = Math.max(weights.get(id) ?? 0, floor);
+    weights.set(id, Math.round(weight * 10000) / 10000);
+    floor = weight + 0.0001;
+  }
+  return led.map((tile) =>
+    weights.get(tile.id) === tile.weight
+      ? tile
+      : { ...tile, weight: weights.get(tile.id)! },
+  );
 }
 const box = (rect: Rect): CSSProperties => ({
   left: `${rect.x}%`,
