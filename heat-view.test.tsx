@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import { data, now, task, thread } from "./fixtures";
 import { buildMap, localDay } from "./model";
 import { buildHeat } from "./heat";
-import { HeatMap, groupRows } from "./heat-view";
+import { HeatMap, foldHead, groupRows } from "./heat-view";
 
 const DAY = 86400000;
 const due = (days: number) => localDay(now + days * DAY);
@@ -255,7 +255,11 @@ it("draws no titleless tile in a small area: the unreadable ones fold into a nam
       /^DT-\d+$/,
     );
   }
-  const folded = Number(/\+(\d+) more/.exec(more[0].textContent!)![1]);
+  const folded = Number(
+    /^\+(\d+)/.exec(
+      more[0].querySelector(".wm-heat-group-head")!.textContent!,
+    )![1],
+  );
   expect(folded).toBeGreaterThan(0);
   expect(drawn.length + folded).toBe(keys.length);
   // Named, not blank: the tooltip lists the keys it holds.
@@ -297,7 +301,7 @@ it("keeps open-area cards readable and scrolls the area body when they do not fi
   }
 });
 
-it("keeps a compact orchestrator line on a narrow area header, and only that", () => {
+it("keeps the orchestrator and every count on a narrow area header, in short words", () => {
   frame(180, 400);
   const areas = buildHeat(
     buildMap(
@@ -328,19 +332,21 @@ it("keeps a compact orchestrator line on a narrow area header, and only that", (
   const area = held.container.querySelector(".wm-heat-area")!;
   expect(area.classList).toContain("wm-heat-area-tight");
   const line = area.querySelector(".wm-heat-name em")!;
-  expect(line.textContent).toBe("orchestrator · 2/3");
+  expect(line.textContent).toBe("1 need · orch 2/3");
   expect(line.classList).toContain("wm-heat-orchestrated");
   // The full state stays in the accessible name.
   expect(area.getAttribute("aria-label")).toContain(
     "1 need you · orchestrator · 2 of 3 running",
   );
   held.unmount();
-  // Without an orchestrator the narrow header keeps its full line for the
-  // accessible name; the stylesheet hides it there.
+  // Without an orchestrator the narrow header still shows its counts, short.
   const free = mapWith(null);
   const plain = free.container.querySelector(".wm-heat-name em")!;
   expect(plain.classList).not.toContain("wm-heat-orchestrated");
-  expect(plain.textContent).toBe("1 need you");
+  expect(plain.textContent).toBe("1 need");
+  expect(
+    free.container.querySelector(".wm-heat-area")!.getAttribute("aria-label"),
+  ).toContain("1 need you");
 });
 
 it("keeps every card's width and act tier when the picker opens, scrolling instead", () => {
@@ -580,4 +586,73 @@ it("fits as many member rows as the tile's height allows, keeping one for the re
   expect(groupRows(100, 12)).toBe(3);
   expect(groupRows(400, 12)).toBe(12);
   expect(groupRows(400, 3)).toBe(3);
+});
+
+it("never lets a fold hide running sessions as a neutral block, and opens the strongest one", () => {
+  // Twelve finished sessions and three running ones.
+  const threads = [
+    ...Array.from({ length: 12 }, (_, i) =>
+      thread({ id: `thr_q${i}`, title: `Finished ${i}`, updatedAt: now - (i + 1) * 3600000 }),
+    ),
+    ...Array.from({ length: 3 }, (_, i) =>
+      thread({ id: `thr_r${i}`, title: `Running ${i}`, indicator: "runtime" }),
+    ),
+  ];
+  const sessions = (width: number, height: number) => {
+    frame(width, height);
+    const opened: string[] = [];
+    const view = heat([], threads, { onOpen: (item) => opened.push(item.id) });
+    const area = view.container.querySelector(".wm-heat-area")!;
+    return { view, area, opened };
+  };
+  // Tiny: everything folds, and the fold says how many are running.
+  const tiny = sessions(150, 120);
+  // The header keeps its running count however narrow it is.
+  expect(tiny.area.classList).toContain("wm-heat-area-tight");
+  expect(tiny.area.querySelector(".wm-heat-name em")!.textContent).toBe("3 run");
+  const more = tiny.area.querySelector<HTMLElement>(".wm-heat-more")!;
+  expect(more.classList).toContain("wm-heat-running");
+  expect(more.classList).toContain("wm-heat-working");
+  expect(more.classList).not.toContain("wm-heat-quiet");
+  expect(more.querySelector(".wm-heat-group-head")!.textContent).toMatch(/· 3 run/);
+  // The head opens a running session, not whichever came first.
+  fireEvent.click(more.querySelector(".wm-heat-group-head")!);
+  expect(tiny.opened[0]).toMatch(/thr_r/);
+  tiny.view.unmount();
+  // A little more room: the quiet ones fold first and the running ones are drawn.
+  const small = sessions(260, 170);
+  const fold = small.area.querySelector<HTMLElement>(".wm-heat-more")!;
+  const running = small.area.querySelectorAll(".wm-heat-tile[data-work-id].wm-heat-running");
+  expect(running.length).toBeGreaterThan(0);
+  expect(fold.querySelector(".wm-heat-group-head")!.textContent).toBe(
+    `+14 more · ${3 - running.length} running`,
+  );
+  // Drawn tiles are only running ones while one of them is folded.
+  expect(
+    small.area.querySelectorAll(".wm-heat-tile[data-work-id]:not(.wm-heat-running)"),
+  ).toHaveLength(0);
+});
+
+it("names a fold by what it hides, in short words when the full ones do not fit", () => {
+  const fold = (members: number, waiting: number, running: number) =>
+    ({
+      id: "more:a",
+      weight: 1,
+      tone: "quiet",
+      item: null,
+      members: Array.from({ length: members }, (_, i) => ({ id: `m${i}` })),
+      stale: 0,
+      waited: 0,
+      level: 1,
+      timing: null,
+      overflow: true,
+      waiting,
+      running,
+    }) as unknown as Parameters<typeof foldHead>[0];
+  expect(foldHead(fold(16, 0, 3), 400)).toBe("+16 more · 3 running");
+  expect(foldHead(fold(16, 2, 3), 400)).toBe("+16 more · 2 need you · 3 running");
+  expect(foldHead(fold(16, 2, 3), 110)).toBe("+16 · 2 need · 3 run");
+  expect(foldHead(fold(2, 2, 0), 400)).toBe("+2 need you");
+  expect(foldHead(fold(3, 0, 3), 60)).toBe("+3 run");
+  expect(foldHead(fold(9, 0, 0), 400)).toBe("+9 more");
 });

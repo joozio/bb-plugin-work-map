@@ -2238,10 +2238,8 @@ i.wm-heat-key {
   flex: none;
   max-width: 55%;
 }
-.wm-heat-area-tight .wm-heat-name em:not(.wm-heat-orchestrated) {
-  display: none;
-}
-.wm-heat-area-tight .wm-heat-name em.wm-heat-orchestrated {
+/* A narrow header keeps its counts in short words; the name gives way first. */
+.wm-heat-area-tight .wm-heat-name em {
   max-width: none;
 }
 .wm-heat-actions {

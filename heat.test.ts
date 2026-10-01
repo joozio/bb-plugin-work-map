@@ -1134,3 +1134,83 @@ describe("the fold tile itself", () => {
     expect(cell.w >= MIN_TILE.w && cell.h >= MIN_TILE.h).toBe(true);
   });
 });
+
+describe("a fold never hides running work behind quiet work", () => {
+  const tile = (
+    id: string,
+    weight: number,
+    tone: HeatTile["tone"],
+    running = 0,
+  ): HeatTile => ({
+    id,
+    weight,
+    tone,
+    item: { id, title: id } as WorkItem,
+    members: [],
+    stale: 0,
+    waited: null,
+    level: tone === "review" ? 3 : 1,
+    timing: null,
+    running,
+  });
+  const loud = (t: HeatTile) =>
+    t.tone === "review" || t.tone === "input" || (t.running ?? 0) > 0;
+  it("folds quiet tiles first, then by weight, and keeps the running ones drawn", () => {
+    // Sessions at 1024: light running agents beside heavier finished ones.
+    const tiles = [
+      ...Array.from({ length: 10 }, (_, i) => tile(`q${i}`, 2 + i * 0.1, "quiet")),
+      tile("r1", 0.9, "working", 1),
+      tile("r2", 0.8, "working", 1),
+      tile("r3", 0.7, "working", 1),
+    ];
+    const size = { w: 280, h: 190 };
+    const shown = foldSmall(tiles, size, { id: "s" });
+    const drawn = shown.filter((t) => !t.overflow);
+    const more = shown.find((t) => t.overflow);
+    // Every running tile is drawn whole...
+    expect(drawn.map((t) => t.id)).toEqual(
+      expect.arrayContaining(["r1", "r2", "r3"]),
+    );
+    const rect = { x: 0, y: 0, ...size };
+    const rects = place(
+      partition(shown, rect),
+      expandedWeights(shown, undefined, 0.78),
+      rect,
+    );
+    for (const t of drawn) {
+      const cell = rects.get(t.id)!;
+      expect(cell.w >= MIN_TILE.w && cell.h >= MIN_TILE.h).toBe(true);
+    }
+    // ...and only quiet work went into the fold, which stays quiet.
+    expect(more).toBeTruthy();
+    expect(more!.members.every((m) => m.id.startsWith("q"))).toBe(true);
+    expect(more!.tone).toBe("quiet");
+    expect(more!.running).toBe(0);
+  });
+  it("folds a loud tile only once no quieter tile is drawn", () => {
+    const tiles = [
+      tile("q0", 3, "quiet"),
+      tile("q1", 2.5, "quiet"),
+      ...Array.from({ length: 12 }, (_, i) =>
+        tile(`r${i}`, 0.5 + i * 0.05, "working", 1),
+      ),
+      tile("n0", 0.6, "review"),
+    ];
+    const shown = foldSmall(tiles, { w: 150, h: 120 }, { id: "s" });
+    const more = shown.find((t) => t.overflow)!;
+    const drawn = shown.filter((t) => !t.overflow);
+    if (more.members.some((m) => loud(tiles.find((t) => t.id === m.id)!)))
+      expect(drawn.every(loud)).toBe(true);
+    // The fold wears its strongest member and counts what it hides.
+    const hidden = more.members.map((m) => tiles.find((t) => t.id === m.id)!);
+    expect(more.running).toBe(hidden.filter((t) => t.running).length);
+    expect(more.waiting).toBe(hidden.filter((t) => t.tone === "review").length);
+    expect(more.tone).toBe(
+      hidden.some((t) => t.tone === "review")
+        ? "review"
+        : hidden.some((t) => t.running)
+          ? "working"
+          : "quiet",
+    );
+  });
+});

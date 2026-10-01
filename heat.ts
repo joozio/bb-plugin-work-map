@@ -21,6 +21,19 @@ export const HEAT_LABEL: Record<HeatTone, string> = {
 export function needsYou(tone: HeatTone) {
   return ACTION.includes(tone);
 }
+/** Strongest first: what a tile standing for several pieces of work wears. */
+const TONE_ORDER: HeatTone[] = [
+  "input",
+  "error",
+  "review",
+  "followup",
+  "unread",
+  "working",
+  "quiet",
+];
+export function toneRank(tone: HeatTone) {
+  return TONE_ORDER.indexOf(tone);
+}
 /**
  * A task marked done or canceled reads as closed however its sessions look:
  * an orchestrator stays attached to tasks its children already closed, and
@@ -529,6 +542,10 @@ export interface HeatTile {
   timing: HeatTiming | null;
   /** Stands for tiles too small to read, folded into one "+N more". */
   overflow?: boolean;
+  /** Agents running here: 1 for running work, the total for a fold. */
+  running?: number;
+  /** Folded work that needs you; only a fold counts it. */
+  waiting?: number;
 }
 export interface HeatArea {
   id: string;
@@ -580,6 +597,7 @@ function areaFrom(
       waited: waitingSince(item, now) ? waitDays(item, now) : null,
       level: heatLevel(item, now),
       timing: heatTiming(item, now),
+      running: heatWorking(item) ? 1 : 0,
     })),
   );
   const loud = tiles.filter(
@@ -621,26 +639,50 @@ function areaFrom(
 }
 /** A drawn tile must hold its key and one title line; below this it folds. */
 export const MIN_TILE = { w: 64, h: 42 };
+/** Running agents a tile stands for; fixtures without the count read their tone. */
+const runningIn = (tile: HeatTile) =>
+  tile.running ?? (tile.tone === "working" ? 1 : 0);
+/**
+ * How much folding a tile would hide: what needs you, then running work,
+ * then a result to read, then quiet work. The quietest folds first.
+ */
+function loudness(tile: HeatTile) {
+  if (needsYou(tile.tone)) return 3;
+  if (runningIn(tile)) return 2;
+  return tile.tone === "unread" ? 1 : 0;
+}
+/**
+ * The fold wears its strongest member: a pile hiding running agents or work
+ * that needs you must never read as an inactive block.
+ */
 function moreTile(id: string, folded: readonly HeatTile[]): HeatTile {
+  const strongest = [...folded].sort(
+    (a, b) => toneRank(a.tone) - toneRank(b.tone) || b.level - a.level,
+  )[0];
   return {
     id,
     weight: round(total(folded)),
-    tone: "quiet",
+    tone: strongest?.tone ?? "quiet",
     item: null,
     members: folded.flatMap((tile) => (tile.item ? [tile.item] : tile.members)),
     stale: 0,
     waited: 0,
-    level: 1,
+    level: strongest?.level ?? 1,
     timing: null,
     overflow: true,
+    running: folded.reduce((sum, tile) => sum + runningIn(tile), 0),
+    waiting: folded.filter((tile) => needsYou(tile.tone)).length,
   };
 }
 /**
  * Squarify at the real pixel size, fold every tile under `min` into one
- * "+N more" tile carrying their summed weight, and squarify again until
- * nothing left is too small. Folding changes sizes, so a pass can expose a
- * new small tile; each pass folds at least one more, so it ends. `keep` (an
- * expanded tile, grown to `share`) never folds, and neither does the fold.
+ * "+N more" tile, and squarify again until nothing left is too small. The
+ * fold carries its members' summed weight, but never more than the room of
+ * a readable tile and a half: the rest goes back to the work still drawn,
+ * which is how folding a quiet tile makes room for a running one. Folding
+ * changes sizes, so a pass can expose a new small tile; each pass folds at
+ * least one more, so it ends. `keep` (an expanded tile, grown to `share`)
+ * never folds, and neither does the fold.
  */
 export function foldSmall(
   tiles: readonly HeatTile[],
@@ -658,6 +700,8 @@ export function foldSmall(
   let shown = heatOrder(tiles);
   let folded: HeatTile[] = [];
   let bumps = 0;
+  const cap =
+    total(tiles) * Math.min(1, (1.5 * min.w * min.h) / (size.w * size.h));
   for (let pass = 0; pass <= tiles.length + 8; pass++) {
     const rects = place(
       partition(shown, rect),
@@ -688,15 +732,31 @@ export function foldSmall(
       }
       break;
     }
-    // Fold the lightest half first: once they are out of the way the rest
-    // usually fit, and an area keeps its heaviest tiles instead of showing
-    // nothing but "+N more".
-    const lightest = [...small]
+    // The quietest go first. Running work and work that needs you never fold
+    // while a quieter tile is still drawn: that tile folds instead, and the
+    // room it frees is what the loud one was missing.
+    const floor = Math.min(...small.map(loudness));
+    const quieter =
+      floor >= 2
+        ? shown.filter(
+            (tile) =>
+              tile.id !== moreId &&
+              tile.id !== options.keep &&
+              loudness(tile) < floor,
+          )
+        : [];
+    const pool = quieter.length ? quieter : small;
+    const level = Math.min(...pool.map(loudness));
+    const candidates = pool.filter((tile) => loudness(tile) === level);
+    // Then the lightest half: once they are out of the way the rest usually
+    // fit, and an area keeps its heaviest tiles instead of only "+N more".
+    const lightest = [...candidates]
       .sort((a, b) => a.weight - b.weight)
-      .slice(0, Math.max(1, Math.ceil(small.length / 2)));
+      .slice(0, Math.max(1, Math.ceil(candidates.length / 2)));
     folded = [...folded, ...lightest];
     const current = shown.find((tile) => tile.id === moreId);
-    const next = moreTile(moreId, folded);
+    const fold = moreTile(moreId, folded);
+    const next = { ...fold, weight: round(Math.min(fold.weight, cap)) };
     shown = heatOrder([
       ...shown.filter((tile) => tile.id !== moreId && !lightest.includes(tile)),
       current && current.weight > next.weight

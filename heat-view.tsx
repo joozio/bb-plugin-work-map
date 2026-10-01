@@ -19,6 +19,7 @@ import {
   partition,
   place,
   tileText,
+  toneRank,
   type HeatArea,
   type HeatTile,
   type Rect,
@@ -268,10 +269,8 @@ export function HeatMap({
                       : undefined
                   }
                 >
-                  {/* A narrow header drops its counts but keeps who has taken the area. */}
-                  {width < TIGHT && area.orchestrator
-                    ? `orchestrator · ${area.orchestrator.running}/${area.orchestrator.limit}`
-                    : areaState(area)}
+                  {/* A narrow header shortens its counts, never drops them. */}
+                  {areaState(area, width < TIGHT)}
                 </em>
               </button>
             </header>
@@ -326,22 +325,55 @@ function overCap(orchestrator: AreaOrchestrator) {
  * What one line under the area name says. An orchestrator replaces the
  * running count: the reader needs "one agent has this area", not the number
  * of threads it spawned, until that number breaks the cap it was given.
+ * `tight` is the narrow header: the same counts in fewer letters, because a
+ * count hidden at small widths is exactly the running work you lose.
  */
-export function areaState(area: HeatArea) {
+export function areaState(area: HeatArea, tight = false) {
   const { orchestrator } = area;
   const orchestrated = orchestrator
-    ? overCap(orchestrator)
-      ? `orchestrator · ${orchestrator.running} running, over the cap of ${orchestrator.limit}`
-      : `orchestrator · ${orchestrator.running} of ${orchestrator.limit} running`
+    ? tight
+      ? `${area.waiting ? "orch" : "orchestrator ·"} ${orchestrator.running}/${orchestrator.limit}`
+      : overCap(orchestrator)
+        ? `orchestrator · ${orchestrator.running} running, over the cap of ${orchestrator.limit}`
+        : `orchestrator · ${orchestrator.running} of ${orchestrator.limit} running`
     : "";
   return (
     [
-      area.waiting ? `${area.waiting} need you` : "",
-      orchestrated || (area.running ? `${area.running} running` : ""),
+      area.waiting ? `${area.waiting} ${tight ? "need" : "need you"}` : "",
+      orchestrated ||
+        (area.running ? `${area.running} ${tight ? "run" : "running"}` : ""),
     ]
       .filter(Boolean)
       .join(" · ") || `${area.items.length} quiet`
   );
+}
+/**
+ * The head of a fold: how many it holds and, ahead of everything else, how
+ * many of them need you or are running. Short words when the full ones do
+ * not fit; the count of hidden work never drops.
+ */
+export function foldHead(tile: HeatTile, width: number) {
+  const count = tile.members.length;
+  const counts = (tight: boolean) =>
+    [
+      tile.waiting ? `${tile.waiting} ${tight ? "need" : "need you"}` : "",
+      tile.running ? `${tile.running} ${tight ? "run" : "running"}` : "",
+    ].filter(Boolean);
+  // When the whole fold is one kind of work, its count is that kind.
+  const whole =
+    tile.waiting === count
+      ? ["need you", "need"]
+      : tile.running === count
+        ? ["running", "run"]
+        : null;
+  const options = whole
+    ? whole.map((word) => `+${count} ${word}`)
+    : [
+        [`+${count} more`, ...counts(false)].join(" · "),
+        [`+${count} more`, ...counts(true)].join(" · "),
+        [`+${count}`, ...counts(true)].join(" · "),
+      ];
+  return options.find((text) => fitsWord(width, text)) ?? options.at(-1)!;
 }
 /** The head line of a group tile, then one row per member, then the rest. */
 const GROUP_HEAD = 20;
@@ -380,7 +412,15 @@ function GroupTile({
   onOpen: (item: WorkItem) => void;
   onOpenArea: (area: HeatArea) => void;
 }) {
-  const members = [...tile.members].sort((a, b) => b.score - a.score);
+  // A fold lists, and opens, its strongest member first: what needs you, then
+  // running work, then by score.
+  const members = [...tile.members].sort(
+    (a, b) =>
+      (tile.overflow
+        ? toneRank(heatTone(a)) - toneRank(heatTone(b)) ||
+          Number(heatWorking(b)) - Number(heatWorking(a))
+        : 0) || b.score - a.score,
+  );
   const count = members.length;
   const finished =
     !tile.overflow && members.every((member) => member.kind === "thread");
@@ -389,7 +429,7 @@ function GroupTile({
     : finished
       ? `agent${count === 1 ? "" : "s"} finished`
       : `quiet task${count === 1 ? "" : "s"}`;
-  const head = tile.overflow ? `+${count} more` : `${count} ${noun}`;
+  const head = tile.overflow ? foldHead(tile, width) : `${count} ${noun}`;
   const names = members.map((member) => member.task?.key ?? member.title);
   // Rows need a key beside the dot, and a few words of title from 110px;
   // narrower than 60px, the head alone.
@@ -398,8 +438,8 @@ function GroupTile({
   const shown = fit >= count ? members : members.slice(0, Math.max(0, fit - 1));
   const rest = count - shown.length;
   // A project opens as its card grid. The Sessions area has no grid, so its
-  // "+N more" opens the heaviest folded session in place; its quiet pile of
-  // finished agents still opens the area, which reveals them.
+  // "+N more" opens the strongest folded session in place (members are
+  // sorted so); its quiet pile of finished agents still opens the area.
   const openGroup = () =>
     !tile.overflow || area.root || !members[0]
       ? onOpenArea(area)
@@ -407,9 +447,10 @@ function GroupTile({
   return (
     <div className="wm-heat-slot" data-layout-id={tile.id} style={box(rect)}>
       <div
-        className={`wm-heat-tile wm-heat-quiet wm-heat-group ${tile.overflow ? "wm-heat-more" : ""} ${shown.length ? "wm-heat-group-list" : ""}`}
+        className={`wm-heat-tile wm-heat-${tile.overflow ? tile.tone : "quiet"} wm-heat-group ${tile.overflow ? "wm-heat-more" : ""} ${tile.running ? "wm-heat-running" : ""} ${shown.length ? "wm-heat-group-list" : ""}`}
+        data-level={tile.overflow ? tile.level : undefined}
         role="group"
-        aria-label={`${head} in ${area.title}`}
+        aria-label={`${tile.overflow ? foldHead(tile, Infinity) : head} in ${area.title}`}
         title={tile.overflow ? names.join(", ") : undefined}
       >
         <button
@@ -417,7 +458,7 @@ function GroupTile({
           className="wm-heat-group-head"
           onClick={openGroup}
           title={names.join(", ")}
-          aria-label={`Show ${count} ${noun} in ${area.title}${tile.overflow ? `: ${names.join(", ")}` : ""}`}
+          aria-label={`${tile.overflow && !area.root && members[0] ? `Open ${members[0].title}, the strongest of` : "Show"} ${count} ${noun} in ${area.title}${tile.overflow ? `${tile.waiting ? `, ${tile.waiting} need you` : ""}${tile.running ? `, ${tile.running} running` : ""}: ${names.join(", ")}` : ""}`}
         >
           <span className="wm-heat-meta">
             <span>{head}</span>
