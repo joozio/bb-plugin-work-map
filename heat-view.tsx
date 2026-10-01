@@ -115,6 +115,8 @@ export function neededHeight(tile: HeatTile, width: number) {
 }
 /** A tile taller than this many times its words shrinks to them. */
 const FILL_SLACK = 1.25;
+/** The fit never takes a tile under half its pull: words trim a size, they do not set it. */
+const FIT_FLOOR = 0.5;
 /** A Now tile weighs at least this much more than any other tile of its area. */
 const NOW_LEAD = 1.1;
 /**
@@ -127,6 +129,8 @@ export function fitToWords(
   tiles: readonly HeatTile[],
   rects: ReadonlyMap<string, Rect>,
   size: { w: number; h: number },
+  /** Each tile's weight before any fitting: the floor is half of it. */
+  original: ReadonlyMap<string, number> = new Map(),
 ): HeatTile[] | null {
   let changed = false;
   const fitted = tiles.map((tile) => {
@@ -136,7 +140,10 @@ export function fitToWords(
     const height = (cell.h / 100) * size.h;
     const need = neededHeight(tile, width) + BODY_PAD;
     if (height <= need * FILL_SLACK) return tile;
-    const weight = tile.weight * ((need * 1.1) / height);
+    const weight = Math.max(
+      (original.get(tile.id) ?? tile.weight) * FIT_FLOOR,
+      tile.weight * ((need * 1.1) / height),
+    );
     if (weight >= tile.weight) return tile;
     changed = true;
     return { ...tile, weight: Math.round(weight * 10000) / 10000 };
@@ -333,15 +340,24 @@ export function HeatMap({
         );
         return { tiles, inner };
       };
-      let { tiles, inner } = lay(open ? evenOut(ranked, EVEN_RATIO) : ranked);
+      let source = open ? evenOut(ranked, EVEN_RATIO) : ranked;
+      let { tiles, inner } = lay(source);
       // A tile far taller than its words gives the room back, three passes
-      // at most: each pass sees the widths the one before it changed.
-      if (!open)
+      // at most: each pass sees the widths the one before it changed. The
+      // new weights go back onto the unfolded tiles, so the fold is rebuilt
+      // from the whole area rather than folded again.
+      if (!open) {
+        const original = new Map(ranked.map((tile) => [tile.id, tile.weight]));
         for (let pass = 0; pass < 3; pass++) {
-          const fitted = fitToWords(tiles, inner, body);
+          const fitted = fitToWords(tiles, inner, body, original);
           if (!fitted) break;
-          ({ tiles, inner } = lay(fitted));
+          const weights = new Map(fitted.map((tile) => [tile.id, tile.weight]));
+          source = source.map((tile) =>
+            weights.has(tile.id) ? { ...tile, weight: weights.get(tile.id)! } : tile,
+          );
+          ({ tiles, inner } = lay(source));
         }
+      }
       return { area, rect, tiles, inner, bodyHeight, scroll: false, flow: null };
     });
   }, [
@@ -437,24 +453,29 @@ export function HeatMap({
                       : undefined
                 }
               >
-                {tiles.map((tile, index) => {
+                {/* One flat keyed list: a tile keeps its element when the
+                    order changes, and a label sits before the first card of
+                    each priority. */}
+                {tiles.flatMap((tile, index) => {
                   const cell = inner.get(tile.id) ?? UNIT;
                   const group = groupOf(tile);
                   const heading =
                     labelled &&
                     group &&
-                    (index === 0 || groupOf(tiles[index - 1]) !== group) ? (
-                      <div
-                        key={`group:${group}`}
-                        className="wm-heat-group-label"
-                        role="heading"
-                        aria-level={4}
-                      >
-                        {group}
-                      </div>
-                    ) : null;
+                    (index === 0 || groupOf(tiles[index - 1]) !== group)
+                      ? [
+                          <div
+                            key={`group:${group}`}
+                            className="wm-heat-group-label"
+                            role="heading"
+                            aria-level={4}
+                          >
+                            {group}
+                          </div>,
+                        ]
+                      : [];
                   return [
-                    heading,
+                    ...heading,
                     <Tile
                       key={tile.id}
                       tile={tile}

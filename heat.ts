@@ -1095,28 +1095,38 @@ export function nowShare(areas: readonly HeatArea[]) {
  * keep their weight order. The room given back goes to Next and to the areas
  * that were squeezed beside the hot ones.
  */
+export function nowScale(
+  areas: readonly HeatArea[],
+  finish: (areas: readonly HeatArea[]) => HeatArea[],
+  cap = NOW_SHARE_CAP,
+) {
+  let scale = 1;
+  for (let pass = 0; pass < 40; pass++) {
+    if (nowShare(finish(scaleNow(areas, scale))) <= cap + 1e-6) break;
+    const next = scale * NOW_SCALE_STEP;
+    if (next < NOW_SCALE_FLOOR) break;
+    scale = next;
+  }
+  return scale;
+}
+/** Every Now tile at `scale` of its weight; the areas re-weighed. */
+export function scaleNow(areas: readonly HeatArea[], scale: number): HeatArea[] {
+  if (scale === 1) return [...areas];
+  return areas.map((area) => {
+    const tiles = area.tiles.map((tile) =>
+      tile.tier === "now" && tile.item
+        ? { ...tile, weight: round(tile.weight * scale) }
+        : tile,
+    );
+    return { ...area, tiles, weight: areaWeight(tiles) };
+  });
+}
 export function capNowShare(
   areas: readonly HeatArea[],
   finish: (areas: readonly HeatArea[]) => HeatArea[],
   cap = NOW_SHARE_CAP,
 ): HeatArea[] {
-  let scale = 1;
-  let current = [...areas];
-  for (let pass = 0; pass < 40; pass++) {
-    if (nowShare(finish(current)) <= cap + 1e-6) break;
-    const next = scale * NOW_SCALE_STEP;
-    if (next < NOW_SCALE_FLOOR) break;
-    scale = next;
-    current = areas.map((area) => {
-      const tiles = area.tiles.map((tile) =>
-        tile.tier === "now" && tile.item
-          ? { ...tile, weight: round(tile.weight * scale) }
-          : tile,
-      );
-      return { ...area, tiles, weight: areaWeight(tiles) };
-    });
-  }
-  return current;
+  return scaleNow(areas, nowScale(areas, finish, cap));
 }
 /**
  * The order of the cards in an open area: priority first (urgent, high,
@@ -1233,9 +1243,11 @@ export function buildHeat(
         areaCeiling(area.tiles.length),
       ),
     );
-  // Tidy mode has its own sizes: the slipped tiles are the work there.
-  const tiered = withTiers(areas, tidy);
-  return finish(tidy ? tiered : capNowShare(tiered, finish));
+  // The Now cap is read from the plain map and applied as is in tidy mode,
+  // where the slipped tiles grow and everything else shrinks under it.
+  const plain = withTiers(areas, false);
+  const scale = nowScale(plain, finish);
+  return finish(scaleNow(tidy ? withTiers(areas, true) : plain, scale));
 }
 export function heatStats(areas: readonly HeatArea[], now: number) {
   const items = areas.flatMap((area) => area.items);
