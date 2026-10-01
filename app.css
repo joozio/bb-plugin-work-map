@@ -2748,6 +2748,21 @@ i.wm-heat-key.wm-heat-late {
   min-height: 220px;
   height: auto;
 }
+/* Inside a card the chat's heading is one line, so the room goes to the
+   timeline and the composer; the full title stays on the card above. */
+.wm-heat-slot-open .wm-live-heading {
+  flex-wrap: nowrap;
+  padding: 7px 12px;
+}
+.wm-heat-slot-open .wm-live-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wm-heat-slot-open .wm-live-heading span {
+  flex: none;
+}
 @media (prefers-reduced-motion: reduce) {
   .wm-heat-running {
     animation: none;

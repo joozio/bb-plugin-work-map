@@ -2,7 +2,12 @@
 import { useRef } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
-import { keyMovesLayout, useMapMotion } from "./layout-motion";
+import {
+  keyMovesLayout,
+  revealBottom,
+  useMapMotion,
+  useRevealChat,
+} from "./layout-motion";
 
 afterEach(() => {
   cleanup();
@@ -103,4 +108,31 @@ it("measures on keys that can move the map, never on typing in an editor", () =>
   expect(keyMovesLayout({ key: " ", target: plain })).toBe(false);
   expect(keyMovesLayout({ key: "Escape", target: plain })).toBe(true);
   document.body.replaceChildren();
+});
+
+it("scrolls an open card's details just far enough to show the chat composer whole", () => {
+  // The round-two geometry: details clip at 776, the composer ends at 915.
+  expect(revealBottom({ bottom: 776 }, { bottom: 914.6 }, 12)).toBe(151);
+  // Already whole: nothing moves.
+  expect(revealBottom({ bottom: 776 }, { bottom: 700 }, 12)).toBe(0);
+  function Chat({ open }: { open: boolean }) {
+    useRevealChat(open ? "chat-thr" : null, "inline");
+    return (
+      <section className="wm-inline-detail" style={{ paddingBottom: 12 }}>
+        <section id="chat-thr" className="wm-live-session" />
+      </section>
+    );
+  }
+  const rect = (bottom: number) =>
+    ({ bottom, top: bottom - 100, left: 0, right: 0, width: 0, height: 100 }) as DOMRect;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return rect(this.id === "chat-thr" ? 915 : 776);
+    },
+  );
+  const view = render(<Chat open={false} />);
+  const detail = view.container.querySelector<HTMLElement>(".wm-inline-detail")!;
+  expect(detail.scrollTop).toBe(0);
+  view.rerender(<Chat open />);
+  expect(detail.scrollTop).toBe(151);
 });

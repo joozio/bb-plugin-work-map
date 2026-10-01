@@ -37,7 +37,11 @@ import {
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Icon } from "./components/ui/icon";
-import { keyMovesLayout, useMapMotion } from "./layout-motion";
+import {
+  keyMovesLayout,
+  useMapMotion,
+  useRevealChat,
+} from "./layout-motion";
 import { useMapZoom, ZoomControls } from "./map-zoom";
 import { extendOrbit, zoomDensity, zoomVisible } from "./zoom";
 import { SESSIONS_AREA, heatStats, type HeatArea } from "./heat";
@@ -778,6 +782,10 @@ function WorkMap() {
   useEffect(() => {
     setChatTarget(null);
   }, [selected?.id, previewId, canChat]);
+  useRevealChat(
+    chatOpen && previewId ? `chat-${previewId}` : null,
+    previewMode,
+  );
   useEffect(() => {
     // Change the nonce after mounting or moving the native chat, so focus does
     // not depend on whether the host treats an initial prop as a request.

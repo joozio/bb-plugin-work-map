@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 const duration = 320;
 const EDITABLE =
@@ -19,6 +19,19 @@ export function keyMovesLayout(event: {
   return (
     event.key === " " && !!target?.closest("button, [role='button'], summary")
   );
+}
+
+/**
+ * How far a scrolling box must move so `inner`'s bottom edge, and with it the
+ * chat composer and its controls, sits inside the box above its padding.
+ * Never negative: what already shows whole is left where it is.
+ */
+export function revealBottom(
+  outer: { bottom: number },
+  inner: { bottom: number },
+  padding = 0,
+) {
+  return Math.max(0, Math.ceil(inner.bottom - (outer.bottom - padding)));
 }
 
 // Measure around the React update so grid reflow is visible, including collapse.
@@ -141,4 +154,35 @@ export function useMapMotion(
     };
   }, []);
   return capture;
+}
+
+/**
+ * Keep an open chat's composer in view. An open card's details can be shorter
+ * than the chat's floor; they scroll then, and this scrolls them so the reply
+ * editor and its controls are never under the card's edge. It runs when the
+ * chat opens and whenever the details or the chat change size, never on a
+ * scroll, so reading back up through the details is never fought. `where`
+ * names the surface, so moving the chat between card and pane re-runs it.
+ */
+export function useRevealChat(chatId: string | null, where = "") {
+  useEffect(() => {
+    if (!chatId) return;
+    const live = document.getElementById(chatId);
+    const detail = live?.closest<HTMLElement>(".wm-inline-detail");
+    if (!live || !detail) return;
+    const reveal = () => {
+      const padding = parseFloat(getComputedStyle(detail).paddingBottom) || 0;
+      detail.scrollTop += revealBottom(
+        detail.getBoundingClientRect(),
+        live.getBoundingClientRect(),
+        padding,
+      );
+    };
+    reveal();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(reveal);
+    observer.observe(detail);
+    observer.observe(live);
+    return () => observer.disconnect();
+  }, [chatId, where]);
 }
