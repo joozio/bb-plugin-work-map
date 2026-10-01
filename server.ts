@@ -1,6 +1,6 @@
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { describeTask } from "./model";
+import { commentAsk, describeTask } from "./model";
 import { currentStatusSince } from "./attention-age";
 import { sessionPreview, type SessionPreview } from "./preview";
 import { settlementContract } from "./settlement-contract";
@@ -51,6 +51,9 @@ const taskSchema = z.object({
   createdAt: z.string().optional(),
   summary: z.string(),
   nextAction: z.string(),
+  /** What needs doing, at most two sentences and 280 characters. */
+  ask: z.string().optional(),
+  askFrom: z.enum(["comment", "next", "why", "summary"]).optional(),
   dateKind: z.string(),
   waitingOn: z.string(),
   lifecycle: z.string().optional(),
@@ -190,6 +193,7 @@ export default async function plugin(bb: BbPluginApi) {
       updatedAt: string;
       sessions: NonNullable<MapTask["commentSessions"]>;
       statusSince?: string;
+      ask: string;
     }
   >();
   const previews = new Map<string, SessionPreview & { at: number }>();
@@ -229,6 +233,7 @@ export default async function plugin(bb: BbPluginApi) {
           let sessionLinks: NonNullable<MapTask["sessionLinks"]> = [];
           let commentSessions: NonNullable<MapTask["commentSessions"]> = [];
           let statusSince: string | undefined;
+          let ask = "";
           try {
             const result = await call(
               "listTaskThreads",
@@ -265,6 +270,7 @@ export default async function plugin(bb: BbPluginApi) {
           ) {
             commentSessions = previousComments.sessions;
             statusSince = previousComments.statusSince;
+            ask = previousComments.ask;
           } else
             try {
               const result = await call(
@@ -287,6 +293,7 @@ export default async function plugin(bb: BbPluginApi) {
                 NonNullable<MapTask["commentSessions"]>[number]
               >();
               statusSince = currentStatusSince(task.status, result.comments);
+              ask = commentAsk(result.comments);
               for (const comment of result.comments) {
                 if (!comment.threadId || comment.kind !== "agent") continue;
                 const previous = latest.get(comment.threadId);
@@ -305,15 +312,26 @@ export default async function plugin(bb: BbPluginApi) {
                 updatedAt: task.updatedAt,
                 sessions: commentSessions,
                 statusSince,
+                ask,
               });
             } catch {
               warnings.push(`Task history unavailable for ${task.key}.`);
             }
           const { description, ...fields } = task;
+          const {
+            ask: descriptionAsk,
+            askFrom,
+            ...described
+          } = describeTask(description);
           tasks.push(
             taskSchema.parse({
               ...fields,
-              ...describeTask(description),
+              ...described,
+              ...(ask
+                ? { ask, askFrom: "comment" }
+                : descriptionAsk
+                  ? { ask: descriptionAsk, askFrom }
+                  : {}),
               threadIds,
               sessionLinks,
               commentSessions,
