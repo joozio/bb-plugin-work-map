@@ -3113,6 +3113,36 @@ i.wm-heat-key.wm-heat-focused {
 [data-acts="icons"] .wm-tile-action {
   padding: 0 5px;
 }
+/* Tidy mode's date fixes: the same act look, four words that never wrap. */
+.wm-date-fixes {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+}
+.wm-date-fix {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--wm-ink);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+.wm-date-fix:not(:disabled):hover {
+  background: var(--accent);
+}
+.wm-date-fix:focus-visible {
+  outline: 2px solid var(--wm-blue);
+  outline-offset: -1px;
+}
+.wm-date-fix:disabled {
+  opacity: 0.5;
+}
 .wm-bulk {
   flex: 1 0 100%;
   display: flex;
@@ -3260,6 +3290,9 @@ i.wm-heat-key.wm-heat-focused {
   }
   .wm-tile-action {
     min-width: 36px;
+  }
+  .wm-date-fix {
+    min-height: 36px;
   }
   .wm-bulk-picks {
     max-height: calc(3 * 36px + 2 * 2px);

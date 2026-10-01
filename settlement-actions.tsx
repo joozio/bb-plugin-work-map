@@ -346,6 +346,16 @@ export function SettlementActions({
   );
 }
 
+function dateReceipt({ dueDate, previousDueDate }: Settlement) {
+  const what =
+    dueDate === null
+      ? "Date cleared"
+      : previousDueDate === null
+        ? `Date set to ${dueDate}`
+        : `Date moved to ${dueDate}`;
+  return `${what} · was ${previousDueDate ?? "none"}`;
+}
+
 export function SettledToday({
   rows,
   onUndo,
@@ -437,15 +447,17 @@ export function SettledToday({
               <span>
                 {row.action === "snooze"
                   ? `Snoozed until ${row.until} · Tasks unchanged`
-                  : row.action === "done"
-                    ? "Task done"
-                    : row.action === "archive"
-                      ? "Session archived"
-                      : row.action === "review"
-                        ? row.reviewer
-                          ? `Waiting on ${row.reviewer} · follow up ${row.checkAfter}`
-                          : "Ready for your review"
-                        : "Paused · task remains open"}
+                  : row.action === "date"
+                    ? dateReceipt(row)
+                    : row.action === "done"
+                      ? "Task done"
+                      : row.action === "archive"
+                        ? "Session archived"
+                        : row.action === "review"
+                          ? row.reviewer
+                            ? `Waiting on ${row.reviewer} · follow up ${row.checkAfter}`
+                            : "Ready for your review"
+                          : "Paused · task remains open"}
                 {row.action !== "archive" &&
                 row.action !== "snooze" &&
                 row.archivedThreadIds.length

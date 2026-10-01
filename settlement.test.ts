@@ -45,6 +45,7 @@ async function setup(
     ]),
   );
   const patches: Record<string, unknown>[] = [];
+  const methods: string[] = [];
   let labels = [{ id: "important", name: "important" }];
   const archive = vi.fn(async ({ threadId }: { threadId: string }) => {
     if (options.archiveFails) throw new Error("Archive service unavailable");
@@ -77,6 +78,7 @@ async function setup(
       plugins: {
         callRpc: async ({ method, input, outputSchema }) => {
           const values = input as Record<string, unknown>;
+          methods.push(method);
           if (method === "getTask")
             return outputSchema.parse({ task: current });
           if (method === "listTaskThreads")
@@ -126,6 +128,7 @@ async function setup(
     unarchive,
     threads,
     patches,
+    methods,
     current: () => current,
     edit: (patch: Partial<typeof original>) => {
       current = { ...current, ...patch };
@@ -393,6 +396,150 @@ describe("settling user work", () => {
     expect(result.warning).toContain("deleted session");
     expect(f.current().description).toBe(original.description);
     expect(await f.harness.behavior.callRpc("settledToday", null)).toEqual([]);
+    await f.harness.lifecycle.dispose();
+  });
+});
+describe("fixing a slipped date", () => {
+  const dateFix = { action: "date", threadId: undefined };
+  it("needs a task and a date or an explicit clear", () => {
+    expect(
+      settleInput.safeParse({ id, action: "date", taskId: "task1" }).success,
+    ).toBe(false);
+    expect(
+      settleInput.safeParse({ id, action: "date", dueDate: "2026-10-08" })
+        .success,
+    ).toBe(false);
+    expect(
+      settleInput.safeParse({
+        id,
+        action: "date",
+        taskId: "task1",
+        dueDate: null,
+      }).success,
+    ).toBe(true);
+  });
+  it("writes only the due date, lands in Settled today, and Undo restores the old date", async () => {
+    const f = await setup();
+    const result = await f.settle({ ...dateFix, dueDate: "2026-10-08" });
+    expect(f.patches).toEqual([
+      {
+        taskId: "task1",
+        status: original.status,
+        description: original.description,
+        labelIds: original.labelIds,
+        dueDate: "2026-10-08",
+        authorName: "You",
+      },
+    ]);
+    expect(f.methods).not.toContain("listLabels");
+    expect(result).toMatchObject({
+      action: "date",
+      title: "TEST-1 · Review proposal",
+      nextAction: "Review draft",
+      dueDate: "2026-10-08",
+      previousDueDate: original.dueDate,
+      taskUpdated: true,
+      warning: null,
+    });
+    expect(await f.harness.behavior.callRpc("settledToday", null)).toEqual([
+      result,
+    ]);
+    await f.undo();
+    expect(f.patches[1]).toMatchObject({
+      status: original.status,
+      description: original.description,
+      dueDate: original.dueDate,
+    });
+    expect(f.current()).toMatchObject({
+      dueDate: original.dueDate,
+      description: original.description,
+    });
+    expect(await f.harness.behavior.callRpc("settledToday", null)).toEqual([]);
+    await f.harness.lifecycle.dispose();
+  });
+  it("clears the date and restores it with Undo", async () => {
+    const f = await setup();
+    const result = await f.settle({ ...dateFix, dueDate: null });
+    expect(f.current().dueDate).toBeNull();
+    expect(result).toMatchObject({
+      dueDate: null,
+      previousDueDate: original.dueDate,
+      taskUpdated: true,
+    });
+    await f.undo();
+    expect(f.current().dueDate).toBe(original.dueDate);
+    await f.harness.lifecycle.dispose();
+  });
+  it.each([
+    [original.dueDate, `The date is already ${original.dueDate}.`],
+    [null, "The date is already none."],
+  ])(
+    "does not write an unchanged date (%s) or list it as settled",
+    async (dueDate, warning) => {
+      const f = await setup();
+      if (dueDate === null) f.edit({ dueDate: null as never });
+      const result = await f.settle({ ...dateFix, dueDate });
+      expect(f.patches).toHaveLength(0);
+      expect(result).toMatchObject({ taskUpdated: false, warning });
+      expect(await f.settle({ ...dateFix, dueDate })).toEqual(result);
+      expect(await f.harness.behavior.callRpc("settledToday", null)).toEqual(
+        [],
+      );
+      await f.harness.lifecycle.dispose();
+    },
+  );
+  it("refuses a closed task and a stale snapshot without writing", async () => {
+    const f = await setup();
+    await expect(
+      f.settle({
+        ...dateFix,
+        dueDate: "2026-10-08",
+        expectedUpdatedAt: "2026-09-17T11:00:00.000Z",
+      }),
+    ).rejects.toThrow("changed since");
+    f.edit({ status: "done" });
+    await expect(
+      f.settle({ ...dateFix, dueDate: "2026-10-08" }),
+    ).rejects.toThrow("already closed");
+    expect(f.patches).toHaveLength(0);
+    await f.harness.lifecycle.dispose();
+  });
+  it("keeps other actions' due date unchanged on the wire and in Undo", async () => {
+    const f = await setup();
+    const result = await f.settle({ action: "done", threadId: undefined });
+    expect(f.patches[0]).toMatchObject({
+      status: "done",
+      dueDate: original.dueDate,
+    });
+    expect(result).toMatchObject({ dueDate: null, previousDueDate: null });
+    await f.undo();
+    expect(f.patches[1]).toMatchObject({
+      status: original.status,
+      dueDate: original.dueDate,
+    });
+    expect(f.current()).toMatchObject({
+      status: original.status,
+      dueDate: original.dueDate,
+    });
+    await f.harness.lifecycle.dispose();
+  });
+  it("still undoes a receipt saved before receipts carried a due date", async () => {
+    const f = await setup();
+    await f.settle({ action: "done", threadId: undefined });
+    const key = `settled:${id}`;
+    const receipt = (await f.bb.storage.kv.get(key)) as {
+      before: Record<string, unknown>;
+      after: Record<string, unknown>;
+    };
+    delete receipt.before.dueDate;
+    delete receipt.after.dueDate;
+    await f.bb.storage.kv.set(key, receipt);
+    await f.undo();
+    expect(f.current()).toMatchObject({
+      status: original.status,
+      description: original.description,
+      dueDate: original.dueDate,
+    });
     await f.harness.lifecycle.dispose();
   });
 });
