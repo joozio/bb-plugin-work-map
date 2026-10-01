@@ -8,6 +8,7 @@ type Built = {
   uncollapsed: string;
   keepQuiet: number | undefined;
   hold: string | undefined;
+  tidy: boolean;
   areas: HeatArea[];
 };
 function sameIds(a: readonly { id: string }[], b: readonly { id: string }[]) {
@@ -60,6 +61,7 @@ export function useHeatModel(
   uncollapsed: readonly string[],
   hold?: string,
   keepQuiet?: number,
+  tidy = false,
 ): HeatArea[] {
   const last = useRef<Built | null>(null);
   const held = useRef<{ id: string; areas: HeatArea[] } | null>(null);
@@ -71,11 +73,12 @@ export function useHeatModel(
     previous.uncollapsed === key &&
     previous.keepQuiet === keepQuiet &&
     previous.hold === hold &&
+    previous.tidy === tidy &&
     previous.roots.length === roots.length &&
     previous.roots.every((root, index) => root === roots[index])
   )
     return previous.areas;
-  const built = buildHeat(roots, now, { uncollapsed, keepQuiet });
+  const built = buildHeat(roots, now, { uncollapsed, keepQuiet, tidy });
   let areas = built;
   if (!hold) held.current = null;
   else {
@@ -84,6 +87,6 @@ export function useHeatModel(
     if (kept) areas = kept;
     else held.current = { id: hold, areas: built };
   }
-  last.current = { roots, now, uncollapsed: key, keepQuiet, hold, areas };
+  last.current = { roots, now, uncollapsed: key, keepQuiet, hold, tidy, areas };
   return areas;
 }

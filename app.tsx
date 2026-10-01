@@ -47,6 +47,7 @@ import { extendOrbit, zoomDensity, zoomVisible } from "./zoom";
 import { SESSIONS_AREA, heatStats, type HeatArea } from "./heat";
 import { useHeatModel } from "./heat-memo";
 import { HeatMap } from "./heat-view";
+import { DateFixes } from "./date-fixes";
 import { useSessionLauncher } from "./session-launcher";
 import {
   SettlementActions,
@@ -186,6 +187,9 @@ function WorkMap() {
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [settling, setSettling] = useState(false);
+  // Tidy mode: the slipped dates are the work. It lives only in this
+  // session and ends with Escape, the chip, or leaving Heat.
+  const [tidy, setTidy] = useState(false);
   const [settled, setSettled] = useState<Settlement[]>([]);
   // Snoozes made here: they live in preferences, not in settlement records.
   const [snoozes, setSnoozes] = useState<SnoozeRow[]>([]);
@@ -652,8 +656,13 @@ function WorkMap() {
     now,
     area?.kind === "project" ? [...uncollapsed, area.id] : uncollapsed,
     heatAreaId,
+    undefined,
+    tidy,
   );
   const heat = heatOn ? heatStats(heatAreas, now) : null;
+  useEffect(() => {
+    if (!heatOn || (heat && !heat.slipped)) setTidy(false);
+  }, [heatOn, heat?.slipped]);
   const inspecting = !!area && !!selected && previewMode === "inline";
   const expandedZone = inspecting
     ? ((["west", "east", "north", "south"] as const).find((zone) =>
@@ -2404,6 +2413,15 @@ function WorkMap() {
         ) {
           event.stopPropagation();
           collapseDetails();
+        } else if (
+          event.key === "Escape" &&
+          tidy &&
+          !settling &&
+          !event.defaultPrevented
+        ) {
+          // Tidy mode steps back last: after the task and the area.
+          event.stopPropagation();
+          setTidy(false);
         }
       }}
     >
@@ -2685,7 +2703,7 @@ function WorkMap() {
                         [heat.waiting, "need you", "waiting"],
                         [heat.unread, "ready to read", "unread"],
                         [heat.running, "agents running", "working"],
-                        [heat.overdue, "past date", "overdue"],
+                        [heat.overdue, "overdue", "overdue"],
                         [heat.aged, "undated 30d+", "aged"],
                       ] as [number, string, string][]
                     ).map(([count, label, tone]) => (
@@ -2694,11 +2712,32 @@ function WorkMap() {
                         <span>{label}</span>
                       </div>
                     ))}
+                    {/* Slipped dates are housekeeping, not heat: the chip
+                        opens tidy mode, where each one is fixed in a click. */}
+                    {heat.slipped > 0 && (
+                      <button
+                        type="button"
+                        className="wm-heat-chip"
+                        aria-pressed={tidy}
+                        disabled={settling || launcher.busy}
+                        title={
+                          tidy
+                            ? "Leave tidy mode"
+                            : "Tidy mode: dim everything else and fix each slipped date in one click"
+                        }
+                        onClick={() => setTidy((on) => !on)}
+                      >
+                        <b>{heat.slipped}</b>
+                        {` slipped date${heat.slipped === 1 ? "" : "s"}`}
+                      </button>
+                    )}
                   </div>
                   <span className="wm-heat-hint">
-                    {heatFreeze
-                      ? "Layout held while expanded"
-                      : "Click to expand in place · Escape steps back"}
+                    {tidy
+                      ? "Tidy mode · Fix a date in one click, Undo in Settled today · Escape leaves"
+                      : heatFreeze
+                        ? "Layout held while expanded"
+                        : "Click to expand in place · Escape steps back"}
                   </span>
                   <button
                     type="button"
@@ -2714,17 +2753,24 @@ function WorkMap() {
                     className="wm-heat-legend"
                     data-open={legendOpen}
                     title={
-                      "Colour and size are heat: pull rank across the map, hottest tenth red, coldest fifth near the background.\n" +
-                      "Pull = what it needs × priority × how near the date is (peaking this week, fading when long past), more in focus.\n" +
-                      "A ring and a glyph mark a request for your hands or a failed run on any heat; 1 2 3 mark the three hottest tiles."
+                      "Red = now (at most 5 on the whole map): in focus, then a request for your hands or a failed run, then due today, tomorrow or late within a week by priority, then the highest pull.\n" +
+                      "Amber = next (at most 8 more): due this week, high or urgent priority, then what follows by pull. Grey = later: the rest, sized by pull.\n" +
+                      "Every coloured tile says why in its label row. A date more than two weeks past has slipped: it says so, adds no urgency, and the slipped-dates chip opens tidy mode to fix it."
                     }
                   >
-                    <span className="wm-heat-ramp" aria-label="Heat, cold to hot">
-                      cold
-                      {[1, 2, 3, 4, 5].map((step) => (
-                        <i key={step} className="wm-heat-key" data-step={step} />
+                    <span className="wm-heat-tiers" aria-label="Tiers">
+                      {(
+                        [
+                          ["now", "Now"],
+                          ["next", "Next"],
+                          ["later", "Later"],
+                        ] as const
+                      ).map(([tier, word]) => (
+                        <em key={tier}>
+                          <i className="wm-heat-key" data-tier={tier} />
+                          {word}
+                        </em>
                       ))}
-                      hot
                     </span>
                     {(
                       [
@@ -2740,8 +2786,8 @@ function WorkMap() {
                       </span>
                     ))}
                     <span className="wm-heat-sense">
-                      Heat = pull rank · Pull = need × priority × date nearness
-                      · 1 2 3 = hottest
+                      Red = now, at most 5 · Amber = next · Grey = later · The
+                      tile says why
                     </span>
                   </div>
                 </div>
@@ -2831,6 +2877,28 @@ function WorkMap() {
                   )}
                   excerpt={(item) =>
                     detailExcerpts[item.threads[0]?.id ?? ""] ?? ""
+                  }
+                  tidy={tidy}
+                  dateFixes={(item) =>
+                    item.task ? (
+                      <DateFixes
+                        task={item.task}
+                        now={now}
+                        disabled={settling || launcher.busy || !!bulk}
+                        onBusy={setSettling}
+                        onSettled={(result) => {
+                          // The fix lands in Settled today with its Undo, and
+                          // the map re-reads the task; tidy mode stays on for
+                          // the next date.
+                          captureLayout();
+                          recordSettlement(result);
+                          setNotice(
+                            `${result.taskKey ?? "Task"}: ${result.dueDate ? `date moved to ${result.dueDate}` : "date cleared"}.`,
+                          );
+                          void refresh(true);
+                        }}
+                      />
+                    ) : null
                   }
                   tileDetails={
                     inspecting && selected && selected.kind !== "project"

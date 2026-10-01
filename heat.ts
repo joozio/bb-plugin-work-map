@@ -156,8 +156,11 @@ const dueSoon = (p: Prospect) =>
   p.timing?.kind === "due" && !p.timing.slipped && p.timing.days <= 7;
 const hotPriority = (p: Prospect) =>
   p.priority === "urgent" || p.priority === "high";
+/** Equal pulls break by the nearer date (a date 19 days past before one 40 days past), then by id. */
 const byPull = (a: Prospect, b: Prospect) =>
-  b.pull - a.pull || a.id.localeCompare(b.id);
+  b.pull - a.pull ||
+  Math.abs(a.timing?.days ?? Infinity) - Math.abs(b.timing?.days ?? Infinity) ||
+  a.id.localeCompare(b.id);
 const byPriority = (a: Prospect, b: Prospect) =>
   (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3) ||
   byPull(a, b);
