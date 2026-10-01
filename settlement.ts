@@ -11,10 +11,11 @@ const taskState = z.object({
   status: z.string(),
   description: z.string(),
   labelIds: z.array(z.string()),
+  dueDate: z.string().nullable(),
   updatedAt: z.string(),
 });
 type TaskState = z.infer<typeof taskState>;
-type Patch = Pick<TaskState, "status" | "description" | "labelIds">;
+type Patch = Pick<TaskState, "status" | "description" | "labelIds" | "dueDate">;
 type Receipt = {
   result: Settlement;
   before: TaskState | null;
@@ -27,9 +28,12 @@ type Receipt = {
   undoThreads: string[];
 };
 const tidy = (s: string) => s.replace(/\s+/g, " ").trim();
+// Receipts stored before 0.1.17 carry no dueDate: they never changed it, so it
+// is neither compared nor sent.
 const equal = (task: TaskState, patch: Patch) =>
   task.status === patch.status &&
   task.description === patch.description &&
+  (patch.dueDate === undefined || task.dueDate === patch.dueDate) &&
   [...task.labelIds].sort().join() === [...patch.labelIds].sort().join();
 
 export function handoffDescription(
@@ -133,9 +137,15 @@ export function settlementService(bb: BbPluginApi, changed: () => void) {
     return task;
   };
   const update = async (taskId: string, patch: Patch) => {
+    const { dueDate, ...fields } = patch;
     const result = await call(
       "updateTask",
-      { taskId, ...patch, authorName: "You" },
+      {
+        taskId,
+        ...fields,
+        ...(dueDate === undefined ? {} : { dueDate }),
+        authorName: "You",
+      },
       z.union([
         z.object({ ok: z.literal(true), task: taskState }),
         z.object({
@@ -328,7 +338,7 @@ export function settlementService(bb: BbPluginApi, changed: () => void) {
         let after: Patch | null = null;
         if (before) {
           let labelIds = before.labelIds;
-          if (input.action !== "pause") {
+          if (input.action !== "pause" && input.action !== "date") {
             const schema = z.object({ id: z.string(), name: z.string() });
             const { labels } = await call(
               "listLabels",
@@ -359,7 +369,16 @@ export function settlementService(bb: BbPluginApi, changed: () => void) {
             if (input.action === "review" && input.reviewBy === "other")
               labelIds = [...labelIds, waiting!.id];
           }
-          if (
+          // A date fix is housekeeping, not a handoff: it leaves the description alone.
+          if (input.action === "date") {
+            if (input.dueDate !== before.dueDate)
+              after = {
+                status: before.status,
+                description: before.description,
+                labelIds: before.labelIds,
+                dueDate: input.dueDate ?? null,
+              };
+          } else if (
             input.action !== "pause" ||
             tidy(input.nextAction) !==
               describeTask(before.description).nextAction
@@ -375,6 +394,7 @@ export function settlementService(bb: BbPluginApi, changed: () => void) {
                     : before.status,
               description: handoffDescription(before.description, input, at),
               labelIds,
+              dueDate: before.dueDate,
             };
           const latest = await read(before.id);
           if (latest.updatedAt !== before.updatedAt || !equal(latest, before))
@@ -403,6 +423,9 @@ export function settlementService(bb: BbPluginApi, changed: () => void) {
             input.action === "review" && input.reviewBy === "other"
               ? input.checkAfter!
               : null,
+          dueDate: input.action === "date" ? (input.dueDate ?? null) : null,
+          previousDueDate:
+            input.action === "date" ? (before?.dueDate ?? null) : null,
           taskUpdated: false,
           archivedThreadIds: [],
           undone: false,
@@ -419,6 +442,12 @@ export function settlementService(bb: BbPluginApi, changed: () => void) {
           undoTask: false,
           undoThreads: [],
         };
+        if (input.action === "date" && !after) {
+          result.warning = `The date is already ${before!.dueDate ?? "none"}.`;
+          receipt.finished = true;
+          await save(receipt);
+          return result;
+        }
         await save(receipt); // A durable undo record must exist before any mutation.
         return finish(receipt);
       }),
@@ -437,6 +466,7 @@ export function settlementService(bb: BbPluginApi, changed: () => void) {
               status: before.status,
               description: before.description,
               labelIds: before.labelIds,
+              dueDate: before.dueDate,
             });
             receipt.undoTask = true;
           } else if (equal(current, before)) receipt.undoTask = true;

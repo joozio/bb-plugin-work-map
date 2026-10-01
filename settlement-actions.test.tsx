@@ -30,6 +30,8 @@ const receipt = (id = "first", title = "Review proposal"): Settlement => ({
   nextAction: "Check the numbers",
   reviewer: "",
   checkAfter: null,
+  dueDate: null,
+  previousDueDate: null,
   taskUpdated: true,
   archivedThreadIds: [],
   undone: false,
@@ -177,5 +179,24 @@ it("makes a load error with no receipts dismissible", () => {
     within(view.getByRole("region", { name: "Settled today" })).getByRole(
       "alert",
     ),
+  ).toBeTruthy();
+});
+
+it.each([
+  ["2026-10-08", "2026-09-10", "Date moved to 2026-10-08 · was 2026-09-10"],
+  [null, "2026-09-10", "Date cleared · was 2026-09-10"],
+  ["2026-10-08", null, "Date set to 2026-10-08 · was none"],
+])("describes a date fix to %s from %s", (dueDate, previousDueDate, text) => {
+  const view = render(
+    <SettledToday
+      rows={[{ ...receipt(), action: "date", dueDate, previousDueDate }]}
+      onUndo={vi.fn()}
+      pending={null}
+      error=""
+    />,
+  );
+  expect(view.getByText(text)).toBeTruthy();
+  expect(
+    view.container.querySelector(".wm-settled-mark.wm-settled-date"),
   ).toBeTruthy();
 });

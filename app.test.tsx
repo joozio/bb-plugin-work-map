@@ -552,6 +552,8 @@ async function mount(
             nextAction: input.nextAction,
             reviewer: input.reviewer,
             checkAfter: input.checkAfter ?? null,
+            dueDate: input.dueDate ?? null,
+            previousDueDate: null,
             taskUpdated: !!input.taskId,
             archivedThreadIds: input.threadId ? [input.threadId] : [],
             undone: false,

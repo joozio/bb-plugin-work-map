@@ -13,7 +13,7 @@ const day = z
 export const settleInput = z
   .object({
     id,
-    action: z.enum(["pause", "review", "done", "archive"]),
+    action: z.enum(["pause", "review", "done", "archive", "date"]),
     taskId: z.string().min(1).optional(),
     threadId: z
       .string()
@@ -24,6 +24,8 @@ export const settleInput = z
     reviewBy: z.enum(["me", "other"]).default("me"),
     reviewer: z.string().max(150).default(""),
     checkAfter: day.optional(),
+    /** The due date a `date` action writes; null clears it. */
+    dueDate: day.nullable().optional(),
   })
   .superRefine((input, ctx) => {
     if (
@@ -34,6 +36,11 @@ export const settleInput = z
       ctx.addIssue({
         code: "custom",
         message: "Choose a task or session for this action.",
+      });
+    if (input.action === "date" && input.dueDate === undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose a date or clear it.",
       });
     if (
       input.action === "review" &&
@@ -50,13 +57,16 @@ export const settlementSchema = z.object({
   id,
   at: z.number(),
   title: z.string(),
-  action: z.enum(["pause", "review", "done", "archive"]),
+  action: z.enum(["pause", "review", "done", "archive", "date"]),
   taskId: z.string().nullable(),
   taskKey: z.string().nullable(),
   threadId: z.string().nullable(),
   nextAction: z.string(),
   reviewer: z.string(),
   checkAfter: z.string().nullable(),
+  /** The date a `date` action wrote, and the one it replaced; else null. */
+  dueDate: z.string().nullable(),
+  previousDueDate: z.string().nullable(),
   taskUpdated: z.boolean(),
   archivedThreadIds: z.array(z.string()),
   undone: z.boolean(),
