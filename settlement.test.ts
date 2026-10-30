@@ -344,6 +344,34 @@ describe("settling user work", () => {
     expect(f.archive).not.toHaveBeenCalled();
     await f.harness.lifecycle.dispose();
   });
+  it("refuses a deleted task or a deleted session before writing", async () => {
+    const f = await setup();
+    f.threads.get("thr_one")!.deletedAt = 1;
+    await expect(f.settle()).rejects.toThrow("This session has been deleted");
+    f.deleteTask();
+    await expect(f.settle()).rejects.toThrow("This task no longer exists.");
+    expect(f.patches).toHaveLength(0);
+    expect(f.archive).not.toHaveBeenCalled();
+    await f.harness.lifecycle.dispose();
+  });
+  it("keeps the newest 200 receipts, and an old pending one for recovery", async () => {
+    const f = await setup();
+    const key = (n: number) =>
+      `settled:${String(1000000000000 + n).padStart(13, "0")}-bdc50aee-584d-42db-9406-9199ad461c1a`;
+    const pending = "settled:0999999999999-bdc50aee-584d-42db-9406-9199ad461c1a";
+    await f.bb.storage.kv.set(pending, { finished: false });
+    for (let n = 0; n < 205; n++)
+      await f.bb.storage.kv.set(key(n), { finished: true });
+    await f.settle({ action: "pause", nextAction: "Review draft", threadId: undefined });
+    const kept = await f.bb.storage.kv.list("settled:");
+    // 207 rows, the 7 oldest past the bound: 6 finished ones go, the pending stays.
+    expect(kept).toHaveLength(201);
+    expect(kept).toContain(pending);
+    expect(kept).toContain(`settled:${id}`);
+    for (const n of [0, 5]) expect(kept).not.toContain(key(n));
+    expect(kept).toContain(key(6));
+    await f.harness.lifecycle.dispose();
+  });
   it("refuses to undo over newer task content, but preserves unrelated edits", async () => {
     const f = await setup();
     await f.settle();

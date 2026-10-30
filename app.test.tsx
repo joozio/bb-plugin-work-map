@@ -3774,6 +3774,10 @@ describe("heat layout", () => {
       Date.now() - 1 * 86400000,
     ).toISOString();
     fixture.tasks[0].title = "Decide: pick a direction";
+    // Age is read against the real clock, so the other tasks must be fresh by
+    // it too, not by the fixtures' fixed date, or they age as the calendar does.
+    for (const other of fixture.tasks.slice(1))
+      other.createdAt = new Date().toISOString();
     const slot = await mount({ ...fixture, layout: "heat" });
     const tile = await slot.findByRole("button", {
       name: /^Preview Decide: pick a direction/,

@@ -30,6 +30,8 @@ async function setup() {
     archived = false,
     uncertain = false;
   let rejectInput = false;
+  let taskProject = "p1",
+    refuseTask = false;
   const fake = createFakePluginHost({
     pluginId: "work-map",
     sdk: {
@@ -47,7 +49,7 @@ async function setup() {
           else if (method === "listBbProjects")
             value = { bbProjects: [{ id: "workspace", name: "Code" }] };
           else if (method === "getTask")
-            value = { task: { projectId: "p1", status } };
+            value = { task: { projectId: taskProject, status } };
           else {
             mutations(method, input);
             if (rejectInput)
@@ -63,10 +65,12 @@ async function setup() {
               Object.assign(projects[0], fields);
               value = { project: projects[0] };
             } else if (method === "createTask")
-              value = {
-                ok: true,
-                task: { id: "tasknew", key: "WORK-1", projectId: "p1" },
-              };
+              value = refuseTask
+                ? { ok: false, error: { message: "Title is reserved" } }
+                : {
+                    ok: true,
+                    task: { id: "tasknew", key: "WORK-1", projectId: "p1" },
+                  };
             else if (method === "taskThreadsAttach")
               value = { threadId: fields.threadId };
             else throw new Error(`Unexpected ${method}`);
@@ -96,6 +100,12 @@ async function setup() {
     },
     rejectInput: (value: boolean) => {
       rejectInput = value;
+    },
+    moveTask: (projectId: string) => {
+      taskProject = projectId;
+    },
+    refuseTask: (value: boolean) => {
+      refuseTask = value;
     },
   };
 }
@@ -282,6 +292,124 @@ describe("project maintenance", () => {
       ["project", "edit", "WORK", "--typo", "x"],
     ])
       expect((await runManagementCli(args, service)).exitCode).toBe(1);
+    await f.harness.lifecycle.dispose();
+  });
+});
+describe("writes that reach Tasks", () => {
+  const createProject = (fields: Partial<ManagementInput> = {}) =>
+    ({
+      action: "createProject",
+      requestId,
+      name: "Launch",
+      prefix: "LAUNCH",
+      color: "slategray",
+      folderId: null,
+      linkedBbProjectId: null,
+      ...fields,
+    }) as ManagementInput;
+
+  it("saves an edit read against the current project and tells the map", async () => {
+    const f = await setup();
+    const expected = projectFields.parse(f.projects[0]);
+    const result = await f.service.manage({
+      action: "editProject",
+      projectId: "p1",
+      ...expected,
+      name: "Office",
+      linkedBbProjectId: "workspace",
+      expected,
+    });
+    // Only the project's own fields go out: no action name, no snapshot.
+    expect(f.mutations).toHaveBeenCalledWith("updateProject", {
+      projectId: "p1",
+      name: "Office",
+      color: "slategray",
+      folderId: "folder",
+      linkedBbProjectId: "workspace",
+    });
+    expect(result.project).toMatchObject({ name: "Office", prefix: "WORK" });
+    expect(f.invalidate).toHaveBeenCalledOnce();
+    await f.harness.lifecycle.dispose();
+  });
+
+  it("connects an open task in its own project to a live session", async () => {
+    const f = await setup();
+    const result = await f.service.manage({
+      action: "attachSession",
+      projectId: "p1",
+      taskId: "task1",
+      threadId: "thr_test",
+    });
+    expect(result).toEqual({ threadId: "thr_test" });
+    expect(f.mutations).toHaveBeenCalledWith("taskThreadsAttach", {
+      taskId: "task1",
+      threadId: "thr_test",
+    });
+    await f.harness.lifecycle.dispose();
+  });
+
+  it("refuses a task that belongs to another project", async () => {
+    const f = await setup();
+    f.moveTask("p9");
+    await expect(
+      f.service.manage({
+        action: "attachSession",
+        projectId: "p1",
+        taskId: "task1",
+        threadId: "thr_test",
+      }),
+    ).rejects.toThrow("Choose a task in this project.");
+    expect(f.mutations).not.toHaveBeenCalled();
+    await f.harness.lifecycle.dispose();
+  });
+
+  it("refuses a vanished project, an unknown workspace and a taken prefix before writing", async () => {
+    const f = await setup();
+    await expect(
+      f.service.manage({
+        action: "createTask",
+        requestId,
+        projectId: "gone",
+        title: "Draft",
+        description: "",
+      }),
+    ).rejects.toThrow("This project no longer exists");
+    await expect(
+      f.service.manage(createProject({ linkedBbProjectId: "nowhere" })),
+    ).rejects.toThrow("Choose an existing BB workspace.");
+    await expect(
+      f.service.manage(createProject({ prefix: "WORK" })),
+    ).rejects.toThrow("That project prefix is already in use.");
+    expect(f.mutations).not.toHaveBeenCalled();
+    await f.harness.lifecycle.dispose();
+  });
+
+  it("frees a request id that Tasks refused, so the corrected task can use it", async () => {
+    const f = await setup();
+    const input: ManagementInput = {
+      action: "createTask",
+      requestId,
+      projectId: "p1",
+      title: "Draft",
+      description: "",
+    };
+    f.refuseTask(true);
+    await expect(f.service.manage(input)).rejects.toThrow("Title is reserved");
+    expect(await f.bb.storage.kv.get(`management:${requestId}`)).toBeUndefined();
+    expect(f.invalidate).not.toHaveBeenCalled();
+    f.refuseTask(false);
+    expect((await f.service.manage(input)).task?.key).toBe("WORK-1");
+    expect(f.mutations).toHaveBeenCalledTimes(2);
+    await f.harness.lifecycle.dispose();
+  });
+
+  it("will not reuse one request id for different work", async () => {
+    const f = await setup();
+    await f.service.manage(createProject());
+    await expect(
+      f.service.manage(createProject({ name: "Other" })),
+    ).rejects.toThrow("already used for different work");
+    expect(f.mutations).toHaveBeenCalledOnce();
     await f.harness.lifecycle.dispose();
   });
 });

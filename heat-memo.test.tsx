@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { buildMap } from "./model";
 import { data, now, task } from "./fixtures";
-import { useHeatModel } from "./heat-memo";
+import { holdLayout, useHeatModel } from "./heat-memo";
+import type { HeatArea, HeatTile } from "./heat";
 
 describe("the memoised Heat model", () => {
   const roots = buildMap(
@@ -92,5 +93,45 @@ describe("the layout held while an area is open", () => {
     view.rerender({ list: snapshot("urgent", true), hold: open });
     expect(view.result.current[0].tiles).toHaveLength(3);
     expect(weights(view.result.current)).not.toEqual(reheld);
+  });
+});
+describe("holding a laid-out map", () => {
+  const tile = (id: string, weight: number, stale = 0) =>
+    ({ id, weight, stale }) as HeatTile;
+  const area = (id: string, weight: number, tiles: HeatTile[], title = id) =>
+    ({ id, weight, title, tiles }) as HeatArea;
+
+  it("keeps the held weights and order while every tile carries today's facts", () => {
+    const held = [
+      area("a", 3, [tile("t1", 2), tile("t2", 1)]),
+      area("b", 1, [tile("t3", 1)]),
+    ];
+    const next = [
+      area("b", 9, [tile("t3", 5, 4)], "B renamed"),
+      area("a", 1, [tile("t2", 8, 7), tile("t1", 1)]),
+    ];
+    const kept = holdLayout(held, next)!;
+    expect(kept.map((row) => [row.id, row.weight, row.title])).toEqual([
+      ["a", 3, "a"],
+      ["b", 1, "B renamed"],
+    ]);
+    expect(
+      kept[0].tiles.map((row) => [row.id, row.weight, row.stale]),
+    ).toEqual([
+      ["t1", 2, 0],
+      ["t2", 1, 7],
+    ]);
+  });
+
+  it("cannot hold a map whose areas changed, by count or by id", () => {
+    const held = [area("a", 1, []), area("b", 1, [])];
+    expect(holdLayout(held, [area("a", 1, [])])).toBeNull();
+    expect(holdLayout(held, [area("a", 1, []), area("c", 1, [])])).toBeNull();
+  });
+
+  it("cannot hold an area whose tiles were swapped for others", () => {
+    expect(
+      holdLayout([area("a", 1, [tile("t1", 1)])], [area("a", 1, [tile("t9", 1)])]),
+    ).toBeNull();
   });
 });

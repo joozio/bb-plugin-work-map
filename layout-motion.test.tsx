@@ -12,6 +12,7 @@ import {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 it("animates background reordering without stretching text or treating scrolling as movement", () => {
@@ -135,4 +136,79 @@ it("scrolls an open card's details just far enough to show the chat composer who
   expect(detail.scrollTop).toBe(0);
   view.rerender(<Chat open />);
   expect(detail.scrollTop).toBe(151);
+});
+
+it("treats a key from outside the document tree as a map key only for Escape and Enter", () => {
+  // Window-level events carry a non-Element target; Space has no control to press.
+  for (const target of [null, window]) {
+    expect(keyMovesLayout({ key: "Escape", target })).toBe(true);
+    expect(keyMovesLayout({ key: "Enter", target })).toBe(true);
+    expect(keyMovesLayout({ key: " ", target })).toBe(false);
+  }
+  const summary = document.createElement("summary");
+  const role = document.createElement("div");
+  role.setAttribute("role", "button");
+  const off = document.createElement("div");
+  off.setAttribute("contenteditable", "false");
+  document.body.append(summary, role, off);
+  expect(keyMovesLayout({ key: " ", target: summary })).toBe(true);
+  expect(keyMovesLayout({ key: " ", target: role })).toBe(true);
+  // contenteditable="false" is not an editor, so Escape still steps back.
+  expect(keyMovesLayout({ key: "Escape", target: off })).toBe(true);
+  document.body.replaceChildren();
+});
+
+it("keeps revealing the composer as the details or the chat resize, and stops when it closes", () => {
+  const observed: Element[] = [];
+  let resize = () => {};
+  const disconnect = vi.fn();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        resize = callback;
+      }
+      observe(element: Element) {
+        observed.push(element);
+      }
+      disconnect = disconnect;
+    },
+  );
+  let composerBottom = 700;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return { bottom: this.id === "chat-thr" ? composerBottom : 776 } as DOMRect;
+    },
+  );
+  function Chat({ open }: { open: boolean }) {
+    useRevealChat(open ? "chat-thr" : null);
+    return (
+      <section className="wm-inline-detail">
+        <section id="chat-thr" />
+      </section>
+    );
+  }
+  const view = render(<Chat open />);
+  const detail = view.container.querySelector<HTMLElement>(".wm-inline-detail")!;
+  expect(observed.map((element) => element.className || element.id)).toEqual([
+    "wm-inline-detail",
+    "chat-thr",
+  ]);
+  expect(detail.scrollTop).toBe(0);
+  // The chat grows under the edge; with no padding it moves exactly that far.
+  composerBottom = 800;
+  resize();
+  expect(detail.scrollTop).toBe(24);
+  view.rerender(<Chat open={false} />);
+  expect(disconnect).toHaveBeenCalledOnce();
+});
+
+it("does nothing for a chat that is not inside an open card's details", () => {
+  const scroll = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+  function Loose() {
+    useRevealChat("chat-loose");
+    return <section id="chat-loose" />;
+  }
+  render(<Loose />);
+  expect(scroll).not.toHaveBeenCalled();
 });
