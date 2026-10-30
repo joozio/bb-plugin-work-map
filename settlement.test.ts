@@ -32,8 +32,15 @@ async function setup(
     lostArchiveResponse?: boolean;
     lostTaskResponse?: boolean;
     alreadyArchived?: boolean;
+    /** The first task write never answers, as when bb stops mid-action. */
+    hangFirstUpdate?: boolean;
+    /** Tasks stores the write with a different description than was sent. */
+    storesOther?: boolean;
+    /** Tasks answers the write with ok: false and stores nothing. */
+    refuseUpdate?: boolean;
   } = {},
 ) {
+  let hung = false;
   let current = structuredClone(original);
   const threads = new Map(
     ["thr_one", "thr_two", "thr_unrelated"].map((id) => [
@@ -91,12 +98,23 @@ async function setup(
             return outputSchema.parse({ label: labels.at(-1) });
           }
           if (method === "updateTask") {
+            if (options.hangFirstUpdate && !hung) {
+              hung = true;
+              return new Promise<never>(() => {});
+            }
+            if (options.refuseUpdate)
+              return outputSchema.parse({
+                ok: false,
+                error: { message: "Tasks refused the update" },
+              });
             patches.push(values);
             current = {
               ...current,
               ...values,
               updatedAt: new Date(Date.now() + patches.length).toISOString(),
             };
+            if (options.storesOther)
+              current.description = `${current.description}\n(normalised)`;
             if (options.lostTaskResponse && patches.length === 1)
               throw new Error("Task response lost");
             return outputSchema.parse({ ok: true, task: current });
@@ -438,6 +456,80 @@ describe("settling user work", () => {
     expect(result.warning).toContain("deleted session");
     expect(f.current().description).toBe(original.description);
     expect(await f.harness.behavior.callRpc("settledToday", null)).toEqual([]);
+    await f.harness.lifecycle.dispose();
+  });
+});
+describe("recovering an action that did not finish", () => {
+  const input = {
+    id,
+    action: "review",
+    taskId: "task1",
+    threadId: "thr_one",
+    expectedUpdatedAt: original.updatedAt,
+  };
+  it.each([false, true])(
+    "after bb stops mid-action, a retry writes once, and never over a later edit (edited since: %s)",
+    async (editedSince) => {
+      const f = await setup({ hangFirstUpdate: true });
+      void f.settle();
+      await vi.waitFor(() => expect(f.methods).toContain("updateTask"));
+      // A restart keeps only the pending receipt saved before the write.
+      const next = await f.harness.lifecycle.reload(plugin);
+      if (editedSince)
+        f.edit({
+          description: "Someone else's newer work",
+          updatedAt: "2026-09-17T11:30:00.000Z",
+        });
+      const result = (await next.harness.behavior.callRpc(
+        "settle",
+        input,
+      )) as Settlement;
+      if (editedSince) {
+        expect(result.warning).toContain("The task changed before this action completed");
+        expect(result).toMatchObject({ taskUpdated: false, archivedThreadIds: [] });
+        expect(f.patches).toHaveLength(0);
+        expect(f.current().description).toBe("Someone else's newer work");
+        expect(f.archive).not.toHaveBeenCalled();
+      } else {
+        expect(result).toMatchObject({
+          taskUpdated: true,
+          archivedThreadIds: ["thr_one"],
+          warning: null,
+        });
+        expect(f.patches).toHaveLength(1);
+        expect(f.current().status).toBe("in_review");
+        // A second retry replays the finished receipt and writes nothing.
+        expect(await next.harness.behavior.callRpc("settle", input)).toEqual(result);
+        expect(f.patches).toHaveLength(1);
+      }
+      await next.harness.lifecycle.dispose();
+    },
+  );
+  it("says so when Tasks stores something other than what was sent, keeps the session open, and Undo never overwrites it", async () => {
+    const f = await setup({ storesOther: true });
+    const result = await f.settle();
+    expect(result).toMatchObject({ taskUpdated: false, archivedThreadIds: [] });
+    expect(result.warning).toContain("Task changed while saving");
+    expect(f.archive).not.toHaveBeenCalled();
+    const stored = f.current().description;
+    expect(stored).toContain("(normalised)");
+    await expect(f.undo()).rejects.toThrow("newer work");
+    expect(f.patches).toHaveLength(1);
+    expect(f.current().description).toBe(stored);
+    await f.harness.lifecycle.dispose();
+  });
+  it("passes on a refused write, archives nothing, and Undo has nothing to restore", async () => {
+    const f = await setup({ refuseUpdate: true });
+    const result = await f.settle();
+    expect(result).toMatchObject({
+      taskUpdated: false,
+      archivedThreadIds: [],
+      warning: "Tasks refused the update",
+    });
+    expect(f.archive).not.toHaveBeenCalled();
+    expect(await f.undo()).toMatchObject({ undone: true, warning: null });
+    expect(f.patches).toHaveLength(0);
+    expect(f.current()).toEqual(original);
     await f.harness.lifecycle.dispose();
   });
 });

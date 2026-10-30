@@ -19,6 +19,9 @@ async function host(
   let output = "First response";
   let threadIds = ["thr_test"];
   let commentReads = 0;
+  let title = task().title;
+  let held: Promise<void> | null = null;
+  let release = () => {};
   const posted: { taskId: string; body: string; notify: boolean }[] = [];
   const calls: string[] = [];
   const fake = createFakePluginHost({
@@ -30,6 +33,7 @@ async function host(
           calls.push(method);
           const source = {
             ...task(),
+            title,
             status: options.closed
               ? "done"
               : options.review
@@ -41,11 +45,15 @@ async function host(
           let value: unknown;
           if (method === "listProjects")
             value = { projects: [{ id: "p1", name: "Test", prefix: "TEST" }] };
-          else if (method === "listTasks")
+          else if (method === "listTasks") {
+            const gate = held;
+            held = null;
+            if (gate) await gate;
             value = {
               tasks: [source],
               nextCursor: options.repeatedCursor ? "same-cursor" : null,
             };
+          }
           else if (method === "listTaskThreads") {
             if (options.missingLinks) throw new Error("Tasks link read failed");
             value = {
@@ -164,6 +172,16 @@ async function host(
     },
     setLinks(value: string[]) {
       threadIds = value;
+    },
+    setTitle(value: string) {
+      title = value;
+    },
+    /** The next task list read waits until the returned function runs. */
+    holdTasks() {
+      held = new Promise((resolve) => {
+        release = resolve;
+      });
+      return () => release();
     },
     getCommentReads: () => commentReads,
     posted,
@@ -467,5 +485,94 @@ describe("backend coverage and preferences", () => {
       },
     });
     await fixture.harness.lifecycle.dispose();
+  });
+});
+
+describe("what the map and the CLI read after a change", () => {
+  it("never keeps a snapshot read from before a write that landed during it", async () => {
+    const fixture = await host();
+    const release = fixture.holdTasks();
+    const first = fixture.harness.behavior.callRpc("snapshot", null) as Promise<{
+      tasks: { title: string }[];
+    }>;
+    await vi.waitFor(() => expect(fixture.calls).toContain("listTasks"));
+    // The write lands while the first read is still waiting on Tasks.
+    fixture.setTitle("Renamed while reading");
+    await fixture.harness.behavior.callRpc("postComment", {
+      taskId: "task1",
+      body: "A note",
+    });
+    release();
+    expect((await first).tasks[0].title).toBe("Renamed while reading");
+    const reads = fixture.calls.filter((m) => m === "listTasks").length;
+    expect(reads).toBe(2);
+    // The fresh read is the one cached: the next poll asks Tasks nothing.
+    const next = (await fixture.harness.behavior.callRpc("snapshot", null)) as {
+      tasks: { title: string }[];
+    };
+    expect(next.tasks[0].title).toBe("Renamed while reading");
+    expect(fixture.calls.filter((m) => m === "listTasks").length).toBe(reads);
+    await fixture.harness.lifecycle.dispose();
+  });
+  it("hides only project areas, writes nothing for a refused one, and keeps later writes working", async () => {
+    const { harness } = await host();
+    for (const id of ["task:task1", "thread:thr_test"])
+      await expect(
+        harness.behavior.callRpc("setPreference", { id, hidden: true }),
+      ).rejects.toThrow("Only project areas can be hidden from Overview.");
+    expect(await harness.behavior.callRpc("preferences", null)).toEqual({});
+    await expect(
+      harness.behavior.callRpc("setPreference", {
+        id: "project:p1/../task:task1",
+        hidden: true,
+      }),
+    ).rejects.toThrow();
+    expect(
+      await harness.behavior.callRpc("setPreference", {
+        id: "project:p1",
+        hidden: true,
+      }),
+    ).toEqual({ hidden: true });
+    expect(await harness.behavior.callRpc("preferences", null)).toEqual({
+      "project:p1": { hidden: true },
+    });
+    await harness.lifecycle.dispose();
+  });
+  it("answers bb work-map status with coverage counts, as text or JSON", async () => {
+    const { harness } = await host();
+    const text = await harness.behavior.runCli(["status"]);
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toMatch(
+      /^1 projects · 1 tasks · 1 attached sessions\nUpdated \d{4}-\d{2}-\d{2}T[\d:.]+Z$/,
+    );
+    const json = await harness.behavior.runCli(["status", "--json"]);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      projects: 1,
+      tasks: 1,
+      attachedSessions: 1,
+      commentingSessions: 1,
+      warnings: [],
+    });
+    await harness.lifecycle.dispose();
+  });
+  it("prints status warnings, the usage for no command, and refuses unknown words", async () => {
+    const { harness } = await host({ missingLinks: true });
+    const text = await harness.behavior.runCli(["status"]);
+    expect(text.stdout.split("\n").at(-1)).toBe(
+      "Session links unavailable for TEST-1.",
+    );
+    expect(text.stdout).toContain("0 attached sessions");
+    for (const argv of [[], ["--help"]]) {
+      const usage = await harness.behavior.runCli(argv);
+      expect(usage.exitCode).toBe(0);
+      expect(usage.stdout).toContain("Usage: bb work-map status [--json]");
+      expect(usage.stdout).toContain("bb work-map project list [--json]");
+    }
+    for (const argv of [["status", "--verbose"], ["stats"]]) {
+      const refused = await harness.behavior.runCli(argv);
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stderr).toContain("Usage: bb work-map status [--json]");
+    }
+    await harness.lifecycle.dispose();
   });
 });
