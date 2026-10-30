@@ -102,6 +102,22 @@ describe("reading the project list", () => {
     });
   });
 
+  it("prints a name with line breaks or terminal escapes as one plain line, JSON unchanged", async () => {
+    const service = services({ "project:p2": { hidden: true } });
+    const name = "Ops\nPAY · Payroll · hidden from Overview\u001b[2K\r\u202eWORK";
+    service.managementOptions.mockResolvedValue({
+      ...options,
+      projects: [{ ...options.projects[1], name }],
+    });
+    const result = await run(["project", "list"], service);
+    expect(result.stdout).toBe(
+      "HOME · Ops PAY · Payroll · hidden from Overview [2K WORK · hidden from Overview",
+    );
+    expect(result.stdout!.split("\n")).toHaveLength(1);
+    const json = await run(["project", "list", "--json"], service);
+    expect(JSON.parse(json.stdout!).projects[0].name).toBe(name);
+  });
+
   it("says so when there are none", async () => {
     const service = services();
     service.managementOptions.mockResolvedValue({ ...options, projects: [] });

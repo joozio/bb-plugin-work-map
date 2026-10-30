@@ -94,6 +94,31 @@ describe("task text as Markdown", () => {
     expect(safeHref("//evil.test")).toBeNull();
     expect(safeHref(" https://a.test/x ")).toBe("https://a.test/x");
   });
+  it("never follows a path a browser would read as another host", () => {
+    // new URL("/\\evil.test/x", "https://bb.local/") is https://evil.test/x.
+    expect(safeHref("/\\evil.test/login")).toBeNull();
+    expect(safeHref("/\\\\evil.test")).toBeNull();
+    expect(safeHref("/threads/a\\b")).toBeNull();
+    expect(safeHref("/plugins/tasks/tasks/task/ABC-1")).toBe(
+      "/plugins/tasks/tasks/task/ABC-1",
+    );
+    const { container } = render(
+      <SafeMarkdown text={"[Open in Tasks](/\\evil.test/login)"} />,
+    );
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.textContent).toBe("[Open in Tasks](/\\evil.test/login)");
+  });
+  it("renders deeply nested lists and quotes without overflowing the stack", () => {
+    for (const text of ["- ".repeat(1000) + "deep", "> ".repeat(5000) + "deep"]) {
+      const { container, unmount } = render(<SafeMarkdown text={text} />);
+      expect(container.textContent).toContain("deep");
+      unmount();
+    }
+    const list = parseBlocks("- a\n  - b\n    - c");
+    expect(list[0].type).toBe("list");
+    if (list[0].type !== "list") return;
+    expect(list[0].items[0].blocks.map((b) => b.type)).toEqual(["p", "list"]);
+  });
   it("keeps single newlines as line breaks and parses nested lists and lazy text", () => {
     const text = "Line one\nLine two\n\n- outer\n  - inner\n- next\nlazy tail";
     const blocks = parseBlocks(text);

@@ -13,6 +13,7 @@ async function host(
     review?: boolean;
     needsYou?: boolean;
     missingLabels?: boolean;
+    labels?: { id: string; name: string; color: string }[];
   } = {},
 ) {
   let output = "First response";
@@ -102,7 +103,9 @@ async function host(
             value = {
               task: {
                 ...source,
-                labelIds: ["lab1", "lab-gone"],
+                labelIds: options.labels
+                  ? options.labels.map((label) => label.id)
+                  : ["lab1", "lab-gone"],
                 description:
                   "# Plan\n\nThe whole description, **bold**.\n\n- a\n- b",
               },
@@ -110,7 +113,7 @@ async function host(
           else if (method === "listLabels") {
             if (options.missingLabels) throw new Error("Labels unavailable");
             value = {
-              labels: [
+              labels: options.labels ?? [
                 { id: "lab1", projectId: "p1", name: "bug", color: "#f00" },
                 { id: "lab2", projectId: "p1", name: "idea", color: "#0f0" },
               ],
@@ -200,6 +203,37 @@ describe("the opened task", () => {
     expect(detail.labels).toEqual([]);
     expect(detail.warnings).toEqual(["Labels are unavailable."]);
     expect(detail.comments).toHaveLength(4);
+    await fixture.harness.lifecycle.dispose();
+  });
+  it("passes on only plain label colours, so a label cannot make the panel load a URL", async () => {
+    const colors = [
+      "#f00",
+      " teal ",
+      "rgb(10 20 30 / 50%)",
+      "oklch(70% 0.1 200deg)",
+      "url(https://beacon.test/opened?task=TEST-1)",
+      "red;background-image:url(https://beacon.test/x)",
+      "image-set(\"https://beacon.test/x\" 1x)",
+      "var(--other)",
+      "rgb(url(https://beacon.test/x))",
+    ];
+    const fixture = await host({
+      labels: colors.map((color, at) => ({ id: `lab${at}`, name: `l${at}`, color })),
+    });
+    const detail = (await fixture.harness.behavior.callRpc("taskDetail", {
+      taskId: "task1",
+    })) as { labels: { color: string }[] };
+    expect(detail.labels.map((label) => label.color)).toEqual([
+      "#f00",
+      "teal",
+      "rgb(10 20 30 / 50%)",
+      "oklch(70% 0.1 200deg)",
+      "",
+      "",
+      "",
+      "",
+      "",
+    ]);
     await fixture.harness.lifecycle.dispose();
   });
   it("posts a comment in your name without notifying, returns it shaped, and makes the next snapshot re-read the task", async () => {

@@ -121,8 +121,12 @@ export function orchestratorBrief(
   tasks: readonly { id: string; key: string; title: string }[],
   prefix = "",
 ) {
+  // Titles and area names are anyone's text: each stays on its own line of
+  // the list, so a line break in one can never read as more of this brief.
+  const line = (text: string) => text.replace(/\s+/g, " ").trim();
+  area = line(area);
   const list = tasks
-    .map((task) => `- ${task.key} (${task.id}): ${task.title}`)
+    .map((task) => `- ${task.key} (${task.id}): ${line(task.title)}`)
     .join("\n");
   const where = prefix ? ` (tracker project ${prefix})` : "";
   return `${ORCHESTRATOR_PROMPT}

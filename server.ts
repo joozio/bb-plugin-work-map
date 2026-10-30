@@ -108,6 +108,9 @@ const itemId = z
   .string()
   .regex(/^(task|project|thread):[A-Za-z0-9_-]+$/)
   .max(100);
+/** A hex, named or functional colour: nothing that can fetch or nest. */
+const plainColor =
+  /^(?:#[0-9a-f]{3,8}|[a-z]+|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\([\w\s.,%/+-]*\))$/i;
 /** One entry of a task's timeline, as Tasks keeps it. */
 export const taskCommentSchema = z.object({
   id: z.string(),
@@ -288,7 +291,13 @@ export default async function plugin(bb: BbPluginApi) {
         ),
       }),
     );
-    const shaped = labels.map(({ id, name, color }) => ({ id, name, color }));
+    // A label's colour lands in a CSS background, where url(...) would load
+    // from anywhere when the task opens; only a plain colour is passed on.
+    const shaped = labels.map(({ id, name, color }) => ({
+      id,
+      name,
+      color: plainColor.test(color.trim()) ? color.trim() : "",
+    }));
     labelsByProject.set(projectId, { at: Date.now(), labels: shaped });
     return shaped;
   }

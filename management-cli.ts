@@ -12,6 +12,13 @@ bb work-map project hide|restore KEY [--json]
 bb work-map task create --project KEY --title TITLE [--description TEXT] [--request-id UUID] [--json]
 bb work-map attach TASK-KEY --thread THREAD-ID [--json]
 Hide affects Overview only. Tasks and agents keep running; attention filters and search still include them.`;
+/**
+ * Names are anyone's text. In a terminal a line break would print a project
+ * row that does not exist, and an escape or direction mark could rewrite the
+ * line it sits on, so the text output shows them as plain spaces.
+ */
+const plain = (text: string) =>
+  text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]+/g, " ");
 type Services = {
   managementOptions: () => Promise<ManagementOptions>;
   manage: (input: ManagementInput) => Promise<ManagementResult>;
@@ -181,13 +188,13 @@ export async function runManagementCli(argv: string[], service: Services) {
       ? value.projects
           .map(
             (p) =>
-              `${p.prefix} · ${p.name}${p.hiddenFromOverview ? " · hidden from Overview" : ""}`,
+              `${plain(p.prefix)} · ${plain(p.name)}${p.hiddenFromOverview ? " · hidden from Overview" : ""}`,
           )
           .join("\n") || "No projects."
       : value.task
-        ? `Created ${value.task.key} in backlog.`
+        ? `Created ${plain(value.task.key)} in backlog.`
         : value.project
-          ? `${value.project.prefix} · ${value.project.name}${value.preference ? (value.preference.hidden ? " · hidden from Overview" : " · restored to Overview") : " · saved"}`
+          ? `${plain(value.project.prefix)} · ${plain(value.project.name)}${value.preference ? (value.preference.hidden ? " · hidden from Overview" : " · restored to Overview") : " · saved"}`
           : `Connected session ${value.threadId}.`;
     return {
       exitCode: 0,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { delegationService } from "./delegate-service";
+import { delegateAreaInput, delegationService } from "./delegate-service";
 import {
   DELEGATION_COMMENT,
   DELEGATION_PROMPT,
@@ -536,5 +536,20 @@ describe("the orchestrators the map shows on its areas", () => {
   it("shows none when storage cannot be listed", async () => {
     const h = host({ failKvList: true });
     expect(await h.service().liveOrchestrators()).toEqual([]);
+  });
+});
+
+describe("the area dispatch input at the RPC boundary", () => {
+  it("refuses an oversized task list on its length alone (GHSA-mrhx-c7xc-m3w5)", () => {
+    // Zod before 4.6.6 checked every element of a too-long array first, one
+    // issue each: a large request held the host's memory before failing.
+    const parsed = delegateAreaInput.safeParse({
+      requestId,
+      projectId: "p1",
+      taskIds: Array.from({ length: 100_000 }, () => ""),
+    });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues).toHaveLength(1);
+    expect(parsed.error?.issues[0].code).toBe("too_big");
   });
 });

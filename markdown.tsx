@@ -34,6 +34,12 @@ const QUOTE = /^\s{0,3}>\s?/;
 const MARKER = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
 const TABLE_ROW = /^\s*\|.*\|?\s*$|^\s*[^|\n]+\|[^\n]*$/;
 const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+/**
+ * How deep quotes and lists nest before the rest stays plain text. Without a
+ * floor, a few thousand "- " or "> " in a task overflow the stack and the
+ * whole map unmounts when that task opens.
+ */
+const MAX_NEST = 12;
 
 function startsBlock(line: string) {
   return (
@@ -61,7 +67,8 @@ function splitRow(line: string) {
   return cells;
 }
 
-export function parseBlocks(text: string): Block[] {
+export function parseBlocks(text: string, depth = 0): Block[] {
+  if (depth > MAX_NEST) return text.trim() ? [{ type: "p", text }] : [];
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];
   let i = 0;
@@ -101,7 +108,10 @@ export function parseBlocks(text: string): Block[] {
         body.push(lines[i].replace(QUOTE, ""));
         i++;
       }
-      blocks.push({ type: "quote", blocks: parseBlocks(body.join("\n")) });
+      blocks.push({
+        type: "quote",
+        blocks: parseBlocks(body.join("\n"), depth + 1),
+      });
       continue;
     }
     match = line.match(MARKER);
@@ -148,7 +158,7 @@ export function parseBlocks(text: string): Block[] {
           body.push(next);
           i++;
         }
-        items.push({ blocks: parseBlocks(body.join("\n")), checked });
+        items.push({ blocks: parseBlocks(body.join("\n"), depth + 1), checked });
       }
       blocks.push({
         type: "list",
@@ -199,7 +209,8 @@ export function parseBlocks(text: string): Block[] {
 export function safeHref(raw: string): string | null {
   const url = raw.trim();
   if (/^https?:\/\/\S+$/i.test(url) || /^mailto:\S+$/i.test(url)) return url;
-  if (/^\/(?!\/)[^\s]*$/.test(url)) return url;
+  // A browser reads "\" as "/", so "/\host" would leave the app for host.
+  if (/^\/(?![/\\])[^\s\\]*$/.test(url)) return url;
   return null;
 }
 const ESCAPABLE = /[\\`*_~[\]()!#>|-]/;
